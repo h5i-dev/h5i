@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>h5i: Build, Verify, and Hack Your Web Apps</title>
-  <meta name="description" content="h5i unifies web development, formal verification with Lean 4, and red-teaming around a composable Rust framework.">
+  <title>h5i: Build and Verify Your Web Apps</title>
+  <meta name="description" content="Build Rust web apps with an Axum-based framework, verify core logic with Lean 4, and use integrated development tools to debug, test, and secure them.">
   <meta name="author" content="h5i-dev">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
@@ -20,8 +20,8 @@
   <!-- Open Graph -->
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="h5i">
-  <meta property="og:title" content="h5i: Build, Verify, and Hack Your Web Apps">
-  <meta property="og:description" content="h5i unifies web development, formal verification with Lean 4, and red-teaming around a composable Rust framework.">
+  <meta property="og:title" content="h5i: Build and Verify Your Web Apps">
+  <meta property="og:description" content="Build Rust web apps with an Axum-based framework, verify core logic with Lean 4, and use integrated development tools to debug, test, and secure them.">
   <meta property="og:url" content="https://h5i.dev/">
   <meta property="og:image" content="https://h5i.dev/_static/social-card.png">
   <meta property="og:image:alt" content="The h5i logo beside the words Agent-Native Web-Security">
@@ -29,8 +29,8 @@
 
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="h5i: Build, Verify, and Hack Your Web Apps">
-  <meta name="twitter:description" content="h5i unifies web development, formal verification with Lean 4, and red-teaming around a composable Rust framework.">
+  <meta name="twitter:title" content="h5i: Build and Verify Your Web Apps">
+  <meta name="twitter:description" content="Build Rust web apps with an Axum-based framework, verify core logic with Lean 4, and use integrated development tools to debug, test, and secure them.">
   <meta name="twitter:image" content="https://h5i.dev/_static/social-card.png">
   <meta name="twitter:image:alt" content="The h5i logo beside the words Agent-Native Web-Security">
 
@@ -60,7 +60,7 @@
       "name": "h5i",
       "alternateName": "high-five",
       "url": "https://h5i.dev/",
-      "description": "h5i unifies web development, formal verification with Lean 4, and red-teaming around a composable Rust framework.",
+      "description": "An Axum-based Rust web framework for building apps and verifying core logic with Lean 4, with integrated development tools.",
       "publisher": {
         "@id": "https://h5i.dev/#org"
       },
@@ -74,7 +74,7 @@
       "applicationCategory": "DeveloperApplication",
       "applicationSubCategory": "Verifiable Rust web framework and web security testing CLI",
       "operatingSystem": "Linux, macOS, Windows (WSL2)",
-      "description": "h5i unifies web development, formal verification with Lean 4, and red-teaming around a composable Rust framework.",
+      "description": "An Axum-based Rust web framework for building apps and verifying core logic with Lean 4, with integrated development tools.",
       "featureList": [
         "h5i-app, an Axum-based Rust framework with composable application kernels",
         "Lean 4 proofs of tenant isolation, authorization, and business state invariants",
@@ -115,8 +115,8 @@
       "@type": "WebPage",
       "@id": "https://h5i.dev/#webpage",
       "url": "https://h5i.dev/",
-      "name": "h5i: Build, Verify, and Hack Your Web Apps",
-      "description": "h5i unifies web development, formal verification with Lean 4, and red-teaming around a composable Rust framework.",
+      "name": "h5i: Build and Verify Your Web Apps",
+      "description": "An Axum-based Rust web framework for building apps and verifying core logic with Lean 4, with integrated development tools.",
       "isPartOf": {
         "@id": "https://h5i.dev/#website"
       },
@@ -154,7 +154,7 @@
           "name": "What is h5i?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "h5i brings web development, formal verification, and red-team security testing into one workflow. h5i-app is a composable Axum-based Rust framework; the h5i CLI also provides browser, HTTP, recon, and CI/CD testing tools."
+            "text": "h5i is an Axum-based Rust web framework for building applications and verifying core logic with Lean 4. Its CLI also provides browser, HTTP, recon, and CI/CD testing tools."
           }
         },
         {
@@ -472,6 +472,14 @@
     .hero-lead .hero-sub { margin-top: 22px; max-width: 60ch; }
     .hero-side .hero-install { margin-top: 0; display: flex; }
     .hero-side .hero-install code { flex: 1; min-width: 0; font-size: 12.5px; }
+    .hero-side .hero-actions { margin-top: 14px; }
+    .framework-points {
+      display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 28px;
+      list-style: none; margin: 34px 0 0; padding: 0;
+    }
+    .framework-points li { border-top: 1px solid var(--line2); padding-top: 18px; }
+    .framework-points b { display: block; font-family: var(--disp); font-size: 18px; font-weight: 600; color: var(--ink); }
+    .framework-points p { margin: 8px 0 0; color: var(--dim); font-size: 14.5px; line-height: 1.65; }
     /* the phrase for the act on the stage is ruled in red; the rule draws in
        from the left and leaves to the right when the act changes */
     .act-line {
@@ -645,13 +653,24 @@
     .tmux-pause:hover { color: var(--ink); background: var(--panel2); }
     .stage.paused .tmux-sess { background: var(--line2); color: var(--dim); }
 
-    /* ── What the agent runs: commands, not cards ── */
+    /* ── CLI capabilities beside the dashboard ── */
     .duet-lbl code { font-family: var(--mono); font-size: 10.5px; letter-spacing: .04em; text-transform: none; color: var(--ink); }
     .verbs { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line2); }
     .verbs li { padding: 18px 0 18px; border-bottom: 1px solid var(--line); }
-    .verbs code { display: block; margin-bottom: 8px; font-family: var(--mono); font-size: 12px; color: var(--spot); }
+    .verbs .cap-label { display: block; margin-bottom: 8px; font-family: var(--mono); font-size: 12px; color: var(--spot); }
     .verbs b { display: block; font-family: var(--disp); font-weight: 600; font-size: 18px; letter-spacing: -.01em; color: var(--ink); }
     .verbs p { margin: 6px 0 0; color: var(--dim); font-size: 14.5px; line-height: 1.65; }
+    .infra-prompt { margin: 18px 0 0; color: var(--dim); font-size: 14.5px; line-height: 1.65; }
+    .infra-prompt code { color: var(--ink); }
+    .cta-paths { display: grid; gap: 20px; margin-top: 26px; }
+    #cta .cta-title { margin-top: 18px; }
+    .cta-path { border-top: 1px solid var(--line2); padding-top: 18px; }
+    .cta-path h3 { margin: 0; font-family: var(--disp); font-size: 20px; font-weight: 600; color: var(--ink); }
+    .cta-path p { margin: 6px 0 0; color: var(--dim); font-size: 14px; line-height: 1.6; }
+    .cta-path .hero-install { display: flex; margin-top: 14px; }
+    .cta-path .hero-install code { flex: 1; min-width: 0; font-size: 12px; }
+    .cta-path .btn { margin-top: 12px; }
+    @media (max-width: 900px) { .framework-points { grid-template-columns: minmax(0, 1fr); gap: 18px; } }
 
     /* ── FAQ: the heading holds still while the questions scroll past ── */
     #faq .container { display: grid; grid-template-columns: minmax(0, 4fr) minmax(0, 8fr); gap: 56px; align-items: start; }
@@ -704,16 +723,20 @@
   <div class="hero-inner">
     <div class="hero-top">
       <div class="hero-lead">
-        <div class="hero-badge">Build &middot; Verify &middot; Hack</div>
-        <h1 class="hero-title"><em>Build, Verify, and Hack</em><br>Your Web Apps.</h1>
+        <div class="hero-badge">The verifiable web framework for Rust</div>
+        <h1 class="hero-title"><em>Build and Verify</em><br>Your Web Apps.</h1>
         <p class="hero-sub">
-          A Rust web framework for building applications and <strong><a class="act-line" data-act="prove" href="#framework">verifying critical logic</a></strong> with Lean 4. Then <strong><a class="act-line" data-act="find" href="#what-you-get">test the running app</a></strong> with the agent-friendly red-teaming tool.
+          A Rust web framework for building applications and <strong><a class="act-line" data-act="prove" href="#framework">verifying core logic</a></strong> with Lean 4. Integrated dev tools help you <strong><a class="act-line" data-act="find" href="#what-you-get">test and secure your apps</a></strong> with AI agents.
         </p>
       </div>
       <div class="hero-side">
         <div class="hero-install" id="quickstart">
           <code id="install-cmd">curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec --recon --test</code>
           <button class="copy-btn" type="button">copy</button>
+        </div>
+        <div class="hero-actions">
+          <a href="/manual/#h5i-app" class="btn btn-primary">Get Started</a>
+          <a href="https://github.com/h5i-dev/h5i" class="btn btn-ghost">View on GitHub</a>
         </div>
         <!-- Floor values, not live counts: the page is static, so each number is
              rounded down from the real one and stays true as the repository grows. -->
@@ -776,10 +799,15 @@
 <section id="framework">
   <div class="container">
     <div class="section-head">
-      <span class="section-tag">01 / Build &amp; verify &middot; Rust + Lean 4</span>
+      <span class="section-tag">01 / Build and verify web applications</span>
       <h2 class="section-title">A Verifiable Web Framework</h2>
-      <p class="section-sub">Build on Axum with composable Rust kernels, extract application logic into Lean 4, and prove the properties that matter. The Rust-CUDA backend also runs shared kernel logic on GPUs for suitable batch workloads.</p>
+      <p class="section-sub">Build on Axum with a composable, kernel-based Rust architecture. Translate application logic into Lean 4 to verify critical properties, with optional GPU acceleration for supported workloads.</p>
     </div>
+    <ul class="framework-points">
+      <li><b>Kernel-based architecture</b><p>Separate application logic from infrastructure so core behavior can be verified and optimized.</p></li>
+      <li><b>Formal verification</b><p>Prove properties such as authorization, data isolation, and business logic correctness with Lean 4.</p></li>
+      <li><b>Optional GPU acceleration</b><p>Run supported application kernels on GPUs while retaining CPU execution.</p></li>
+    </ul>
     <figure class="proof-flow">
       <input class="tabpick" type="radio" name="edtab" id="ed-lib" checked>
       <input class="tabpick" type="radio" name="edtab" id="ed-cargo">
@@ -897,28 +925,28 @@
   </div>
 </section>
 
-<!-- ── Security testing ────────────────────────────────────── -->
+<!-- ── Development infrastructure ─────────────────────────── -->
 <section id="what-you-get">
   <span id="browser" aria-hidden="true"></span>
   <span id="websec" aria-hidden="true"></span>
   <div class="container">
     <div class="section-head">
-      <span class="section-tag">02 / Test &amp; secure &middot; any stack</span>
-      <h2 class="section-title">Red-Team Any Web App</h2>
-      <p class="section-sub">Use h5i's agent-friendly browser, HTTP, and recon tools to find vulnerabilities in any web app. Replay confirmed findings in CI/CD. No framework migration required. Test only applications you own or are authorized to test.</p>
+      <span class="section-tag">02 / Tools for the entire development lifecycle</span>
+      <h2 class="section-title">Development Infrastructure</h2>
+      <p class="section-sub">From local development to security testing, h5i gives AI agents the tools to build, verify, debug, and test your applications. Its browser, HTTP, red-teaming, and CI tools also work with any existing web app.</p>
     </div>
     <div class="duet">
       <div class="duet-col">
-        <p class="duet-lbl"><b>01</b> what the agent runs</p>
+        <p class="duet-lbl"><b>01</b> what the CLI enables</p>
         <ol class="verbs">
-          <li><code>h5i browser</code><b>Explore your app automatically</b><p>Your agent can read pages, click, type, and extract data through compact snapshots.</p></li>
-          <li><code>h5i websec</code><b>Test HTTP requests directly</b><p>Your agent can capture traffic, inspect and edit requests, and replay them.</p></li>
-          <li><code>h5i box</code><b>Sandboxed workflow</b><p>Sandbox the entire AI agent workflow, with configurable network and filesystem limits.</p></li>
-          <li><code>h5i test</code><b>Keep it fixed</b><p>Replay a confirmed finding as a flow in CI, so a fixed issue stays fixed.</p></li>
+          <li><span class="cap-label">project tooling &middot; browser &middot; HTTP</span><b>Agent-native tooling</b><p>Scaffold projects, check proofs, navigate your app, inspect HTTP traffic, and automate debugging workflows.</p></li>
+          <li><span class="cap-label">reconnaissance &middot; CI</span><b>Security testing</b><p>Discover attack surfaces, replay requests, and run security regression tests in CI.</p></li>
+          <li><span class="cap-label">sandbox &middot; dashboard</span><b>Sandboxed execution</b><p>Run agents with filesystem and network restrictions, then review their activity and results in the dashboard.</p></li>
         </ol>
+        <p class="infra-prompt">Open your AI agent and ask: <code>Audit https://your-target.example with h5i</code></p>
       </div>
       <div class="duet-col">
-        <p class="duet-lbl"><b>02</b> what you review, in <code>h5i ui</code></p>
+        <p class="duet-lbl"><b>02</b> review the workflow in <code>h5i ui</code></p>
         <div class="browser-win">
           <input class="tabpick" type="radio" name="cmview" id="cmv-sessions" checked>
           <input class="tabpick" type="radio" name="cmview" id="cmv-boxes">
@@ -1149,7 +1177,7 @@
     <div class="faq-list">
       <details class="faq-item" open>
         <summary>What is h5i?</summary>
-        <div class="faq-answer">h5i brings web development, formal verification, and red-team security testing into one workflow. h5i-app is a composable Axum-based Rust framework; the h5i CLI also provides browser, HTTP, recon, and CI/CD testing tools.</div>
+        <div class="faq-answer">h5i is an Axum-based Rust web framework for building applications and verifying core logic with Lean 4. Its CLI also provides browser, HTTP, recon, and CI/CD testing tools.</div>
       </details>
       <details class="faq-item">
         <summary>How do I build and verify a web app?</summary>
@@ -1175,16 +1203,28 @@
 <section id="cta">
   <div class="container cta-grid">
     <div class="cta-copy">
-    <h2 class="cta-title">Build. Verify. Hack.</h2>
-    <p class="cta-sub">Start a Rust web app, prove its critical logic, and test the running application. The security CLI also works with any existing web stack.</p>
-    <div class="hero-install">
-      <code>curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec --recon --test</code>
-      <button class="copy-btn" type="button">copy</button>
-    </div>
-    <div class="hero-actions">
-      <a href="/manual/#h5i-app" class="btn btn-primary">Explore the framework</a>
-      <a href="/manual/#h5i-browser" class="btn btn-ghost">Start a security test</a>
-    </div>
+      <span class="section-tag">03 / Get started</span>
+      <h2 class="cta-title">Get Started with h5i</h2>
+      <div class="cta-paths">
+        <div class="cta-path">
+          <h3>Web Framework</h3>
+          <p>Build and formally verify Rust web applications.</p>
+          <div class="hero-install">
+            <code>cargo add h5i-app</code>
+            <button class="copy-btn" type="button">copy</button>
+          </div>
+          <a href="/manual/#h5i-app" class="btn btn-primary">Get Started</a>
+        </div>
+        <div class="cta-path">
+          <h3>Development CLI</h3>
+          <p>Automate development, testing, and red-teaming.</p>
+          <div class="hero-install">
+            <code>curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec --recon --test</code>
+            <button class="copy-btn" type="button">copy</button>
+          </div>
+          <a href="/manual/" class="btn btn-ghost">Install CLI</a>
+        </div>
+      </div>
     </div>
     <!-- The demo film. The iframe is created on the first play, so the page never pays for it unasked. -->
     <figure class="cta-film browser-win">
