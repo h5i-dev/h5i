@@ -89,7 +89,6 @@ h5i test --target https://staging.example.com --openapi openapi.yaml --min-cover
 # Sandboxed environment
 h5i box --name lab --profile browser
 h5i box shell lab -- claude
-h5i box export lab
 
 # Local dashboard
 h5i ui
