@@ -14,8 +14,6 @@
 </p>
 
 
-<a href="https://trendshift.io/repositories/46160?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-46160" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/46160/daily?language=Rust" alt="h5i on Trendshift" width="250" height="55"/></a> 
-
 > h5i's CLI-based red-teaming tools are framework-independent and agent-friendly. They can test any website or web application, including existing projects, without adopting `h5i-app`.
 
 ---
