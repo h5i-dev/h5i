@@ -125,6 +125,31 @@ for command in commands:
         print("\u2713 " + " ".join(command))
 "#;
 
+/// A stub that answers the probes (`--version`, `session list`) like the real
+/// one, but fails every actual verb with `boom` on stderr and exit 3. Used to
+/// check that a failing browser verb is surfaced with what the browser said,
+/// without a crude stub also failing the probes the CLI/daemon make around it.
+const FAKE_AGENT_BROWSER_FAILS: &str = r#"#!/usr/bin/env python3
+import json, os, sys
+log = os.environ["H5I_TEST_AB_LOG"]
+args = sys.argv[1:]
+with open(log, "a") as f:
+    f.write(" ".join(args) + "\n")
+if args == ["--version"]:
+    print("agent-browser 0.39.1")
+    sys.exit(0)
+if args == ["session", "list", "--json"]:
+    seen = []
+    for line in open(log).read().split("\n"):
+        words = line.split(" ")
+        if len(words) > 1 and words[0] == "--session" and words[1] not in seen:
+            seen.append(words[1])
+    print(json.dumps({"success": True, "data": {"sessions": seen}}))
+    sys.exit(0)
+sys.stderr.write("boom\n")
+sys.exit(3)
+"#;
+
 struct Fixture {
     home: tempfile::TempDir,
     site: Site,
@@ -1047,16 +1072,18 @@ fn a_browser_that_fails_is_reported_and_exits_non_zero() {
     };
     let url = fx.site.base.clone();
     assert!(fx.run(&["browser", "open", &url]).status.success());
-    // `click` with a stub that fails on a verb it does not know: the stub's
-    // `fail` verb exits 3, so rewrite the stub for this one call.
-    std::fs::write(
-        fx.bin.join("agent-browser"),
-        "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 0.27; exit 0; fi\necho boom >&2\nexit 3\n",
-    )
-    .unwrap();
+    // Rewrite the stub so the page verb fails. It still answers the probes
+    // (`--version`, `session list`) the way the real one does, so only the
+    // click itself fails — a crude stub that also failed those made the CLI
+    // report the probe's failure, not the click's, under load (flaky).
+    std::fs::write(fx.bin.join("agent-browser"), FAKE_AGENT_BROWSER_FAILS).unwrap();
     let out = fx.run(&["browser", "click", "@e9"]);
     assert!(!out.status.success());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("boom"));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("boom"),
+        "STATUS={:?}\nSTDERR=[{}]\nSTDOUT=[{}]",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr),
+        String::from_utf8_lossy(&out.stdout));
     let _ = fx.run(&["browser", "close"]);
 }
 
