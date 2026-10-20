@@ -50,65 +50,51 @@ h5i-app = { version = "0.1.2", features = ["http", "postgres"] }
 
 ## 3. Development Infrastructure
 
-h5i provides a unified CLI for developing, debugging, and security-testing web applications with AI agents.
+h5i provides a unified CLI for building, verifying, debugging, and security-testing web applications with AI agents. Its red-teaming tools are framework-independent and can test any web application without adopting `h5i-app`.
 
-For example, you can run professional red-teaming by just opening your favorite agent harness and saying *"Audit `https://<your-target>.com` with h5i."*
+Just open your favorite agent harness and say *"Audit `https://<your-target>.com` with h5i."*
 
 <p align="center">
-  <img src="./docs/_static/agent-audit-target.svg" alt="A coding agent auditing target.com with h5i commands while the browser captures its traffic" width="99%" />
+  <img src="./docs/_static/agent-audit-target.svg" alt="An AI agent auditing a web application with h5i" width="99%" />
 </p>
 
+**Capabilities**
 
-> Most of `h5i` CLI commands work with any web services regardless of their framework, and no migration to `h5i-app` is required.
+- **Project tooling:** Scaffold Rust web applications, extract Lean 4 models, check proofs, and test proof sensitivity.
+- **Browser automation:** Navigate websites, interact with forms, and inspect authenticated workflows.
+- **HTTP security testing:** Capture, modify, replay, and compare HTTP requests.
+- **Reconnaissance:** Discover endpoints, parameters, and hidden attack surfaces.
+- **CI/CD:** Replay security tests and enforce API coverage requirements.
+- **Sandboxed agents:** Run isolated workflows with filesystem and network restrictions.
+- **Dashboard:** Monitor browser sessions and agent activity through a local web interface.
 
-**Project template**
-
-```bash
-# Build and verify a Rust web application
-h5i app new counter && cd counter                       # Create an h5i-app project
-h5i app extract                                         # Translate Rust logic into Lean 4
-h5i app prove                                           # Build and check formal proofs
-h5i app mutate                                          # Test proof sensitivity with mutations
-```
-
-**Browser automation:** Drive Chromium through h5i's capture proxy: navigate, fill forms, and test authenticated workflows, with every request policy-checked and recorded.
+**CLI Examples**
 
 ```bash
-h5i browser open https://example.com                    # Open a website in Chromium, captured by h5i
-h5i browser click @e3                                   # Interact with page elements
-```
+# Build and verify
+h5i app new counter && cd counter
+h5i app extract
+h5i app prove
+h5i app mutate
 
-**HTTP security testing:** Capture, modify, replay, and compare HTTP requests to investigate vulnerabilities.
+# Browser automation and red-teaming
+h5i browser open https://example.com
+h5i browser click @e3
+h5i websec requests
+h5i websec replay req_42 --set query.id=456
+h5i recon crawl --max-requests 200
 
-```bash
-h5i websec requests                                     # Inspect captured HTTP traffic
-h5i websec replay req_42 --set query.id=456             # Modify and replay a request
-```
+# Security regression testing
+h5i test .h5i-tests/tests/auth.yaml --target https://staging.example.com
+h5i test --target https://staging.example.com --openapi openapi.yaml --min-coverage 80
 
-**Recon:** Discover endpoints, parameters, and hidden attack surfaces through crawling and JavaScript analysis.
+# Sandboxed agents
+h5i box --name lab --profile browser
+h5i box shell lab -- claude
+h5i box export lab
 
-```bash
-h5i recon crawl --max-requests 200                      # Crawl the application for attack surfaces
-```
-
-**CI/CD:** Save confirmed attack flows and replay them in CI/CD to catch security regressions.
-
-```bash
-h5i test .h5i-tests/tests/auth.yaml --target https://staging.example.com                # Replay a security test
-h5i test --target https://staging.example.com --openapi openapi.yaml --min-coverage 80  # Fail CI when API coverage drops
-```
-
-**Sandboxed workflow:** Run agents in isolated environments with configurable filesystem and network restrictions.
-
-```bash
-h5i box --name lab --profile browser && h5i box shell lab -- claude   # Confine an agent's files, network and secrets
-h5i box export lab                                                    # Review its changes before they reach your repository
-```
-
-**Intuitive dashboard:** While agents access these capabilities through a unified CLI, you can also monitor their activity through the dashboard.
-
-```bash
-h5i ui  # Open the local dashboard   
+# Local dashboard
+h5i ui
 ```
 
 <p align="center">
