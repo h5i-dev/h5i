@@ -101,6 +101,6 @@ h5i ui
 
 ---
 
-## 5. License
+## 4. License
 
 h5i is licensed under the Apache License 2.0. See [LICENSE](LICENSE).
