@@ -48,9 +48,9 @@ h5i-app = { version = "0.1.2", features = ["http", "postgres"] }
 
 ## 3. Development Infrastructure
 
-h5i provides a unified CLI for building, verifying, debugging, and security-testing web applications with AI agents. Its red-teaming tools are framework-independent and can test any web application without adopting `h5i-app`.
+h5i provides a unified CLI for building, verifying, debugging, and security-testing web applications with AI agents. For example, you can run professional red-teaming simply by opening your favorite AI agent harness and saying "Audit `https://<your-target>.com` with h5i." 
 
-Just open your favorite agent harness and say *"Audit `https://<your-target>.com` with h5i."*
+> The red-teaming tools are framework-independent, so there's no need to adopt `h5i-app`.
 
 <p align="center">
   <img src="./docs/_static/agent-audit-target.svg" alt="An AI agent auditing a web application with h5i" width="99%" />
