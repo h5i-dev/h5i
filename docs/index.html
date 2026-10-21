@@ -859,21 +859,27 @@
         </g>
         <!-- Extraction connection. -->
         <g style="color:var(--spot)">
-          <path d="M388 101H442" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#proof-arrowhead)"/>
+          <path d="M388 101H464" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#proof-arrowhead)"/>
         </g>
-        <text x="415" y="81" class="pd-label pd-accent" text-anchor="middle">AENEAS</text>
-        <text x="415" y="127" class="pd-note" text-anchor="middle">extract</text>
+        <text x="426" y="81" class="pd-label pd-accent" text-anchor="middle">AENEAS</text>
+        <text x="426" y="127" class="pd-note" text-anchor="middle">extract</text>
+        <!-- A separate backend compiles supported Rust kernels to GPU PTX. -->
+        <g style="color:var(--spot)">
+          <path d="M388 318H464" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#proof-arrowhead)"/>
+        </g>
+        <text x="426" y="298" class="pd-label pd-accent" text-anchor="middle">RUST-CUDA</text>
+        <text x="426" y="343" class="pd-note" text-anchor="middle">compile</text>
         <!-- The proof you supply, in the same editor. -->
-        <text x="452" y="34" class="pd-lbl"><tspan class="pd-num">02</tspan>  lean 4 · the proof you supply</text>
-        <rect x="452.5" y="44.5" width="647" height="170" fill="#0b0b0a" stroke="var(--line2)"/>
-        <rect x="453" y="45" width="646" height="23" fill="var(--panel2)"/>
-        <path d="M452 68.5H1100" stroke="var(--line2)"/>
-        <rect x="453" y="45" width="58" height="23" class="pd-mode"/>
-        <text x="482" y="61" class="pd-mode-t" text-anchor="middle">NORMAL</text>
-        <text x="522" y="61" class="pd-file">proofs/Theorems.lean</text>
+        <text x="474" y="34" class="pd-lbl"><tspan class="pd-num">02</tspan>  lean 4 · the proof you supply</text>
+        <rect x="474.5" y="44.5" width="625" height="170" fill="#0b0b0a" stroke="var(--line2)"/>
+        <rect x="475" y="45" width="624" height="23" fill="var(--panel2)"/>
+        <path d="M474 68.5H1100" stroke="var(--line2)"/>
+        <rect x="475" y="45" width="58" height="23" class="pd-mode"/>
+        <text x="504" y="61" class="pd-mode-t" text-anchor="middle">NORMAL</text>
+        <text x="544" y="61" class="pd-file">proofs/Theorems.lean</text>
         <text x="1088" y="61" class="pd-note" text-anchor="end">lean · 79:9</text>
-        <g class="pd-ln" text-anchor="end"><text x="486" y="96">79</text><text x="486" y="114">80</text><text x="486" y="132">81</text><text x="486" y="150">82</text><text x="486" y="168">83</text><text x="486" y="186">85</text><text x="486" y="204">86</text></g>
-        <g class="pd-src pd-lean" xml:space="preserve">
+        <g class="pd-ln" text-anchor="end"><text x="508" y="96">79</text><text x="508" y="114">80</text><text x="508" y="132">81</text><text x="508" y="150">82</text><text x="508" y="168">83</text><text x="508" y="186">85</text><text x="508" y="204">86</text></g>
+        <g class="pd-src pd-lean" xml:space="preserve" transform="translate(22 0)">
           <text x="500" y="96"><tspan class="pd-kw">theorem</tspan> authorized <tspan class="pd-pu">(</tspan>a <tspan class="pd-pu">:</tspan> <tspan class="pd-ty">Principal</tspan><tspan class="pd-pu">)</tspan> <tspan class="pd-pu">(</tspan>s <tspan class="pd-pu">:</tspan> <tspan class="pd-ty">Snapshot</tspan><tspan class="pd-pu">)</tspan> <tspan class="pd-pu">(</tspan>c <tspan class="pd-pu">:</tspan> <tspan class="pd-ty">Command</tspan><tspan class="pd-pu">)</tspan> ws r</text>
           <text x="500" y="114">    <tspan class="pd-pu">(</tspan>hinv <tspan class="pd-pu">:</tspan> <tspan class="pd-ty">Inv</tspan> <tspan class="pd-pu">(</tspan><tspan class="pd-ty">Snapshot.toSt</tspan> s<tspan class="pd-pu">)</tspan><tspan class="pd-pu">)</tspan> <tspan class="pd-pu">(</tspan>h <tspan class="pd-pu">:</tspan> transition a s c <tspan class="pd-pu">=</tspan> <tspan class="pd-pu">.</tspan>ok <tspan class="pd-pu">(</tspan><tspan class="pd-pu">.</tspan><tspan class="pd-ty">Ok</tspan> <tspan class="pd-pu">(</tspan>ws<tspan class="pd-pu">,</tspan> r<tspan class="pd-pu">)</tspan><tspan class="pd-pu">)</tspan><tspan class="pd-pu">)</tspan> <tspan class="pd-pu">:</tspan></text>
           <text x="500" y="132">    <tspan class="pd-pu">∀</tspan> w <tspan class="pd-pu">∈</tspan> ws.val<tspan class="pd-pu">,</tspan> allowed <tspan class="pd-pu">(</tspan><tspan class="pd-ty">Snapshot.toSt</tspan> s<tspan class="pd-pu">)</tspan> a.user.val w <tspan class="pd-pu">:</tspan><tspan class="pd-pu">=</tspan> <tspan class="pd-kw">by</tspan></text>
@@ -883,22 +889,22 @@
           <text x="500" y="204">    simp <tspan class="pd-pu">[</tspan>hws<tspan class="pd-pu">]</tspan></text>
         </g>
         <!-- This PTX is a schematic excerpt, not a build artifact of the board tutorial above. -->
-        <text x="452" y="240" class="pd-lbl"><tspan class="pd-num">03</tspan>  optional GPU · Rust-CUDA</text>
-        <rect x="452.5" y="250.5" width="647" height="170" fill="#0b0b0a" stroke="var(--line2)"/>
-        <rect x="453" y="251" width="646" height="23" fill="var(--panel2)"/>
-        <path d="M452 274.5H1100" stroke="var(--line2)"/>
-        <rect x="453" y="251" width="58" height="23" class="pd-mode"/>
-        <text x="482" y="267" class="pd-mode-t" text-anchor="middle">PTX</text>
-        <text x="522" y="267" class="pd-file">search_batch · illustrative excerpt</text>
+        <text x="474" y="240" class="pd-lbl"><tspan class="pd-num">03</tspan>  optional GPU · Rust-CUDA</text>
+        <rect x="474.5" y="250.5" width="625" height="170" fill="#0b0b0a" stroke="var(--line2)"/>
+        <rect x="475" y="251" width="624" height="23" fill="var(--panel2)"/>
+        <path d="M474 274.5H1100" stroke="var(--line2)"/>
+        <rect x="475" y="251" width="58" height="23" class="pd-mode"/>
+        <text x="504" y="267" class="pd-mode-t" text-anchor="middle">PTX</text>
+        <text x="544" y="267" class="pd-file">search_batch · illustrative instruction excerpt</text>
         <text x="1088" y="267" class="pd-note" text-anchor="end">nvptx64-nvidia-cuda</text>
-        <g class="pd-ln" text-anchor="end"><text x="486" y="299">1</text><text x="486" y="320">2</text><text x="486" y="341">3</text><text x="486" y="362">4</text><text x="486" y="383">5</text><text x="486" y="404">6</text></g>
-        <g class="pd-src" xml:space="preserve">
-          <text x="500" y="299"><tspan class="pd-kw">.target</tspan> sm_86</text>
-          <text x="500" y="320"><tspan class="pd-kw">.address_size</tspan> 64</text>
-          <text x="500" y="341"><tspan class="pd-kw">.visible .entry</tspan> search_batch<tspan class="pd-pu">(...)</tspan> <tspan class="pd-pu">{</tspan></text>
-          <text x="500" y="362">    <tspan class="pd-cm">// shared Rust decision logic compiled for the device</tspan></text>
-          <text x="500" y="383">    <tspan class="pd-kw">ret</tspan><tspan class="pd-pu">;</tspan></text>
-          <text x="500" y="404"><tspan class="pd-pu">}</tspan></text>
+        <g class="pd-ln" text-anchor="end"><text x="508" y="299">…</text><text x="508" y="404">…</text></g>
+        <g class="pd-src" xml:space="preserve" transform="translate(22 0)">
+          <text x="500" y="299"><tspan class="pd-cm">// …</tspan></text>
+          <text x="500" y="320"><tspan class="pd-kw">ld.global.u8</tspan>  %r1, [%rd1]<tspan class="pd-pu">;</tspan></text>
+          <text x="500" y="341"><tspan class="pd-kw">setp.ne.u32</tspan>   %p1, %r1, 0<tspan class="pd-pu">;</tspan></text>
+          <text x="500" y="362"><tspan class="pd-kw">selp.u32</tspan>      %r2, 1, 0, %p1<tspan class="pd-pu">;</tspan></text>
+          <text x="500" y="383"><tspan class="pd-kw">st.global.u32</tspan> [%rd2], %r2<tspan class="pd-pu">;</tspan></text>
+          <text x="500" y="404"><tspan class="pd-cm">// …</tspan></text>
         </g>
       </svg>
       </div>
