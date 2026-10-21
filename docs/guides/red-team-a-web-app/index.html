@@ -1,0 +1,123 @@
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Red-team a web app with h5i | h5i</title><meta name="description" content="Use a scoped browser session, reconnaissance, and HTTP replay to investigate access control and authentication bugs in a running web app.">
+<meta name="author" content="h5i-dev"><meta name="theme-color" content="#D21C1C">
+<meta name="color-scheme" content="dark"><meta name="robots" content="index, follow, max-image-preview:large">
+<link rel="canonical" href="https://h5i.dev/guides/red-team-a-web-app/"><link rel="icon" type="image/png" href="/_static/logo.png">
+<meta property="og:type" content="article"><meta property="og:site_name" content="h5i">
+<meta property="og:title" content="Red-team a web app with h5i | h5i"><meta property="og:description" content="Use a scoped browser session, reconnaissance, and HTTP replay to investigate access control and authentication bugs in a running web app.">
+<meta property="og:url" content="https://h5i.dev/guides/red-team-a-web-app/"><meta property="og:image" content="https://h5i.dev/_static/social-card.png">
+<meta property="og:image:alt" content="The h5i logo beside the words Agent-Native Web-Security"><meta property="og:locale" content="en_US">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Red-team a web app with h5i | h5i">
+<meta name="twitter:description" content="Use a scoped browser session, reconnaissance, and HTTP replay to investigate access control and authentication bugs in a running web app."><meta name="twitter:image" content="https://h5i.dev/_static/social-card.png">
+<meta name="twitter:image:alt" content="The h5i logo beside the words Agent-Native Web-Security">
+<script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "headline": "Red-Team a Web App",
+      "description": "Use a scoped browser session, reconnaissance, and HTTP replay to investigate access control and authentication bugs in a running web app.",
+      "author": {
+        "@type": "Organization",
+        "name": "h5i-dev"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "h5i"
+      },
+      "datePublished": "2026-10-21",
+      "dateModified": "2026-10-21",
+      "image": "https://h5i.dev/_static/social-card.png",
+      "inLanguage": "en",
+      "isPartOf": {
+        "@id": "https://h5i.dev/#website"
+      },
+      "mainEntityOfPage": "https://h5i.dev/guides/red-team-a-web-app/"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Home",
+          "item": "https://h5i.dev/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Guides",
+          "item": "https://h5i.dev/guides/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "Red-Team a Web App",
+          "item": "https://h5i.dev/guides/red-team-a-web-app/"
+        }
+      ]
+    }
+  ]
+}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&amp;family=IBM+Plex+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/_static/blog.css?v=6ce29feabf"><link rel="stylesheet" href="/_static/highlight.css?v=31b98f34a5">
+</head>
+<body><nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/features/">Features</a></li><li><a href="/guides/">Guides</a></li>
+    <li><a href="/manual/">Manual</a></li><li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &rarr;</a></li>
+  </ul>
+</nav><main class="article-wrap"><article class="post">
+<header><div class="post-eyebrow">Guide 02 / Red-teaming &middot; 2026-10-21</div>
+<h1>Red-Team a Web App</h1><p class="post-deck">A proof addresses the rule you stated. This workflow investigates the deployed app for the routes, identities, and edge cases you did not anticipate.</p>
+<div class="post-meta"><span>10 min read</span><span>Browser &middot; Recon &middot; HTTP replay</span></div></header>
+<div class="callout"><strong>Outcome.</strong> Open a scoped browser session, build an endpoint inventory, change one captured request, and decide what the response does and does not establish.</div>
+<figure class="feature-figure"><img src="/_static/agent-audit-target.svg" alt="An agent browser reaches an authorized target through a policy and request record"><figcaption>Keep the scope, browser actions, HTTP evidence, and interpretation separate throughout the test.</figcaption></figure>
+<p>Use these tools only for an application you own or have explicit permission to test. Record the allowed hosts, accounts, techniques, rate, and time window first. The browser policy can restrict destinations; it cannot grant authorization.</p>
+<h2 id="prepare">1. Install the tools and open a scoped session</h2>
+<pre><code class="language-bash">curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec --recon
+h5i browser open https://target.example --allow target.example
+h5i browser status</code></pre>
+<p>Replace <code>target.example</code> with an allowed origin. The browser session records the traffic it sends and the policy decisions that permit or refuse requests. Captured messages may contain credentials or personal data, so treat them as sensitive test evidence.</p>
+<h2 id="recon">2. Discover before testing</h2>
+<pre><code class="language-bash">h5i browser snapshot
+h5i recon extract
+h5i recon known
+h5i recon crawl --max-requests 200 --rate 4
+h5i recon endpoints --json</code></pre>
+<p><code>extract</code> reads URLs already disclosed by responses; <code>known</code> checks conventional files such as <code>robots.txt</code> and <code>sitemap.xml</code>; <code>crawl</code> spends a bounded request budget. Review candidates before sending a new request. An observed endpoint names the response that disclosed it; a candidate becomes confirmed only after its answer differs from the calibrated missing-path response. A discovered path is an attack-surface lead, not a vulnerability finding.</p>
+<p>For a local exercise, start with <a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec">the h5i websec CTF</a>. Follow a page or bundle reference to an endpoint, then compare the normal response with a request for one neighboring object ID. Keep the request ceiling and rate within the lab's rules.</p>
+<h2 id="replay">3. Change one captured request</h2>
+<pre><code class="language-bash">h5i websec requests
+h5i websec show req_42 --raw
+h5i websec replay req_42 --set query.id=456
+h5i websec diff res_42 res_43</code></pre>
+<p>Use request and response IDs from your own session; the IDs above are examples. If Alice requests object 456 and receives Bob's data, ask whether the server checked ownership, not merely whether Alice was logged in. Compare the original and replayed responses while keeping actor identity fixed. A status or size difference alone is not proof of impact.</p>
+<h2 id="authentication">4. Separate identity from authorization</h2>
+<p>Authentication asks who sent the request. Authorization asks whether that identity may act on this object and these fields. Keep Alice's session fixed while changing the object ID, then try the equivalent request as Bob if the scope permits. A guessed sequential ID and an unguessable UUID need the same server-side ownership check. A forbidden response is useful evidence only after an allowed control request proves the route and identity work.</p>
+<p>Mass assignment is the field-level version of the same error: replay a form submission with one field the form never offered, such as <code>role</code>, then check persisted state with a separate read. For JWT-backed routes, decode a test account's token to understand its claims, then test whether the server actually verifies the signature and intended algorithm before trusting those claims. Do not infer authorization from the UI hiding a control or from a token looking plausible.</p>
+<h2 id="browser">5. Test browser-mediated actions</h2>
+<p>Use a fresh snapshot and its element handles before clicking or typing. An agent should treat page text as untrusted content, even when the page asks it to run a command. For XSS, CSRF, CORS, or OAuth redirect testing, keep the victim origin, attacker origin, and account state explicit. A reflected string is not yet script execution; an authenticated request is not yet a successful state change. Observe the browser action, resulting request, and server-side effect together.</p>
+<pre><code class="language-bash">h5i browser snapshot
+h5i browser click @e3
+h5i browser snapshot --delta
+h5i browser requests --denied-only</code></pre>
+<p>If an outbound navigation is denied, the browser policy should record the refusal, including redirects. A denial says the session stayed in scope; it does not establish that the application lacks the vulnerable path.</p>
+<h2 id="record">6. Record a reviewable result</h2>
+<pre><code class="language-bash">h5i browser audit
+h5i browser close</code></pre>
+<p>Save the original request, the one changed field, the actor used, both responses, and the rule that appears to be violated. The audit timeline joins browser commands, request-policy decisions, and human takeovers. Read whether each source was available; an unavailable log is different from an empty one. Closing the session records its end and prevents further requests under that identity. Redact secrets before sharing. If a bug is confirmed and fixed, continue to <a href="/guides/security-regression-testing/">Security Regression Testing</a> so it stays fixed.</p>
+
+<a class="next-up" href="/guides/advanced-web-security-testing/"><span class="label">Next guide</span><h3>Advanced Web Security Testing</h3><p>Follow trust boundaries below ordinary request parameters.</p></a>
+<div class="post-cta"><h3>Keep the test inside its scope</h3><p>Use the browser, recon, and HTTP workbench under one recorded session.</p>
+<div class="hero-actions"><a class="btn btn-primary" href="/manual/#h5i-browser">Read the browser reference</a></div></div>
+</article></main><footer class="blog-footer"><div class="blog-footer-inner">
+  <div class="brand">h5i<span class="red"> / high-five</span></div>
+  <nav class="links"><a href="/">Home</a><a href="/guides/">Guides</a><a href="/blog/">Blog</a><a href="/manual/">Manual</a><a href="https://github.com/h5i-dev/h5i">GitHub</a></nav>
+  <div class="legal">Apache 2.0 &middot; Built with Rust</div>
+</div></footer>
+<script src="/_static/blog.js?v=41dbda103a" defer></script><script src="/_static/highlight.js?v=ed81eee4e6" defer></script></body></html>

@@ -1,0 +1,157 @@
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sandbox agent workflows with h5i | h5i</title><meta name="description" content="Run agent tools and untrusted pull requests in an h5i box, set file and network policy, and review activity in the local dashboard.">
+<meta name="author" content="h5i-dev"><meta name="theme-color" content="#D21C1C">
+<meta name="color-scheme" content="dark"><meta name="robots" content="index, follow, max-image-preview:large">
+<link rel="canonical" href="https://h5i.dev/guides/sandboxed-agent-workflows/"><link rel="icon" type="image/png" href="/_static/logo.png">
+<meta property="og:type" content="article"><meta property="og:site_name" content="h5i">
+<meta property="og:title" content="Sandbox agent workflows with h5i | h5i"><meta property="og:description" content="Run agent tools and untrusted pull requests in an h5i box, set file and network policy, and review activity in the local dashboard.">
+<meta property="og:url" content="https://h5i.dev/guides/sandboxed-agent-workflows/"><meta property="og:image" content="https://h5i.dev/_static/social-card.png">
+<meta property="og:image:alt" content="The h5i logo beside the words Agent-Native Web-Security"><meta property="og:locale" content="en_US">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Sandbox agent workflows with h5i | h5i">
+<meta name="twitter:description" content="Run agent tools and untrusted pull requests in an h5i box, set file and network policy, and review activity in the local dashboard."><meta name="twitter:image" content="https://h5i.dev/_static/social-card.png">
+<meta name="twitter:image:alt" content="The h5i logo beside the words Agent-Native Web-Security">
+<script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "headline": "Sandboxed Agent Workflows",
+      "description": "Run agent tools and untrusted pull requests in an h5i box, set file and network policy, and review activity in the local dashboard.",
+      "author": {
+        "@type": "Organization",
+        "name": "h5i-dev"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "h5i"
+      },
+      "datePublished": "2026-10-21",
+      "dateModified": "2026-10-21",
+      "image": "https://h5i.dev/_static/social-card.png",
+      "inLanguage": "en",
+      "isPartOf": {
+        "@id": "https://h5i.dev/#website"
+      },
+      "mainEntityOfPage": "https://h5i.dev/guides/sandboxed-agent-workflows/"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Home",
+          "item": "https://h5i.dev/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Guides",
+          "item": "https://h5i.dev/guides/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "Sandboxed Agent Workflows",
+          "item": "https://h5i.dev/guides/sandboxed-agent-workflows/"
+        }
+      ]
+    }
+  ]
+}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&amp;family=IBM+Plex+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/_static/blog.css?v=6ce29feabf"><link rel="stylesheet" href="/_static/highlight.css?v=31b98f34a5">
+</head>
+<body><nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/features/">Features</a></li><li><a href="/guides/">Guides</a></li>
+    <li><a href="/manual/">Manual</a></li><li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &rarr;</a></li>
+  </ul>
+</nav><main class="article-wrap"><article class="post">
+<header><div class="post-eyebrow">Guide 05 / Agent workflows &middot; 2026-10-21</div>
+<h1>Sandboxed Agent Workflows</h1><p class="post-deck">An agent task runs code long before it proposes a patch. Give the whole task a boundary, then inspect what happened before accepting its output.</p>
+<div class="post-meta"><span>15 min read</span><span>Sandbox &middot; Policy &middot; Dashboard</span></div></header>
+<div class="callout"><strong>Outcome.</strong> Create a disposable box for a coding task, define and inspect its policy, run the agent and tests inside it, review a pull request without giving it your checkout, and export the evidence before accepting a patch.</div>
+<figure class="feature-figure"><img src="/_static/fast-supervised-sandbox.svg" alt="An agent, repository, tools, dev server, and browser execute inside one policy-controlled box"><figcaption>The task runs inside one resolved boundary; the patch and execution record leave through review.</figcaption></figure>
+<p>Use a box when agent-written or untrusted code will execute. The unit of isolation is the whole task: agent, repository, package scripts, tools, dev server, and browser. A clean final diff says nothing about what an install hook tried to read or contact. Begin with a Git repository whose baseline you recognize, and choose one agent runtime for the box.</p>
+<h2 id="create">1. Check the host and create a local box</h2>
+<pre><code class="language-bash">curl -fsSL https://h5i.dev/install.sh | sh
+h5i box probe
+h5i box create first-box --from HEAD --profile agent-claude
+h5i box status first-box</code></pre>
+<p><code>probe</code> tests what this host can enforce. <code>create</code> freezes the base revision and resolves the profile before starting work. In <code>status</code>, check the selected isolation tier, whether the box shares the host kernel, writable paths, network destinations, resource limits, and policy digest. An explicit unavailable tier fails rather than silently changing tiers. For Codex, use <code>agent-codex</code> instead of <code>agent-claude</code>.</p>
+<h2 id="work">2. Run the task and read its execution record</h2>
+<pre><code class="language-bash">h5i box shell first-box
+# Inside the box: run the agent, build, and tests.
+exit
+h5i box run first-box -- cargo test
+h5i box diff first-box
+h5i box log first-box</code></pre>
+<p>The shell is the boundary for its child processes, including test runners and install scripts. <code>box run</code> is useful for a single repeatable command. Review the diff for what changed and the log for what ran, including failed tests and denied requests. A patch alone cannot establish that a test executed. When the task needs a service, start it in the same box session rather than silently relying on a host service.</p>
+<h2 id="policy">3. Check in a policy for repeatable work</h2>
+<p>Put the permissions in <code>.h5i/env.toml</code> so reviewers can see the intended boundary. This profile grants a workspace write path, denies other network destinations, and permits one API host:</p>
+<pre><code class="language-toml"># .h5i/env.toml
+[profile.review]
+isolation = &quot;supervised&quot;
+
+[profile.review.fs]
+read  = [&quot;/usr&quot;, &quot;/etc&quot;]
+write = [&quot;$WORK&quot;]
+
+[profile.review.net]
+mode   = &quot;deny&quot;
+egress = [&quot;api.github.com&quot;]
+unix   = false
+
+[profile.review.resources]
+mem   = &quot;4G&quot;
+procs = 256
+wall  = &quot;30m</code></pre>
+<pre><code class="language-bash">h5i box create policy-check --from HEAD --profile review
+h5i box status policy-check
+h5i box doctor policy-check
+h5i box rm policy-check</code></pre>
+<p><code>$WORK</code> is the box workspace. The exact filesystem grants depend on the runtime and host; inspect the resolved policy with <code>status</code> and <code>doctor</code> before using it for a task. Add a registry destination only when the build actually needs it. A denied telemetry request is not a reason to allow all egress. If the profile changes, create a new box: an existing box keeps the policy resolved at its creation.</p>
+<p>Credentials are separate grants. Check <code>h5i box secrets first-box</code> for resolution state without printing values. Do not copy a host home directory or place a real service token in inherited environment variables. The <a href="/manual/#policy">policy manual</a> explains the available fields and tier-specific enforcement. In particular, a hostname allowlist at the container tier relies on an HTTP proxy, while supervised and microVM tiers enforce at the network layer; read the reported tier before making a containment claim.</p>
+<h2 id="pull-request">4. Review an untrusted pull request in a detached box</h2>
+<pre><code class="language-bash">h5i box create review-1234 --pr 1234 --profile agent-claude
+h5i box status review-1234
+h5i box secrets review-1234
+h5i box shell review-1234
+# Inside the box: install from the lockfile and run the relevant tests.
+exit
+h5i box diff review-1234
+h5i box log review-1234</code></pre>
+<p>The host fetches and pins the PR head; the box receives an independent repository without the inherited <code>origin</code> remote or your GitHub credential. Confirm <code>status</code> says the box is detached before running package scripts. Use the project's real install and test commands, then inspect denied destinations, exit codes, browser errors, and the patch in that order. A detached PR box cannot use the local <code>propose</code>/<code>apply</code> path; that refusal prevents an accidental landing in the parent checkout.</p>
+<h2 id="dashboard">5. Observe browser work and take control when needed</h2>
+<pre><code class="language-bash">h5i box create browser-demo --from HEAD --profile browser
+h5i box shell browser-demo
+# Inside the box: start the dev server and browser; keep this shell open.</code></pre>
+<p>In another host terminal, start the viewer and dashboard, then take and release browser control when the human must handle a step:</p>
+<pre><code class="language-bash">h5i box view browser-demo
+h5i browser take browser-demo
+# Interact in the viewer, then return control.
+h5i browser release browser-demo
+h5i ui</code></pre>
+<p>Keep the box session alive while viewing its browser and dev server. The local dashboard shows sessions and activity; the viewer shows the page and allows a human takeover. A takeover invalidates the agent's old page handles, so it must take a fresh snapshot afterward. Use a fresh browser profile inside the box rather than importing daily cookies, extensions, and saved credentials. The viewer and dashboard help you observe work; the box policy remains the isolation boundary.</p>
+<h2 id="export">6. Export, decide, and remove the box</h2>
+<pre><code class="language-bash">h5i box export review-1234 --out ./review-1234
+git apply --check ./review-1234/patch.diff
+h5i box rm review-1234
+h5i box rm first-box</code></pre>
+<p>Read <code>report.md</code>, <code>patch.diff</code>, and <code>receipt.json</code> before applying anything. The report puts execution and denials beside the proposed change; the receipt identifies the resolved boundary. Absence of a network tally at a tier that cannot report one is not evidence that no connection was attempted. Keep the bundle needed for review and remove the disposable environment after the decision.</p>
+<p>If creation fails, rerun <code>h5i box probe</code> and inspect the requested tier. If dependencies fail to download, grant only the required registries or use a warm cache. If an agent cannot authenticate, inspect the runtime profile and <code>box secrets</code>. The <a href="/manual/#containment-optional">box command reference</a> and <a href="/manual/#the-console">dashboard reference</a> cover exact command options and limits.</p>
+
+<a class="next-up" href="/guides/build-and-verify-a-web-app/"><span class="label">Back to the first guide</span><h3>Build and Verify a Web App</h3><p>Start the development loop with a Rust kernel and a property to prove.</p></a>
+<div class="post-cta"><h3>Review before applying</h3><p>The patch and the execution record answer different questions.</p>
+<div class="hero-actions"><a class="btn btn-primary" href="/manual/#containment-optional">Read the box reference</a></div></div>
+</article></main><footer class="blog-footer"><div class="blog-footer-inner">
+  <div class="brand">h5i<span class="red"> / high-five</span></div>
+  <nav class="links"><a href="/">Home</a><a href="/guides/">Guides</a><a href="/blog/">Blog</a><a href="/manual/">Manual</a><a href="https://github.com/h5i-dev/h5i">GitHub</a></nav>
+  <div class="legal">Apache 2.0 &middot; Built with Rust</div>
+</div></footer>
+<script src="/_static/blog.js?v=41dbda103a" defer></script><script src="/_static/highlight.js?v=ed81eee4e6" defer></script></body></html>

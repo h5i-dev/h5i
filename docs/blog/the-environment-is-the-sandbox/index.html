@@ -27,7 +27,7 @@
         "name": "h5i"
       },
       "datePublished": "2026-08-21",
-      "dateModified": "2026-10-19",
+      "dateModified": "2026-10-21",
       "image": "https://h5i.dev/_static/social-card.png",
       "inLanguage": "en",
       "isPartOf": {
@@ -130,11 +130,11 @@
 <ol><li>Do package scripts, compiler helpers, tests, and servers inherit the boundary?</li><li>Which home directory, credentials, sockets, and network destinations can they reach?</li><li>Does browser work use a fresh profile inside the same boundary?</li><li>Is execution recorded somewhere the workload cannot edit?</li><li>Can the agent modify the parent repository without human approval?</li></ol>
 <p>If the answers describe several unrelated boundaries, part of the workload is probably still running with ambient host authority.</p>
 <h2 id="sources">Sources and further reading</h2>
-<ul><li><a href="/blog/the-h5i-loop/">Sandbox the entire workflow</a>, for the browser-to-patch workflow.</li><li><a href="/manual/#isolation-tiers">Isolation tiers</a>, for the enforcement and limits of each boundary.</li><li><a href="/guides/first-box/">The first-box guide</a>, for running one coding task in a box.</li></ul>
+<ul><li><a href="/blog/the-h5i-loop/">Sandbox the entire workflow</a>, for the browser-to-patch workflow.</li><li><a href="/manual/#isolation-tiers">Isolation tiers</a>, for the enforcement and limits of each boundary.</li><li><a href="/guides/sandboxed-agent-workflows/">Sandboxed Agent Workflows</a>, for running one coding task in a box.</li></ul>
 <h2 id="faq">Questions that come up</h2><div class="faq-list"><details class="faq-item"><summary>Is a Git worktree an agent sandbox?</summary><div class="faq-answer">No. A worktree separates checkouts and branches. It does not constrain the process tree, filesystem reads, credentials, sockets, network destinations, or browser state.</div></details><details class="faq-item"><summary>Why does the browser need to be inside?</summary><div class="faq-answer">The browser executes untrusted page code and holds session state. Keeping it beside the dev server gives both the same isolated localhost while preventing the agent from inheriting a user's normal browser profile.</div></details></div>
 <a class="next-up" href="/blog/choosing-agent-isolation/"><span class="label">Choose a mechanism</span><h3>How to choose an AI agent sandbox</h3><p>Select a tier by the failure it must prevent.</p></a>
 <div class="post-cta"><h3>Try the whole loop once</h3><p>Create a box, do one real task, and review the patch beside the execution record.</p>
-<div class="hero-actions"><a class="btn btn-primary" href="/guides/first-box/">Follow the first-box guide</a></div></div>
+<div class="hero-actions"><a class="btn btn-primary" href="/guides/sandboxed-agent-workflows/">Follow the sandbox guide</a></div></div>
 </article></main><footer class="blog-footer"><div class="blog-footer-inner">
   <div class="brand">h5i<span class="red"> / high-five</span></div>
   <nav class="links"><a href="/">Home</a><a href="/guides/">Guides</a><a href="/blog/">Blog</a><a href="/manual/">Manual</a><a href="https://github.com/h5i-dev/h5i">GitHub</a></nav>

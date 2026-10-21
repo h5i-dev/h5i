@@ -1,0 +1,145 @@
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Build and verify a Rust web app with Lean 4 | h5i</title><meta name="description" content="Create an h5i-app project, keep decisions in a Rust kernel, prove a property in Lean 4, and use mutation testing to check the specification.">
+<meta name="author" content="h5i-dev"><meta name="theme-color" content="#D21C1C">
+<meta name="color-scheme" content="dark"><meta name="robots" content="index, follow, max-image-preview:large">
+<link rel="canonical" href="https://h5i.dev/guides/build-and-verify-a-web-app/"><link rel="icon" type="image/png" href="/_static/logo.png">
+<meta property="og:type" content="article"><meta property="og:site_name" content="h5i">
+<meta property="og:title" content="Build and verify a Rust web app with Lean 4 | h5i"><meta property="og:description" content="Create an h5i-app project, keep decisions in a Rust kernel, prove a property in Lean 4, and use mutation testing to check the specification.">
+<meta property="og:url" content="https://h5i.dev/guides/build-and-verify-a-web-app/"><meta property="og:image" content="https://h5i.dev/_static/social-card.png">
+<meta property="og:image:alt" content="The h5i logo beside the words Agent-Native Web-Security"><meta property="og:locale" content="en_US">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Build and verify a Rust web app with Lean 4 | h5i">
+<meta name="twitter:description" content="Create an h5i-app project, keep decisions in a Rust kernel, prove a property in Lean 4, and use mutation testing to check the specification."><meta name="twitter:image" content="https://h5i.dev/_static/social-card.png">
+<meta name="twitter:image:alt" content="The h5i logo beside the words Agent-Native Web-Security">
+<script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "headline": "Build and Verify a Web App",
+      "description": "Create an h5i-app project, keep decisions in a Rust kernel, prove a property in Lean 4, and use mutation testing to check the specification.",
+      "author": {
+        "@type": "Organization",
+        "name": "h5i-dev"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "h5i"
+      },
+      "datePublished": "2026-10-21",
+      "dateModified": "2026-10-21",
+      "image": "https://h5i.dev/_static/social-card.png",
+      "inLanguage": "en",
+      "isPartOf": {
+        "@id": "https://h5i.dev/#website"
+      },
+      "mainEntityOfPage": "https://h5i.dev/guides/build-and-verify-a-web-app/"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Home",
+          "item": "https://h5i.dev/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Guides",
+          "item": "https://h5i.dev/guides/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "Build and Verify a Web App",
+          "item": "https://h5i.dev/guides/build-and-verify-a-web-app/"
+        }
+      ]
+    }
+  ]
+}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&amp;family=IBM+Plex+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/_static/blog.css?v=6ce29feabf"><link rel="stylesheet" href="/_static/highlight.css?v=31b98f34a5">
+</head>
+<body><nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/features/">Features</a></li><li><a href="/guides/">Guides</a></li>
+    <li><a href="/manual/">Manual</a></li><li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &rarr;</a></li>
+  </ul>
+</nav><main class="article-wrap"><article class="post">
+<header><div class="post-eyebrow">Guide 01 / Framework &middot; 2026-10-21</div>
+<h1>Build and Verify a Web App</h1><p class="post-deck">Build the application in Rust, then make the rule you care about explicit enough for Lean 4 to check it. The small kernel is where implementation and proof meet.</p>
+<div class="post-meta"><span>10 min read</span><span>Rust &middot; Axum &middot; Lean 4</span></div></header>
+<div class="callout"><strong>Outcome.</strong> Create an h5i-app project, identify the Rust logic that needs a proof, run extraction and proof checks, and use an intentional mutation to test whether the specification notices a bug.</div>
+<figure class="feature-figure"><img src="/_static/calculator-rust-lean-proof.svg" alt="A Rust calculator kernel is extracted into Lean definitions, checked against a handwritten specification, and tested with mutations"><figcaption>The Rust kernel is the implementation; the Lean specification states the intended rule.</figcaption></figure>
+<p>Tests can show what happened for chosen inputs. A theorem can state a rule over every input covered by its model. For a web app, that rule might say a user can only change their own record, a balance cannot become negative, or a state transition preserves an invariant. The proof is useful only when it describes the Rust that actually runs and when its assumptions are understood.</p>
+<h2 id="architecture">1. Put application decisions in a Rust kernel</h2>
+<p>h5i-app uses Axum for HTTP and a separate kernel for application decisions. The handler authenticates a request and passes the actor, current state, and command to the kernel. The kernel returns a proposed write and reply, or a refusal. Keeping HTTP and database access out of this function gives the translation toolchain a focused Rust program to model in Lean 4.</p>
+<pre><code class="language-text">HTTP request → Axum handler → Rust kernel(actor, snapshot, command)
+                                  ↓
+                       write + reply, or refusal</code></pre>
+<p>The <a href="https://github.com/h5i-dev/h5i/blob/main/examples/app/calculator/TUTORIAL.md">calculator example</a> stores one memory value per user. Its <code>transition</code> function decides whether an operation is valid and which row may change. The same shape works for authorization, tenant isolation, and business workflows.</p>
+<pre><code class="language-rust">// From the calculator kernel&#x27;s transition match:
+Command::Set { value } =&gt; Ok((
+    Some(Memory { user: actor.user, value: *value }),
+    Reply::Value(*value),
+)),</code></pre>
+<p>This branch constructs a write for <code>actor.user</code>. The caller's identity comes from the handler, while the command supplies only the new value. The full <code>transition</code> also handles arithmetic and reads.</p>
+<h2 id="scaffold">2. Scaffold a project</h2>
+<pre><code class="language-bash">h5i app new counter
+cd counter
+h5i app doctor</code></pre>
+<p>The new project has a Rust kernel, a <code>proofs/</code> directory, and <code>h5i-app.toml</code> to describe extraction and proof targets. <code>doctor</code> checks the pinned Charon, Aeneas, and Lean toolchain. If you already have a Rust project, <code>cargo add h5i-app</code> adds the framework, but you still need a kernel and proof project; the <a href="/manual/#h5i-app">app manual</a> describes that layout.</p>
+<h2 id="specification">3. State the property before proving it</h2>
+<p>Decide which rule must hold. In the calculator, a useful property is that a successful command writes only the caller's memory. Another is that an arithmetic operation either returns its mathematical result or the specified refusal. Write the rule in the Lean specification, then prove it about the extracted kernel. A proof of the wrong rule is still a valid proof, so review the specification as carefully as the Rust code.</p>
+<p>For example, the Rust kernel refuses subtraction that would underflow:</p>
+<pre><code class="language-rust">// From the calculator kernel&#x27;s compute match:
+Op::Sub =&gt; {
+    if a &lt; b {
+        Err(Error::Underflow)
+    } else {
+        Ok(a - b)
+    }
+}</code></pre>
+<p>The handwritten Lean specification expresses the same rule over natural numbers. It is deliberately simpler than the implementation, so a reviewer can check what the proof is supposed to establish.</p>
+<pre><code class="language-lean">-- proofs/Spec.lean: the intended arithmetic
+def eval : Op → Nat → Nat → Except Error Nat
+  | .Add, a, b =&gt; if a + b &lt; 2 ^ 64 then .ok (a + b) else .error .Overflow
+  | .Sub, a, b =&gt; if b ≤ a then .ok (a - b) else .error .Underflow
+  | .Mul, a, b =&gt; if a * b &lt; 2 ^ 64 then .ok (a * b) else .error .Overflow
+  | .Div, a, b =&gt; if b = 0 then .error .DivByZero else .ok (a / b)</code></pre>
+<p>Charon extracts the Rust kernel into an intermediate form and Aeneas emits Lean definitions under <code>proofs/generated/</code>. Keep handwritten theorems outside that generated directory. This avoids maintaining a second handwritten implementation that could drift from Rust.</p>
+<h2 id="prove">4. Extract and check the proofs</h2>
+<pre><code class="language-bash">h5i app extract
+h5i app prove</code></pre>
+<p><code>extract</code> refreshes the Lean model. <code>prove</code> runs extraction and checks the configured proof targets. One theorem in the calculator connects the extracted <code>transition</code> to the ownership rule:</p>
+<pre><code class="language-lean">-- proofs/Proofs.lean: a successful command writes only the caller&#x27;s row
+theorem writes_own_memory (a : Principal) (s : Snapshot) (c : Command) :
+    transition a s c ⦃ r =&gt; ∀ w reply, r = .Ok (w, reply) →
+      ∀ m, w = some m → m.user = a.user ⦄ := by
+  unfold transition
+  cases c &lt;;&gt; step* &lt;;&gt; (try split) &lt;;&gt; simp_all</code></pre>
+<p>The theorem covers every command case in this model, including the arithmetic branch. In CI, <code>h5i app extract --check</code> verifies that committed generated files match the current Rust kernel without rewriting them. Run the application's ordinary tests too: they exercise adapters and deployments that a kernel proof does not cover.</p>
+<h2 id="mutate">5. Make the proof fail on purpose</h2>
+<pre><code class="language-bash">h5i app lint
+h5i app mutate</code></pre>
+<p><code>lint</code> checks route authentication structure. <code>mutate</code> changes the kernel in a temporary copy and rebuilds the proofs. A mutation that survives identifies behavior the present specification has not pinned down. For example, changing a subtraction boundary from <code>a &lt; b</code> to <code>a &lt;= b</code> should break a theorem that specifies the equal case. Review a surviving mutation before adding a property; it may also be irrelevant to the intended contract.</p>
+<h2 id="boundary">What the proof covers</h2>
+<p>Lean checks stated properties of the extracted kernel under explicit assumptions. It does not automatically prove authentication adapters, the PostgreSQL implementation, deployment configuration, or GPU execution. Read the <a href="https://github.com/h5i-dev/h5i/blob/main/docs/app/TRUST.md">verification trust model</a> and test the running application as a separate step. The optional <a href="https://github.com/h5i-dev/h5i/blob/main/docs/app/GPU.md">GPU backend</a> is checked with CPU/GPU differential tests, not by the Lean kernel proof.</p>
+<h2 id="further-reading">Go deeper</h2>
+<p>This guide follows the workflow in the author's <a href="https://qiita.com/Koukyosyumei/items/dfcdc41ecd5b3c2388c0">Japanese h5i-app walkthrough</a>. For runnable source and complete Lean theorems, continue with the <a href="https://github.com/h5i-dev/h5i/blob/main/examples/app/calculator/TUTORIAL.md">calculator tutorial</a> and the <a href="https://github.com/h5i-dev/h5i/blob/main/crates/h5i-app/README.md">framework README</a>.</p>
+
+<a class="next-up" href="/guides/red-team-a-web-app/"><span class="label">Next guide</span><h3>Red-Team a Web App</h3><p>Test the running application after proving the properties you can state.</p></a>
+<div class="post-cta"><h3>Start with a property you care about</h3><p>Keep the Rust kernel and its Lean specification small enough to review together.</p>
+<div class="hero-actions"><a class="btn btn-primary" href="/manual/#h5i-app">Read the app manual</a></div></div>
+</article></main><footer class="blog-footer"><div class="blog-footer-inner">
+  <div class="brand">h5i<span class="red"> / high-five</span></div>
+  <nav class="links"><a href="/">Home</a><a href="/guides/">Guides</a><a href="/blog/">Blog</a><a href="/manual/">Manual</a><a href="https://github.com/h5i-dev/h5i">GitHub</a></nav>
+  <div class="legal">Apache 2.0 &middot; Built with Rust</div>
+</div></footer>
+<script src="/_static/blog.js?v=41dbda103a" defer></script><script src="/_static/highlight.js?v=ed81eee4e6" defer></script></body></html>

@@ -27,7 +27,7 @@
         "name": "h5i"
       },
       "datePublished": "2026-08-21",
-      "dateModified": "2026-10-11",
+      "dateModified": "2026-10-21",
       "image": "https://h5i.dev/_static/social-card.png",
       "inLanguage": "en",
       "isPartOf": {
@@ -133,11 +133,11 @@
 <p>Inspect the resolved policy and answer five questions: Which host files are readable? Which reusable credentials enter the box? Which internet destinations and local sockets are reachable? Which browser profile is used? Can the box write directly to the parent repository?</p>
 <p>Test harmless denials for paths and destinations that should be unavailable. A security boundary should fail because of an enforced rule, not because the agent was asked to behave.</p>
 <h2 id="sources">Sources and further reading</h2>
-<ul><li><a href="/guides/write-a-box-policy/">Write a box policy</a>, for filesystem, network, socket, and resource controls.</li><li><a href="/manual/#credentials">Credential handling</a> and <a href="/manual/#af_unix-sockets">Unix-socket policy</a>.</li><li><a href="/guides/watch-the-browser/">Run the browser beside the dev server inside a box</a>.</li></ul>
+<ul><li><a href="/guides/sandboxed-agent-workflows/">Write a box policy</a>, for filesystem, network, socket, and resource controls.</li><li><a href="/manual/#credentials">Credential handling</a> and <a href="/manual/#af_unix-sockets">Unix-socket policy</a>.</li><li><a href="/guides/sandboxed-agent-workflows/">Run the browser beside the dev server inside a box</a>.</li></ul>
 <h2 id="faq">Questions that come up</h2><div class="faq-list"><details class="faq-item"><summary>Does sandboxing prevent source code from reaching the model?</summary><div class="faq-answer">No. A coding agent can include source in an allowed model request. Preventing that requires a self-hosted model or a policy with no model egress.</div></details><details class="faq-item"><summary>Are permission prompts still useful inside a box?</summary><div class="faq-answer">They catch mistakes and are fine to keep, but they are not the security boundary. A prompt-injected agent can approve or bypass its own application-level permissions; the box policy sits outside it.</div></details></div>
-<a class="next-up" href="/guides/write-a-box-policy/"><span class="label">Build the boundary</span><h3>Write down what the agent may reach</h3><p>Create a fail-closed profile for filesystem, network, and resources.</p></a>
+<a class="next-up" href="/guides/sandboxed-agent-workflows/"><span class="label">Build the boundary</span><h3>Write down what the agent may reach</h3><p>Create a fail-closed profile for filesystem, network, and resources.</p></a>
 <div class="post-cta"><h3>Limit what the agent can reach</h3><p>A narrow box makes a successful injection much less consequential.</p>
-<div class="hero-actions"><a class="btn btn-primary" href="/guides/write-a-box-policy/">Write a policy</a></div></div>
+<div class="hero-actions"><a class="btn btn-primary" href="/guides/sandboxed-agent-workflows/">Write a policy</a></div></div>
 </article></main><footer class="blog-footer"><div class="blog-footer-inner">
   <div class="brand">h5i<span class="red"> / high-five</span></div>
   <nav class="links"><a href="/">Home</a><a href="/guides/">Guides</a><a href="/blog/">Blog</a><a href="/manual/">Manual</a><a href="https://github.com/h5i-dev/h5i">GitHub</a></nav>

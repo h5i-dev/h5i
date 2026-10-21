@@ -27,7 +27,7 @@
         "name": "h5i"
       },
       "datePublished": "2026-08-21",
-      "dateModified": "2026-10-19",
+      "dateModified": "2026-10-21",
       "image": "https://h5i.dev/_static/social-card.png",
       "inLanguage": "en",
       "isPartOf": {
@@ -208,14 +208,13 @@ $ h5i box cache ls            # which are stale, and therefore unused</code></pr
 <ul>
 <li><a href="/blog/the-environment-is-the-sandbox/">Why sandbox the entire AI agent workload</a>, for the threat model behind the workflow.</li>
 <li><a href="/blog/evidence-for-agent-work/">Review AI-generated code with execution evidence</a>, for what a diff, receipt, and agent summary can each establish.</li>
-<li><a href="/guides/first-box/">The first-box guide</a>, for running this workflow once on a real repository.</li>
-<li><a href="/guides/watch-the-browser/">Watch the browser</a>, for dev-server loopback and human control transfer.</li>
-<li><a href="/manual/#the-loop">The manual</a>, for every flag named above.</li>
+<li><a href="/guides/sandboxed-agent-workflows/">Sandboxed Agent Workflows</a>, for running this workflow once on a real repository and observing browser work.</li>
+<li><a href="/manual/#command-groups">The manual</a>, for every flag named above.</li>
 </ul>
 <h2 id="faq">Questions that come up</h2><div class="faq-list"><details class="faq-item"><summary>How does the browser get into the box?</summary><div class="faq-answer">Create the box with --profile browser. Its Chromium, driven by agent-browser, runs inside the box under its resolved policy; drive it with h5i box run <box> -- agent-browser ..., or from inside a box shell.</div></details><details class="faq-item"><summary>What is the difference between export and apply?</summary><div class="faq-answer">export writes patch.diff, report.md and receipt.json to a directory and touches nothing else, so you decide what happens next. apply lands the work directly on the parent repository and is only available when the box came from that repository. On a detached box, created from a URL, a pull request or --new, apply refuses and points at export.</div></details></div>
 <a class="next-up" href="/blog/the-environment-is-the-sandbox/"><span class="label">Why sandbox it</span><h3>Why sandbox the entire AI agent workload</h3><p>See why dependencies, tools, tests, servers, and browsers need one boundary.</p></a>
 <div class="post-cta"><h3>Start with one box</h3><p>Run h5i box probe, create a box, and inspect what the host actually enforced.</p>
-<div class="hero-actions"><a class="btn btn-primary" href="/guides/first-box/">Follow the first-box guide</a></div></div>
+<div class="hero-actions"><a class="btn btn-primary" href="/guides/sandboxed-agent-workflows/">Follow the sandbox guide</a></div></div>
 </article></main><footer class="blog-footer"><div class="blog-footer-inner">
   <div class="brand">h5i<span class="red"> / high-five</span></div>
   <nav class="links"><a href="/">Home</a><a href="/guides/">Guides</a><a href="/blog/">Blog</a><a href="/manual/">Manual</a><a href="https://github.com/h5i-dev/h5i">GitHub</a></nav>

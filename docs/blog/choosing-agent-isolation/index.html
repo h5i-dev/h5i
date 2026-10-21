@@ -27,7 +27,7 @@
         "name": "h5i"
       },
       "datePublished": "2026-08-21",
-      "dateModified": "2026-10-11",
+      "dateModified": "2026-10-21",
       "image": "https://h5i.dev/_static/social-card.png",
       "inLanguage": "en",
       "isPartOf": {
@@ -131,9 +131,9 @@ $ h5i box status review-1234</code></pre></div></div>
 <h2 id="platform">Platform limits still apply</h2>
 <p>Linux and macOS do not provide identical enforcement. Linux supplies Landlock, seccomp, network namespaces, nftables, and cgroups. macOS uses Seatbelt and lacks equivalents for some network and resource controls. h5i reports unsupported controls instead of presenting them as active.</p>
 <h2 id="sources">Sources and further reading</h2>
-<ul><li><a href="/manual/#isolation-tiers">The isolation-tier reference</a>, including platform-specific limits.</li><li><a href="/guides/write-a-box-policy/">Write a box policy</a>, for storing the chosen controls in the repository.</li><li><a href="/blog/the-environment-is-the-sandbox/">Why sandbox the entire AI agent workload</a>, for the motivation behind using one boundary.</li></ul>
+<ul><li><a href="/manual/#isolation-tiers">The isolation-tier reference</a>, including platform-specific limits.</li><li><a href="/guides/sandboxed-agent-workflows/">Write a box policy</a>, for storing the chosen controls in the repository.</li><li><a href="/blog/the-environment-is-the-sandbox/">Why sandbox the entire AI agent workload</a>, for the motivation behind using one boundary.</li></ul>
 <h2 id="faq">Questions that come up</h2><div class="faq-list"><details class="faq-item"><summary>Should I use microVM for every agent task?</summary><div class="faq-answer">No. Use it when the workload must not share the host kernel. Process isolation is lighter for routine coding, supervised provides packet-level destination control, and container provides a fixed toolchain image.</div></details><details class="faq-item"><summary>Does container isolation block every off-list connection?</summary><div class="faq-answer">No. Its HTTP and HTTPS proxy constrains software that uses the proxy. Use supervised or microvm when raw off-list connections must fail at the network boundary.</div></details></div>
-<a class="next-up" href="/guides/write-a-box-policy/"><span class="label">Put it into practice</span><h3>Write a box policy</h3><p>Turn the threat model into a profile the repository can review.</p></a>
+<a class="next-up" href="/guides/sandboxed-agent-workflows/"><span class="label">Put it into practice</span><h3>Write a box policy</h3><p>Turn the threat model into a profile the repository can review.</p></a>
 <div class="post-cta"><h3>Ask the host what it can enforce</h3><p>Run the functional probe before choosing a tier by name.</p>
 <div class="hero-actions"><a class="btn btn-primary" href="/manual/#isolation-tiers">Compare the tiers</a></div></div>
 </article></main><footer class="blog-footer"><div class="blog-footer-inner">

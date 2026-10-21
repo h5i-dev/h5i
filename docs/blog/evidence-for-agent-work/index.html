@@ -27,7 +27,7 @@
         "name": "h5i"
       },
       "datePublished": "2026-08-21",
-      "dateModified": "2026-10-11",
+      "dateModified": "2026-10-21",
       "image": "https://h5i.dev/_static/social-card.png",
       "inLanguage": "en",
       "isPartOf": {
@@ -130,9 +130,9 @@
 └── receipt.json    # events, observer labels, policy digest</code></pre></div></div>
 <p>The bundle does not approve the patch. It gives the reviewer the code change, the policy applied to the run, and the available execution records in one place.</p>
 <h2 id="sources">Sources and further reading</h2>
-<ul><li><a href="/manual/#receipts">Receipt fields and observer labels</a>.</li><li><a href="/manual/#h5i-box-export">Export bundle contents and limits</a>.</li><li><a href="/guides/review-a-pull-request/">Review a pull request by running it in a detached box</a>.</li></ul>
+<ul><li><a href="/manual/#receipts">Receipt fields and observer labels</a>.</li><li><a href="/manual/#h5i-box-export">Export bundle contents and limits</a>.</li><li><a href="/guides/sandboxed-agent-workflows/">Review a pull request by running it in a detached box</a>.</li></ul>
 <h2 id="faq">Questions that come up</h2><div class="faq-list"><details class="faq-item"><summary>Is an h5i receipt tamper-proof?</summary><div class="faq-answer">It is protected from the box, not from a user who controls the host. h5i stores ingested receipts outside every filesystem grant held by the box; it does not provide third-party notarization.</div></details><details class="faq-item"><summary>Why keep agent-reported records at all?</summary><div class="faq-answer">They provide useful detail that an external observer may not have. The requirement is to label their source and compare them with host-observed events, not to discard testimony.</div></details></div>
-<a class="next-up" href="/guides/review-a-pull-request/"><span class="label">Use the method</span><h3>Review a pull request by running it</h3><p>Read the report in an evidence-first order.</p></a>
+<a class="next-up" href="/guides/sandboxed-agent-workflows/"><span class="label">Use the method</span><h3>Review a pull request by running it</h3><p>Read the report in an evidence-first order.</p></a>
 <div class="post-cta"><h3>Put the record beside the patch</h3><p>Export both, then review each artifact for the question it can actually answer.</p>
 <div class="hero-actions"><a class="btn btn-primary" href="/manual/#receipts">Read the receipt reference</a></div></div>
 </article></main><footer class="blog-footer"><div class="blog-footer-inner">

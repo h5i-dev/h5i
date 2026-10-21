@@ -1,0 +1,132 @@
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Security regression testing in CI/CD with h5i | h5i</title><meta name="description" content="Turn a confirmed web vulnerability into a versioned h5i test, give it an explicit verdict, and replay it against staging in CI/CD.">
+<meta name="author" content="h5i-dev"><meta name="theme-color" content="#D21C1C">
+<meta name="color-scheme" content="dark"><meta name="robots" content="index, follow, max-image-preview:large">
+<link rel="canonical" href="https://h5i.dev/guides/security-regression-testing/"><link rel="icon" type="image/png" href="/_static/logo.png">
+<meta property="og:type" content="article"><meta property="og:site_name" content="h5i">
+<meta property="og:title" content="Security regression testing in CI/CD with h5i | h5i"><meta property="og:description" content="Turn a confirmed web vulnerability into a versioned h5i test, give it an explicit verdict, and replay it against staging in CI/CD.">
+<meta property="og:url" content="https://h5i.dev/guides/security-regression-testing/"><meta property="og:image" content="https://h5i.dev/_static/social-card.png">
+<meta property="og:image:alt" content="The h5i logo beside the words Agent-Native Web-Security"><meta property="og:locale" content="en_US">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Security regression testing in CI/CD with h5i | h5i">
+<meta name="twitter:description" content="Turn a confirmed web vulnerability into a versioned h5i test, give it an explicit verdict, and replay it against staging in CI/CD."><meta name="twitter:image" content="https://h5i.dev/_static/social-card.png">
+<meta name="twitter:image:alt" content="The h5i logo beside the words Agent-Native Web-Security">
+<script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "headline": "Security Regression Testing",
+      "description": "Turn a confirmed web vulnerability into a versioned h5i test, give it an explicit verdict, and replay it against staging in CI/CD.",
+      "author": {
+        "@type": "Organization",
+        "name": "h5i-dev"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "h5i"
+      },
+      "datePublished": "2026-10-21",
+      "dateModified": "2026-10-21",
+      "image": "https://h5i.dev/_static/social-card.png",
+      "inLanguage": "en",
+      "isPartOf": {
+        "@id": "https://h5i.dev/#website"
+      },
+      "mainEntityOfPage": "https://h5i.dev/guides/security-regression-testing/"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Home",
+          "item": "https://h5i.dev/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Guides",
+          "item": "https://h5i.dev/guides/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "Security Regression Testing",
+          "item": "https://h5i.dev/guides/security-regression-testing/"
+        }
+      ]
+    }
+  ]
+}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&amp;family=IBM+Plex+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/_static/blog.css?v=6ce29feabf"><link rel="stylesheet" href="/_static/highlight.css?v=31b98f34a5">
+</head>
+<body><nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/features/">Features</a></li><li><a href="/guides/">Guides</a></li>
+    <li><a href="/manual/">Manual</a></li><li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &rarr;</a></li>
+  </ul>
+</nav><main class="article-wrap"><article class="post">
+<header><div class="post-eyebrow">Guide 04 / CI/CD &middot; 2026-10-21</div>
+<h1>Security Regression Testing</h1><p class="post-deck">A finding is most useful when the repaired application can demonstrate, on every build, that the same attack flow no longer works.</p>
+<div class="post-meta"><span>8 min read</span><span>h5i test &middot; Verdicts &middot; API coverage</span></div></header>
+<div class="callout"><strong>Outcome.</strong> Write a versioned test for a confirmed access-control bug, run it against staging, and make the CI result distinguish pass, failure, and an undecidable error.</div>
+<p>Begin with evidence from a permitted test: the request, the actor, the response, and the security property the fix should enforce. Do not encode a response status just because it appeared once; choose the condition that means the vulnerability is blocked.</p>
+<div class="tbl-wrap"><table class="data"><thead><tr><th>Result</th><th>What it means</th><th>CI action</th></tr></thead><tbody><tr><th>Pass</th><td>The stated expectation held for this run.</td><td>Keep the evidence with the job.</td></tr><tr><th>Fail</th><td>The application contradicted the security expectation.</td><td>Investigate the regression.</td></tr><tr><th>Error</th><td>The test could not decide, for example because setup failed.</td><td>Fix the run; do not count it as a pass.</td></tr></tbody></table></div>
+<h2 id="write">1. Save the flow with an explicit expectation</h2>
+<p>Tests live under <code>.h5i-tests/tests/</code> and use <code>version: h5i.test/v1</code>. This example assumes Alice can read post 41 but must not read Bob's post 42. Supply the token as a CI secret rather than committing it.</p>
+<pre><code class="language-yaml">version: h5i.test/v1
+id: post-ownership
+name: Alice cannot read Bob
+actors:
+  alice: {}
+requests:
+  own_post:
+    path: /api/posts/41
+    headers:
+      authorization: Bearer ${env.ALICE_TOKEN}
+  other_post:
+    path: /api/posts/42
+    headers:
+      authorization: Bearer ${env.ALICE_TOKEN}
+flow:
+  - send: own_post
+    as: alice
+    expect:
+      status: 200
+  - send: other_post
+    as: alice
+    expect:
+      status: 403</code></pre>
+<p>The first request confirms the actor is authenticated and the route works; the second checks ownership. For a property the built-in response checks cannot express, use an oracle. A test with neither an expectation nor an oracle is refused.</p>
+<h2 id="run">2. Run it against staging</h2>
+<pre><code class="language-bash">h5i plugin install test
+h5i test .h5i-tests/tests/post-ownership.yaml --target https://staging.example.com</code></pre>
+<p>Commit the test with the application fix. Give CI a staging target and an identity with only the permissions needed. For example, add this step to a job that deploys a disposable staging build and waits for it to become ready:</p>
+<pre><code class="language-yaml"># Inside a GitHub Actions job that can reach staging:
+- name: Replay security regression tests
+  env:
+    ALICE_TOKEN: ${{ secrets.STAGING_ALICE_TOKEN }}
+  run: |
+    curl -fsSL https://h5i.dev/install.sh | sh -s -- --test
+    h5i test .h5i-tests/tests/post-ownership.yaml --target https://staging.example.com</code></pre>
+<p>A failed property is different from an execution error; h5i does not turn an undecidable result into a pass. Review the recorded result and response artifacts when a job fails. Keep the staging token in the CI secret store and ensure the target uses test data that can be reset between runs.</p>
+<h2 id="coverage">3. Check API coverage deliberately</h2>
+<p>When the project has an OpenAPI description, <code>h5i test --openapi openapi.json</code> reports which declared operations the completed tests cover. Add <code>--min-coverage</code> only after reviewing the denominator and the operation mapping. A test that errored does not count as covered; a response assertion still has to express the security property.</p>
+<h2 id="extend">4. Keep the test maintainable</h2>
+<p>Use named actors and separate cookie jars for multi-user flows. Extract values from earlier responses when IDs change across runs. Keep setup and cleanup distinct from the verdict, and let cleanup failures remain visible. The <a href="/manual/#h5i-test">h5i test manual</a> defines the schema, oracle environment, and CI output. A complete checked-in example is the <a href="https://github.com/h5i-dev/h5i/blob/main/docs/demo/.h5i-tests/tests/board-auth.yaml">board authorization test</a>.</p>
+
+<a class="next-up" href="/guides/sandboxed-agent-workflows/"><span class="label">Next guide</span><h3>Sandboxed Agent Workflows</h3><p>Run agent work and untrusted code under an explicit boundary.</p></a>
+<div class="post-cta"><h3>Keep confirmed bugs fixed</h3><p>Save the security property as a test next to the application code.</p>
+<div class="hero-actions"><a class="btn btn-primary" href="/manual/#h5i-test">Read the test reference</a></div></div>
+</article></main><footer class="blog-footer"><div class="blog-footer-inner">
+  <div class="brand">h5i<span class="red"> / high-five</span></div>
+  <nav class="links"><a href="/">Home</a><a href="/guides/">Guides</a><a href="/blog/">Blog</a><a href="/manual/">Manual</a><a href="https://github.com/h5i-dev/h5i">GitHub</a></nav>
+  <div class="legal">Apache 2.0 &middot; Built with Rust</div>
+</div></footer>
+<script src="/_static/blog.js?v=41dbda103a" defer></script><script src="/_static/highlight.js?v=ed81eee4e6" defer></script></body></html>

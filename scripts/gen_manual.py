@@ -228,7 +228,7 @@ __NAV__
 __NAV_TOC__
     <div class="mn-foot">
       <a href="/guides/">Guides</a>
-      <a href="/guides/cheatsheet/">Cheatsheet</a>
+      <a href="/guides/advanced-web-security-testing/">Advanced testing</a>
     </div>
   </aside>
   <div class="manual-main">
