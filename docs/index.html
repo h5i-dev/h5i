@@ -341,8 +341,11 @@
     #cmv-sessions:checked ~ .console-plate .cm-view[for="cmv-sessions"], #cmv-boxes:checked ~ .console-plate .cm-view[for="cmv-boxes"], #cmv-apps:checked ~ .console-plate .cm-view[for="cmv-apps"] { color: var(--cm-ink); border-bottom-color: var(--cm-accent); }
     .browser-win .cm-topbar .vitals { display: none; }
     #cmv-sessions:checked ~ .console-plate .v-sessions, #cmv-boxes:checked ~ .console-plate .v-boxes, #cmv-apps:checked ~ .console-plate .v-apps { display: flex; }
-    .browser-win .cm-split { display: grid; }
+    .browser-win .cm-split { display: grid; position: relative; }
     .browser-win .cm-work { grid-area: 1 / 1; min-width: 0; visibility: hidden; }
+    /* The Apps preview must not make the shared dashboard frame taller. */
+    .browser-win .cm-work-apps { position: absolute; inset: 0; overflow: hidden; }
+    .browser-win .cm-work-apps .pu-main { min-height: 0; overflow-y: auto; }
     #cmv-sessions:checked ~ .console-plate .cm-work-sessions, #cmv-boxes:checked ~ .console-plate .cm-work-boxes, #cmv-apps:checked ~ .console-plate .cm-work-apps { visibility: visible; }
     .bw-text .u-view { display: none; }
     #cmv-sessions:checked ~ .bw-url .u-sessions, #cmv-boxes:checked ~ .bw-url .u-boxes, #cmv-apps:checked ~ .bw-url .u-apps { display: inline; }
@@ -366,10 +369,13 @@
       .browser-win .cm-wrap, .browser-win .cm-panel { overflow-x: auto; }
       .browser-win .cm-hist .cm-grid, .browser-win .cm-recon .cm-grid { min-width: 560px; }
       .browser-win .cm-lanes { min-width: 540px; }
-      .browser-win .cm-work-apps { overflow-x: auto; }
       .browser-win .cm-work-apps .pu-main { min-width: 440px; }
+      .browser-win .pu-graph-panel { overflow-x: auto; }
+      .browser-win .pu-graph { min-width: 500px; }
       /* on a phone the panes stop sharing one cell: only the open one takes up height */
       .browser-win .cm-pane, .browser-win .cm-work { display: none; visibility: visible; }
+      .browser-win .cm-work-apps { position: static; height: 12rem; overflow-x: auto; overflow-y: hidden; }
+      .browser-win .cm-work-apps .pu-main { overflow-y: auto; }
       #cmt-history:checked ~ .console-plate .cm-pane-history, #cmt-sitemap:checked ~ .console-plate .cm-pane-sitemap, #cmt-actions:checked ~ .console-plate .cm-pane-actions, #cmt-findings:checked ~ .console-plate .cm-pane-findings, #cmt-recon:checked ~ .console-plate .cm-pane-recon, #cmt-about:checked ~ .console-plate .cm-pane-about { display: block; }
       #cmv-sessions:checked ~ .console-plate .cm-work-sessions, #cmv-boxes:checked ~ .console-plate .cm-work-boxes, #cmv-apps:checked ~ .console-plate .cm-work-apps { display: flex; }
     }
@@ -418,6 +424,19 @@
     .pu-table td code { font-family: var(--cm-mono); font-size: 10px; color: var(--cm-violet); background: none; border: 0; padding: 0; }
     .pu-table td small { display: block; font-family: var(--cm-mono); font-size: 8.5px; color: var(--cm-ink-4); margin-top: 2px; }
     .pu-ok { font-family: var(--cm-mono); font-size: 9.5px; padding: 0 6px; border-radius: 3px; color: var(--cm-green); background: var(--cm-green-bg); white-space: nowrap; }
+    .pu-graph-panel { flex: 1; display: flex; flex-direction: column; min-height: 245px; margin: 12px; border: 1px solid var(--cm-line); border-radius: 5px; background: var(--cm-ground); overflow: hidden; }
+    .pu-graph-head { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; padding: 8px 12px; border-bottom: 1px solid var(--cm-line); background: var(--cm-surface); }
+    .pu-graph-head b { font-size: 11px; font-weight: 600; color: var(--cm-ink); }
+    .pu-graph-head span { font-family: var(--cm-mono); font-size: 9px; color: var(--cm-ink-3); }
+    .pu-graph { display: block; width: 100%; flex: 1; min-height: 205px; background-image: radial-gradient(var(--cm-line) .7px, transparent .7px); background-size: 18px 18px; }
+    .pu-graph-edge { fill: none; stroke: var(--cm-ink-3); stroke-width: 1.25; stroke-dasharray: 5 4; opacity: .8; }
+    .pu-graph-node rect { fill: var(--cm-surface); stroke: var(--cm-line-2); }
+    .pu-graph-node.guarantee rect { stroke: var(--cm-accent); stroke-width: 1.5; }
+    .pu-graph-node text { font-family: var(--cm-mono); }
+    .pu-graph-node .kind { font-size: 9px; letter-spacing: .08em; fill: var(--cm-ink-3); }
+    .pu-graph-node.theorem .kind { fill: var(--cm-violet); }
+    .pu-graph-node.specification .kind { fill: var(--cm-cyan); }
+    .pu-graph-node .name { font-size: 11px; fill: var(--cm-ink); }
     .pu-foot { margin-top: auto; padding: 7px 12px; border-top: 1px solid var(--cm-line); background: var(--cm-surface); color: var(--cm-ink-3); font-family: var(--cm-mono); font-size: 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .proof-flow .tabpick { position: absolute; opacity: 0; pointer-events: none; }
     /* the buffer list in the status line: the open file is ink, the other one is a click away */
@@ -931,9 +950,9 @@
         <p class="duet-lbl"><b>01</b> what the CLI enables</p>
         <ol class="verbs">
           <li><span class="cap-label">project tooling</span><b>Development &amp; Testing</b><p>Scaffold applications and verify properties with Lean 4.</p></li>
-          <li><span class="cap-label">browser &middot; HTTP &middot; reconnaissance</span><b>Agent-Native Red-Teaming</b><p>Let AI agents explore websites, discover attack surfaces, and inspect, modify, and replay HTTP traffic.</p></li>
+          <li><span class="cap-label">browser &middot; HTTP &middot; reconnaissance</span><b>Agent-Native Red-Teaming</b><p>Explore websites, discover attack surfaces, and inspect, modify, and replay HTTP traffic.</p></li>
           <li><span class="cap-label">CI/CD</span><b>Security Regression Testing</b><p>Turn findings into regression tests and run them in CI to catch recurring vulnerabilities.</p></li>
-          <li><span class="cap-label">sandbox &middot; dashboard</span><b>Sandboxed Workflows</b><p>Run agents with filesystem and network restrictions, and monitor their activity through a local dashboard.</p></li>
+          <li><span class="cap-label">sandbox &middot; dashboard</span><b>Sandboxed Workflows</b><p>Run agents with filesystem and network restrictions, and monitor their activity.</p></li>
         </ol>
       </div>
       <div class="duet-col">
@@ -1151,13 +1170,26 @@
                 <div class="cm-work cm-work-apps">
                   <div class="pu-main">
                     <div class="pu-head"><b>board</b><code>examples/app/board</code><span class="pu-pill">receipt &#183; just now</span></div>
-                    <div class="pu-tabs"><span>Spec</span><span class="on">Theorems <i>3</i></span><span>Trust boundary</span><span>Evidence</span></div>
+                    <div class="pu-tabs"><span class="on">Guarantees <i>3</i></span><span>Changes</span><span>Mutations</span></div>
                     <table class="pu-table">
                       <tr><th>theorem</th><th>status</th><th>mutants</th><th>axioms</th></tr>
                       <tr><td><code>authorized</code></td><td><span class="pu-ok">proven</span></td><td><span class="pu-ok">4 of 4 caught</span></td><td>standard</td></tr>
                       <tr><td><code>inv_preserved</code></td><td><span class="pu-ok">proven</span></td><td><span class="pu-ok">5 of 5 caught</span></td><td>standard</td></tr>
                       <tr><td><code>transition_total</code></td><td><span class="pu-ok">proven</span></td><td><span class="pu-ok">3 of 3 caught</span></td><td>standard</td></tr>
                     </table>
+                    <div class="pu-graph-panel">
+                      <div class="pu-graph-head"><b>Guarantee map · board</b><span>theorem–spec relationships · excerpt</span></div>
+                      <svg class="pu-graph" viewBox="0 0 620 230" role="img" aria-labelledby="pu-graph-title pu-graph-desc" xmlns="http://www.w3.org/2000/svg">
+                        <title id="pu-graph-title">Board application guarantee map</title>
+                        <desc id="pu-graph-desc">A guarantee about who can delete a post is connected to two theorems and two specifications.</desc>
+                        <path class="pu-graph-edge" d="M190 104H220M190 115C207 115 203 180 220 180M390 65H420M390 180H420M305 102V142"/>
+                        <g class="pu-graph-node guarantee" transform="translate(20 72)"><rect width="170" height="78" rx="5"/><text class="kind" x="12" y="19">GUARANTEE</text><text class="name" x="12" y="41">Only the author or a</text><text class="name" x="12" y="57">moderator deletes a post</text></g>
+                        <g class="pu-graph-node theorem" transform="translate(220 28)"><rect width="170" height="74" rx="5"/><text class="kind" x="12" y="19">THEOREM</text><text class="name" x="12" y="42">Policy holds on</text><text class="name" x="12" y="58">reachable states</text></g>
+                        <g class="pu-graph-node theorem" transform="translate(220 142)"><rect width="170" height="74" rx="5"/><text class="kind" x="12" y="19">THEOREM</text><text class="name" x="12" y="49">What delete writes</text></g>
+                        <g class="pu-graph-node specification" transform="translate(420 28)"><rect width="180" height="74" rx="5"/><text class="kind" x="12" y="19">SPECIFICATION</text><text class="name" x="12" y="49">Permission policy</text></g>
+                        <g class="pu-graph-node specification" transform="translate(420 142)"><rect width="180" height="74" rx="5"/><text class="kind" x="12" y="19">SPECIFICATION</text><text class="name" x="12" y="49">Moderator membership</text></g>
+                      </svg>
+                    </div>
                     <div class="pu-foot">Lean 4 proofs and mutation checks for the latest verification receipt</div>
                   </div>
                 </div>
