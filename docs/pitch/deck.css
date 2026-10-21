@@ -182,6 +182,9 @@ figure { margin:0; }
 .kernel-fanout pre { margin:0; padding:12px 14px; font-size:12px; line-height:1.6; }
 .code-dim { color:var(--dim); }
 #slide-4 h2 { font-size:52px; }
+.slide-intro { max-width:1080px; margin-top:17px; font-size:18px; line-height:1.4; color:var(--text); }
+#slide-4 .kernel-fanout { margin-top:19px; }
+#slide-6 .shell-dashboard { margin-top:18px; }
 .kernel-fanout .rust-example { display:flex; flex-direction:column; }
 .kernel-fanout .rust-example pre { flex:1; }
 .kernel-note { border-top:1px solid var(--line); padding:11px 14px; font:11px var(--mono); color:var(--dim); }
@@ -193,6 +196,18 @@ figure { margin:0; }
 .test-note { display:flex; align-items:center; gap:22px; margin-top:15px; padding:11px 15px; border-left:2px solid var(--spot); background:var(--panel); }
 .test-note span { flex:none; color:var(--spot); font:11px var(--mono); letter-spacing:.1em; }
 .test-note code { font:12px var(--mono); color:var(--ink); overflow-wrap:anywhere; }
+.product-stack { display:grid; gap:14px; margin-top:30px; }
+.product-stack article { min-width:0; border:1px solid var(--line); padding:24px 28px; background:var(--panel); }
+.product-stack h3 { margin:10px 0 8px; font-size:29px; }
+.product-stack p { max-width:1010px; font-size:18px; line-height:1.4; color:var(--text); }
+.product-framework { border-left:3px solid var(--spot)!important; }
+.product-framework .index { color:var(--spot); }
+.product-tags { display:flex; flex-wrap:wrap; gap:10px; margin-top:17px; }
+.product-tags span { border:1px solid var(--line); padding:7px 11px; font:11px var(--mono); letter-spacing:.06em; color:var(--ink); }
+.product-stack .product-infrastructure { display:grid; grid-template-columns:minmax(0,1fr) 260px; gap:28px; align-items:end; }
+.product-infrastructure .product-scope { border-left:1px solid var(--spot); padding-left:15px; font-size:16px; color:var(--dim); }
+.close h2 { font-size:70px; }
+.closing .lead { max-width:700px; font-size:24px; }
 @media screen and (max-width:700px) {
   .enhanced body { overflow:auto; }
   #slide-3 .content, #slide-4 .content, #slide-5 .content, #slide-6 .content { padding:30px 0; }
@@ -206,6 +221,8 @@ figure { margin:0; }
   .session-ui-frame iframe { transform:scale(var(--workspace-scale,.342)); }
   .app-ui-frame iframe { transform:scale(var(--ui-scale,.2375)); }
   .product-map { grid-template-columns:1fr; }
+  .product-stack .product-infrastructure { grid-template-columns:1fr; gap:12px; }
+  .product-infrastructure .product-scope { align-self:start; }
   .product-title { font-size:47px; }
   .product-map article { padding:20px; }
   .security-pair,.product-visuals { grid-template-columns:1fr; }

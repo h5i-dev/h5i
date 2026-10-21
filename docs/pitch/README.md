@@ -7,11 +7,12 @@ provide presentation, mobile reading, keyboard navigation and print layouts.
 Without JavaScript, every slide remains readable in order.
 
 Keep the opening question and the founding insight about finding bugs and
-proving properties. Present h5i as a Rust web framework and CLI, then show
-Build → Verify → Hack with the existing code and UI evidence. Follow with
-early public interest. Customer development belongs briefly at the end;
-there are no customers to claim yet. Downloads and stars are interest signals,
-not active-user, retention or revenue metrics.
+proving properties. Present h5i as a verifiable Rust web framework, supported
+by development infrastructure that also works with existing web apps. Slides
+4 and 5 distinguish the kernel architecture from the properties proved with
+it; slide 6 demonstrates red-teaming tools. Customer development belongs
+briefly at the end; there are no customers to claim yet. Downloads and stars
+are interest signals, not active-user, retention or revenue metrics.
 
 The founding insight comes from the founder's PhD: finding bugs and proving
 correctness are two sides of the same coin, and secure software needs both.
@@ -20,15 +21,16 @@ red-teaming side works. Do not substitute that workflow for the founding thesis.
 Do not imply that the PhD credential establishes universal product guarantees;
 proof scope and assumptions remain explicit.
 
-The product overview shows build with composable Rust kernels, verify stated
-properties in Lean 4, and red-team the running app in a two-by-two layout. The
-contrasting fourth cell shows how h5i connects the work through its CLI,
-dashboard, and sandbox. Browser, traffic capture, recon, and CI/CD tests explain
-the red-teaming step. Keep GPU as a supporting kernel capability rather than
-making it a separate product claim.
+Slide 3 has two levels: the framework is the core product, and the CLI,
+dashboard and sandbox are development infrastructure. Kernel extraction to
+Lean 4 is the main architecture point. Keep GPU as an optional supporting
+kernel capability. Slide 4 shows Rust branching to Lean 4 verification and
+optional Rust-CUDA execution; Lean does not generate the GPU code or prove
+CPU/GPU equivalence.
 
-Slide 4 explains the build architecture as Axum → pure Rust kernel → storage.
-Keep it to one diagram; slide 5 carries the Rust and Lean code examples.
+Slide 5 keeps the Rust authorization branch, Lean theorem and actual h5i UI
+guarantee graph. Slide 6 keeps the shell and dashboard demonstration, with an
+explicit note that the tools work on applications outside h5i-app.
 
 For h5i websec, lead with the AI-friendly CLI and the dashboard that lets a
 human understand and manage the agent's work. Capture, editing and replay are
@@ -36,10 +38,9 @@ supporting tools, not the differentiator. Show the real dashboard layout, not a 
 so its text and borders remain sharp in the PDF. Dashboard controls refer to browser control
 and stopping the browser, not arbitrary agent termination or policy editing.
 
-The October 18, 2026 GitHub API snapshot reports **788 stars and 4,213 total
-release asset downloads** across 41 releases. The deck uses conservative
-floors of 780+ and 4.2k+. These are public interest signals, not customer or
-revenue metrics. The dashboard uses a static DOM/CSS snapshot of the real `h5i ui`, captured
+Slide 7 shows an October 21, 2026 snapshot: 2.1k+ release downloads and
+790+ GitHub stars. These are conservative interest signals, not
+customer numbers. The dashboard uses a static DOM/CSS snapshot of the real `h5i ui`, captured
 from a local demonstration session. It is not a screenshot or a UI mockup. Product boundaries follow `docs/app/TRUST.md` and
 the box policy guide. Design partners and paid pilots are future steps.
 
@@ -70,9 +71,9 @@ size, phone widths, keyboard/deep-link navigation and print output.
 ## Visuals
 
 Keep slides readable at a glance. Use short labels and diagrams instead of
-paragraphs. Slide 4 shows the actual Rust delete function from the board tutorial,
-with the web, kernel, and storage boundary beside it. Slide 5 repeats the
-relevant authorization branch and shows the Lean `authorized` theorem statement.
+paragraphs. Slide 4 shows the Rust `push_rule` kernel from the parallel example,
+with branches to its Lean proof and optional CUDA wrapper. Slide 5 shows the
+board tutorial's delete authorization branch and Lean `authorized` theorem statement.
 The proof body is explicitly
 omitted. Its Apps panel is a static capture of the actual `.app-map` guarantee graph
 component. No successful check or proof-run status has been fabricated.

@@ -43,9 +43,14 @@ function findHeadlessShell() {
   const dirs = readdirSync(root).filter(d => d.startsWith('chromium'))
     .sort((a, b) => (b.match(/\d+$/)?.[0] ?? 0) - (a.match(/\d+$/)?.[0] ?? 0));
   for (const d of dirs) {
-    for (const bin of ['headless_shell', 'chrome']) {
-      const p = path.join(root, d, 'chrome-linux', bin);
-      if (existsSync(p)) return p;
+    const platformDirs = process.arch === 'arm64'
+      ? ['chrome-linux-arm64', 'chrome-linux']
+      : ['chrome-linux', 'chrome-linux-arm64'];
+    for (const platformDir of platformDirs) {
+      for (const bin of ['headless_shell', 'chrome']) {
+        const p = path.join(root, d, platformDir, bin);
+        if (existsSync(p)) return p;
+      }
     }
   }
   return null;

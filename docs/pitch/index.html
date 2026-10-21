@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>h5i — Is the Web App Your AI Built Really Secure?</title>
-<meta name="description" content="The h5i pitch deck: build web apps with composable Rust kernels, verify critical logic in Lean 4, and hack running apps with agent-led security testing.">
+<meta name="description" content="The h5i pitch deck: a verifiable Rust web framework with Lean 4 proofs and integrated development infrastructure.">
 <meta name="author" content="h5i-dev">
 <meta name="theme-color" content="#D21C1C">
 <meta name="color-scheme" content="dark">
@@ -17,22 +17,22 @@
 <meta property="og:type" content="article">
 <meta property="og:site_name" content="h5i">
 <meta property="og:title" content="h5i — Is the Web App Your AI Built Really Secure?">
-<meta property="og:description" content="Build, verify, and hack web apps with h5i. Explore the framework, Lean 4 proofs, red-teaming workflow, and open-source adoption.">
+<meta property="og:description" content="Build and verify Rust web apps with h5i. Explore the framework, Lean 4 proofs, development tools, and open-source evidence.">
 <meta property="og:url" content="https://h5i.dev/pitch/">
 <meta property="og:image" content="https://h5i.dev/_static/social-card.png">
 <meta property="og:image:alt" content="h5i — Agent-Native Web Security">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="h5i — Is the Web App Your AI Built Really Secure?">
-<meta name="twitter:description" content="Build, verify, and hack web apps with h5i. Explore the framework, Lean 4 proofs, red-teaming workflow, and open-source adoption.">
+<meta name="twitter:description" content="Build and verify Rust web apps with h5i. Explore the framework, Lean 4 proofs, development tools, and open-source evidence.">
 <meta name="twitter:image" content="https://h5i.dev/_static/social-card.png">
 <meta name="twitter:image:alt" content="h5i — Agent-Native Web Security">
-<script type="application/ld+json">{"@context": "https://schema.org", "@type": "PresentationDigitalDocument", "name": "h5i OSS Pitch Deck", "description": "Build, verify, and hack web apps with composable Rust kernels, Lean 4 proofs, and agent-led red-teaming.", "url": "https://h5i.dev/pitch/", "dateModified": "2026-10-18", "inLanguage": "en", "author": {"@type": "Organization", "name": "h5i-dev", "url": "https://github.com/h5i-dev/h5i"}, "about": {"@id": "https://h5i.dev/#app"}}</script>
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "PresentationDigitalDocument", "name": "h5i OSS Pitch Deck", "description": "A verifiable Rust web framework with Lean 4 proofs and integrated development infrastructure.", "url": "https://h5i.dev/pitch/", "dateModified": "2026-10-21", "inLanguage": "en", "author": {"@type": "Organization", "name": "h5i-dev", "url": "https://github.com/h5i-dev/h5i"}, "about": {"@id": "https://h5i.dev/#app"}}</script>
 <link rel="stylesheet" href="deck.css">
 </head>
 <body>
 <main class="deck" id="deck" aria-label="h5i OSS pitch presentation">
 <section class="slide cover" id="slide-1" aria-labelledby="title-1">
-<div class="content"><div class="eyebrow">01 / The question</div><h1 id="title-1">Is the Web App Your AI Built<br><em>Really Secure?</em></h1><div class="hero-side"><p class="lead">h5i is an unified Rust framework for building, verifying, and hacking web apps.</p></div><div class="hero-strip"><span>BUILD / RUST KERNELS</span><span>VERIFY / LEAN 4</span><span>HACK / RUNNING APPS</span></div></div>
+<div class="content"><div class="eyebrow">01 / The question</div><h1 id="title-1">Is the Web App Your AI Built<br><em>Really Secure?</em></h1><div class="hero-side"><p class="lead">h5i is a Rust web framework for building apps whose critical rules you can verify, with tools to test the running system.</p></div><div class="hero-strip"><span>FRAMEWORK / RUST + AXUM</span><span>PROOFS / LEAN 4</span><span>TOOLS / DEVELOPMENT INFRASTRUCTURE</span></div></div>
 <footer class="folio"><span>h5i / secure web development</span><span>01</span></footer>
 </section>
 
@@ -40,25 +40,23 @@
 <div class="content">
   <div class="eyebrow">02 / The founding insight</div>
   <h2 id="title-2">Software security has two sides</h2>
-  <p class="lead">A lesson from my PhD: we need both.</p>
+  <p class="lead">AI can ship an app quickly. Security still needs both kinds of evidence.</p>
   <div class="security-pair">
     <article><span class="index">RED-TEAMING</span><h3 class="quantified-heading">Find Bugs <span class="quantifier" role="img" aria-label="Exists">∃</span></h3><p>Find a counterexample in the running application.</p></article>
     <article><span class="index">FORMAL VERIFICATION</span><h3 class="quantified-heading">Prove Properties <span class="quantifier" role="img" aria-label="For all">∀</span></h3><p>Prove a stated rule for the modeled logic under explicit assumptions.</p></article>
   </div>
 </div>
 
-<footer class="folio"><span>h5i / a counterexample and a proof answer different questions</span><span>02</span></footer>
+<footer class="folio"><span>From the founder's PhD / a counterexample and a proof answer different questions</span><span>02</span></footer>
 </section>
 
 <section class="slide " id="slide-3" aria-labelledby="title-3">
 <div class="content">
   <div class="eyebrow">03 / The product</div>
-  <h2 id="title-3" class="product-title">h5i: Build, Verify, and Hack Web Apps</h2>
-  <div class="product-map">
-    <article><span class="index">01 / BUILD</span><h3>Composable Rust kernels</h3><p>Axum-based framework with a separate kernel for application decisions and GPU support for suitable batch workloads.</p></article>
-    <article><span class="index">02 / VERIFY</span><h3>Lean 4 proofs</h3><p>Extract Rust logic, prove critical properties, and test proof sensitivity with mutations.</p></article>
-    <article><span class="index">03 / HACK</span><h3>Agent-led red-teaming</h3><p>Explore any web app, replay HTTP requests, and turn confirmed findings into CI tests.</p></article>
-    <aside class="workflow-card"><span class="index">HOW IT COMES TOGETHER</span><h3>h5i unifies building, verification, and red-teaming</h3><p>A shared CLI and local dashboard connect the work, with sandboxed agent workflows for security testing.</p></aside>
+  <h2 id="title-3" class="product-title">h5i: The Verifiable Web Framework</h2>
+  <div class="product-stack">
+    <article class="product-framework"><span class="index">CORE PRODUCT</span><h3>Verifiable Web Framework</h3><p>Build on Axum with composable Rust kernels. Extract application logic to Lean 4 to prove critical rules, with optional GPU acceleration for suitable workloads.</p><div class="product-tags"><span>RUST / AXUM</span><span>LEAN 4</span><span>OPTIONAL GPU</span></div></article>
+    <article class="product-infrastructure"><div><span class="index">INTEGRATED TOOLING</span><h3>Development Infrastructure</h3><p>A unified CLI for agent-led red-teaming, browser and HTTP automation, security regression tests, and sandboxed workflows.</p></div><p class="product-scope">Works with existing web applications, too.</p></article>
   </div>
 </div>
 
@@ -67,8 +65,9 @@
 
 <section class="slide" id="slide-4" aria-labelledby="title-4">
 <div class="content">
-  <div class="eyebrow">04 / Build</div>
-  <h2 id="title-4">Kernel-based design enables<br><em>Lean 4</em> verification and <em>GPU</em> optimization</h2>
+  <div class="eyebrow">04 / The architecture</div>
+  <h2 id="title-4">Write Once. Verify with Lean 4.</h2>
+  <p class="slide-intro">Axum and storage stay outside the pure Rust kernel, so application decisions can be extracted and proved. GPU execution is an optional optimization.</p>
   <div class="kernel-fanout">
     <div class="rust-example"><div class="editor-bar">Rust / parallel/kernel/src/lib.rs · pure kernel</div><pre><span class="syntax-keyword">pub fn</span> push_rule(event: &amp;[u8], pattern: &amp;[u8],
     display: &amp;[u8], members: u64,
@@ -91,7 +90,7 @@
       requireDisplay = ok 0#u32 := <span class="syntax-keyword">by</span>
   simp [push_rule, h]</pre></div>
     <span class="fanout-arrow" aria-hidden="true"><small>Rust-CUDA<br>PTX</small><b>→</b></span>
-    <div class="gpu-example"><div class="editor-bar">CUDA / device/src/lib.rs · optimize</div><pre><span class="syntax-keyword">#[kernel]</span>
+    <div class="gpu-example"><div class="editor-bar">CUDA / device/src/lib.rs · optional</div><pre><span class="syntax-keyword">#[kernel]</span>
 <span class="syntax-keyword">pub unsafe fn</span> push_batch(...) {
     <span class="syntax-keyword">let</span> i = thread::index_1d() <span class="syntax-keyword">as</span> usize;
     ... shared::push_rule(&amp;events[row(i)], ...)
@@ -103,8 +102,8 @@
 
 <section class="slide " id="slide-5" aria-labelledby="title-5">
 <div class="content">
-  <div class="eyebrow">05 / Verify</div>
-  <h2 id="title-5">Verify application logic with Lean 4</h2>
+  <div class="eyebrow">05 / Formal verification</div>
+  <h2 id="title-5">Prove Critical Application Properties</h2>
   <div class="proof-examples">
     <div class="rust-example"><div class="editor-bar">Rust / kernel/src/lib.rs</div><pre><span class="syntax-keyword">fn</span> delete(user: u64, s: &amp;Snapshot,
           id: u64) -&gt; Outcome {
@@ -139,8 +138,9 @@
 
 <section class="slide" id="slide-6" aria-labelledby="title-6">
 <div class="content">
-  <div class="eyebrow">06 / Hack</div>
-  <h2 id="title-6">Red-team any web app to find vulnerabilities</h2>
+  <div class="eyebrow">06 / The tooling</div>
+  <h2 id="title-6">Development Infrastructure</h2>
+  <p class="slide-intro">Red-teaming, CI/CD testing, and sandboxed workflows for h5i-app or any existing web application.</p>
   <div class="shell-dashboard">
     <div class="agent-shell"><div class="editor-bar">AI agent / shell</div><pre><span class="prompt">$</span> h5i browser snapshot
 <span class="terminal-result">  @e7 Order 1041</span>
@@ -159,12 +159,12 @@
 </section>
 
 <section class="slide " id="slide-7" aria-labelledby="title-7">
-<div class="content"><div class="eyebrow">07 / Early traction</div><h2 id="title-7">Open-source traction</h2><div class="metrics"><div><strong>1.6k<span>+</span></strong><span>RELEASE DOWNLOADS</span></div><div><strong>700<span>+</span></strong><span>GITHUB STARS</span></div></div><div class="source-line"><span>Maintainer-reported · October 11, 2026</span><a href="https://github.com/h5i-dev/h5i">Repository ↗</a><a href="https://github.com/h5i-dev/h5i/releases">Releases ↗</a></div></div>
+<div class="content"><div class="eyebrow">07 / Early traction</div><h2 id="title-7">Open-source traction</h2><div class="metrics"><div><strong>2.1k<span>+</span></strong><span>RELEASE DOWNLOADS</span></div><div><strong>790<span>+</span></strong><span>GITHUB STARS</span></div></div><div class="source-line"><span>Maintainer-reported · October 21, 2026</span><a href="https://github.com/h5i-dev/h5i">Repository ↗</a><a href="https://github.com/h5i-dev/h5i/releases">Releases ↗</a></div></div>
 <footer class="folio"><span>Open-source interest / downloads and stars</span><span>07</span></footer>
 </section>
 
 <section class="slide close" id="slide-8" aria-labelledby="title-8">
-<div class="content"><div class="eyebrow">08 / What comes next</div><h2 id="title-8">Build, Verify, and Hack</h2><div class="closing"><div class="next-steps"><p class="index">NEXT</p><ul><li>Work with design partners on real applications</li><li>Improve the workflow</li><li>Build toward the first paid pilots</li></ul></div><div class="closing-links"><a class="button primary" href="https://github.com/h5i-dev/h5i/issues">Start a conversation ↗</a><a class="button" href="https://h5i.dev">Explore h5i ↗</a></div></div></div>
+<div class="content"><div class="eyebrow">08 / What comes next</div><h2 id="title-8">Build and Verify Your Web Apps.</h2><div class="closing"><p class="lead">We're looking for developers and teams building security-critical web applications to help shape the next generation of verifiable web development.</p><div class="closing-links"><a class="button primary" href="https://github.com/h5i-dev/h5i/issues">Start a conversation ↗</a><a class="button" href="https://h5i.dev">Explore h5i ↗</a></div></div></div>
 <footer class="folio"><span>h5i.dev / github.com/h5i-dev/h5i</span><span>08</span></footer>
 </section>
 </main>
