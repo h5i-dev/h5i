@@ -1,150 +1,63 @@
 # h5i
 
-> h5i ("high-five") helps you build, verify, and hack your web apps. Its h5i-app framework combines composable Rust application kernels with Lean 4 verification. The framework-independent CLI lets agents red-team any web app and replay security regression tests in CI/CD.
+> h5i ("high-five") is an Axum-based Rust web framework for building web applications and formally verifying core logic with Lean 4. It includes optional GPU acceleration and development infrastructure for red-teaming, CI/CD testing, sandboxed workflows, and a local dashboard.
 >
-> Build on Axum with h5i-app, extract Rust kernel logic to Lean 4 with `h5i app extract`, check proofs with `h5i app prove`, and test proof sensitivity with `h5i app mutate`. The Rust-CUDA backend runs shared decision kernels on GPUs for suitable batch workloads.
->
-> For security testing, an agent can explore a target in a browser, discover endpoints with recon, inspect and replay captured HTTP traffic with websec, and save confirmed findings as `h5i test` flows. The security CLI works with existing apps in any stack; adopting h5i-app is optional. Use h5i only against systems you own or are explicitly authorized to test.
+> h5i-app keeps application decisions in composable Rust kernels that can be translated into Lean 4. The h5i CLI provides project tooling, browser automation, HTTP inspection, reconnaissance, security regression testing, sandboxing, and a dashboard. Its security tools also work with existing apps that do not use h5i-app.
 
 ## Start here
 
-- [h5i-app framework](https://github.com/h5i-dev/h5i/blob/main/crates/h5i-app/README.md): Composable Axum-based Rust kernels, Lean 4 extraction and proofs, and the application workflow.
-- [Features](https://h5i.dev/features/): The verifiable Rust web framework first, followed by red-teaming, security regression testing, sandboxing, audit, and integrations.
-- [GPU backend report](https://github.com/h5i-dev/h5i/blob/main/docs/app/GPU.md): Rust-CUDA kernel results, CPU/GPU differential checks, measurements, and trust boundaries.
-- [Manual](https://h5i.dev/manual/): Authoritative command, policy, receipt, and limitation reference, including `h5i app` and `h5i test`.
-- [Run an authorized web security test](https://h5i.dev/guides/authorized-web-security-testing/): Scope a session to one target, inventory its endpoints, replay one request, and close with the evidence intact.
-- [Drive a browser session](https://h5i.dev/guides/drive-a-browser-session/): Open a session, read the page, act on it, and read back what it reached.
-- [AI pentesting tools compared](https://h5i.dev/blog/ai-pentesting-tools/): Burp Suite, OWASP ZAP, Caido, and h5i, chosen by what you delegate to AI.
+- [h5i GitHub](https://github.com/h5i-dev/h5i): Source, installation, and examples.
+- [h5i-app framework](https://github.com/h5i-dev/h5i/blob/main/crates/h5i-app/README.md): Build Rust web apps with verifiable kernel logic.
+- [Features](https://h5i.dev/features/): Overview of the framework and development tools.
+- [Manual](https://h5i.dev/manual/): Commands, configuration, policies, and limitations.
 
-## Build and verify with h5i-app
+## 1. Verifiable Web Framework
 
-- h5i-app is a composable Axum-based Rust web framework. Start a project with `h5i app new`, or add the framework to a Rust project with `cargo add h5i-app`.
-- An application keeps its logic in a kernel crate: one pure Rust function decides what each command does, and handlers never touch the database.
-- Charon and Aeneas translate the kernel to Lean 4, where theorems about it are ordinary Lean.
-- Proofs cover the rows loaded back from PostgreSQL and properties across requests, for every order in which they commit.
-- h5i app new, extract, check, prove, lint, mutate, and doctor run the loop. check rejects sorry, native_decide, and axioms beyond propext, Classical.choice, and Quot.sound.
-- extract --check fails when the generated Lean is not what the kernel extracts to, which is the CI gate.
-- mutate plants bugs in the kernel; one that breaks no proof is behaviour the spec does not pin down.
-- What is proven and what is assumed is written down in [TRUST.md](https://github.com/h5i-dev/h5i/blob/main/docs/app/TRUST.md): PostgreSQL semantics, SERIALIZABLE isolation, the engine contract, and the translation toolchain are assumed.
+Use h5i-app when building Rust web applications with business rules, authorization, or data isolation properties that you want to state and prove.
 
-## GPU kernels
+- **Rust and Axum:** Keep application decisions in composable Rust kernels and connect them to HTTP handlers.
+- **Formal verification:** Translate supported kernel logic into Lean 4 with Charon and Aeneas, then prove stated properties.
+- **Optional GPU acceleration:** Run supported Rust decision kernels on GPUs for suitable batch workloads.
 
-- The h5i-app-gpu Rust-CUDA backend runs shared Rust decision kernels on GPUs for suitable batch workloads.
-- Lean checks the extracted kernel logic. CPU/GPU differential tests compare backend results for tested inputs; the Lean proofs do not establish GPU execution or CPU/GPU equivalence.
-- See the [GPU report](https://github.com/h5i-dev/h5i/blob/main/docs/app/GPU.md) for supported experiments, measurements, and trust boundaries.
+### Project Tooling
 
-## Red-team and regression-test any web app
+- `cargo add h5i-app` adds the framework to a Rust project; `h5i app new counter` scaffolds a new project.
+- `h5i app extract` translates kernel logic to Lean 4; `h5i app prove` checks the proofs.
+- `h5i app lint` checks route authentication structure; `h5i app mutate` tests whether proofs detect intentional kernel bugs.
+- See the [h5i app manual](https://h5i.dev/manual/#h5i-app), [verification trust model](https://github.com/h5i-dev/h5i/blob/main/docs/app/TRUST.md), and [GPU backend report](https://github.com/h5i-dev/h5i/blob/main/docs/app/GPU.md).
 
-- The `h5i` browser, recon, websec, and test tools work with existing web applications in any language. You do not need to adopt h5i-app to use them.
-- Recon inventories endpoints; websec captures, edits, replays, and compares HTTP traffic from a browser session. A response difference is evidence to investigate, not a vulnerability verdict.
-- `h5i test` is an optional plugin for versioned YAML or JSON security flows. Each test needs response expectations or a user-supplied oracle. Run a confirmed finding again in CI/CD with `h5i test .h5i-tests/tests/auth.yaml --target https://staging.example.com`.
-- Install the CLI and optional security plugins with `curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec --recon --test`.
-- Browser sessions and test flows must stay within the systems and actions you are authorized to test.
+## 2. Development Infrastructure
 
-## The browser session
+Use these tools to investigate and test running applications or to run agent work in a restricted environment. The security tools work with any web framework.
 
-- A browser session is Chromium, driven through agent-browser, behind a capture proxy h5i runs for that session. It holds one policy, one request log, and one message store, addressed by an id.
-- Every request the browser sends goes through the proxy: policy first, record second, wire third. A request that cannot be recorded is refused.
-- open grants the page it was given and nothing else remote. --allow names the origins beyond it, such as an API the page calls or a CDN it pulls from.
-- An off-origin subresource is refused even though the page loaded, and the refusal is in the request log.
-- Loopback is reachable by default because it is the dev server, and --no-loopback takes that back.
-- Denials are recorded with their reason, so the log shows what was attempted and not only what succeeded.
-- A redirect out of the allowlist is refused at the hop, because every hop goes through the proxy.
-- h5i browser audit merges verbs, fetch decisions, control handovers, and the ending into one ordered timeline.
-- Every audit row carries its lane: the session's own account (proxy-observed), or what h5i wrote from outside. They are never merged.
-- An audit reports each source as read, empty, or unavailable, because an unwatched log is not a quiet session.
-- A fetch carries caused_by naming the verb the page was under; links come from the source, never from timing.
-- Snapshots, eval and console output are untrusted page content; escape sequences and control characters never reach the terminal.
-- Relayed strings, arrays, and nesting are capped, and the truncation is stated in the value.
-- Session states are live, closed, died, expired, evicted. A verb on a non-live session exits 69 and never restarts it.
-- Session ids are never reused.
-- Sessions live under $H5I_BROWSER_HOME or $XDG_STATE_HOME/h5i/browser, never under a git repository.
-- The browser is Chromium; h5i ships the proxy, the record, and the workbench, not a browser engine.
+### Agent-Native Red-Teaming
 
-## The HTTP workbench
+- [`h5i browser`](https://h5i.dev/manual/#h5i-browser): Navigate a running app and inspect authenticated workflows.
+- [`h5i recon`](https://h5i.dev/manual/#h5i-recon): Discover endpoints and map the exposed attack surface.
+- [`h5i websec`](https://h5i.dev/manual/#h5i-websec): Inspect, modify, replay, and compare captured HTTP traffic.
+- Start with the [authorized web security testing guide](https://h5i.dev/guides/authorized-web-security-testing/). Use these tools only against systems you own or are explicitly authorized to test.
 
-- websec is a plugin rather than part of the default build: h5i plugin install websec, or install.sh -s -- --websec.
-- h5i websec requests, show --raw, replay --set, diff, match, and sitemap read and work the messages a session captured.
-- Every session keeps its messages, and the store holds request and response bodies in full, owner-only.
-- The message store is never included in an export unless it is named.
-- Replay goes through the same network layer as browsing: the policy decides, the receipt is written first, and an off-scope replay is refused rather than sent.
-- A replay cannot widen its session's allowlist. Changing scope means a new session with a new policy, which is a visible act.
-- Hop-by-hop headers the client owns are recomputed, and an attempt to set them is reported as overridden rather than accepted silently.
-- match exits 0 when the condition holds, 1 for a miss, and 2 when it could not look.
-- h5i websec sitemap folds observed receipts into origins and endpoints, carrying methods, statuses, parameter names, and hit counts, with refused URLs listed apart. Disclosed but unvisited URLs are not in it.
-- h5i browser rpc --stdio is the same verbs over one process, so a loop that sends hundreds of requests pays process startup once.
+### CI/CD & Regression Testing
 
-## The recon ledger
+- [`h5i test`](https://h5i.dev/manual/#h5i-test): Save confirmed security findings as versioned tests, replay them in CI/CD, and check API coverage against an OpenAPI description.
 
-- recon is a plugin as well: h5i plugin install recon, or install.sh -s -- --recon.
-- Discovery is kept apart from testing. Recon records what a target exposes and how it knows; calling a difference a vulnerability stays the agent's claim.
-- Every endpoint carries a state: candidate, observed, confirmed, refused, or gone.
-- candidate means something disclosed it and no request was ever sent. observed means a request answered, and the row names the message.
-- confirmed means the answer differs from the calibrated missing-path baseline for that directory. It does not mean interesting.
-- refused means policy declined it, and the row is kept, because that is a fact about the scope.
-- Confirmation happens only in triage --calibrate, which learns what a missing path looks like in each directory. Against an application that answers 200 for everything, nothing is confirmed without it.
-- recon extract reads what the session already fetched; recon known checks robots.txt, sitemap.xml, security.txt, and .well-known/openid-configuration.
-- robots.txt is a source of candidates and not an authorisation oracle. Scope comes from policy.
-- recon crawl walks the target under this session's login, bounded by --max-requests and --rate.
-- h5i ships no wordlist: paths --wordlist takes a list you bring, and --reuse-words uses the words the session has already seen.
-- recon import reads urls, katana, subfinder, httpx, or openapi output as candidates that stay candidates until an h5i request answers.
-- Runs that spend requests are jobs, with jobs list, show, and resume. The ledger is written as a run goes, so a run that is killed keeps what it found.
-- Recon sends through the session's own verbs. There is no second HTTP client, no --all-origins, and no spawning of third-party security tools.
+### Sandbox
 
-## The box
+- [`h5i box`](https://h5i.dev/manual/#containment-optional): Run an agent and its tools in a disposable environment with configured filesystem and network restrictions. Start with the [first box guide](https://h5i.dev/guides/first-box/).
 
-- A box is a complete disposable development environment for one agent.
-- Five tiers: workspace, process, supervised, container, microvm.
-- Explicit isolation requests fail closed; h5i never silently downgrades.
-- supervised and microvm enforce egress at L3/L4. container uses an L7 proxy allowlist.
-- A box's browser profile runs Chromium through agent-browser under the box's tier and egress allowlist, and h5i mediates its socket from outside.
-- Model credentials remain host-side and are injected by a runtime-scoped proxy.
-- h5i box export produces patch.diff, report.md, and receipt.json.
-- h5i is local-first, Apache-2.0, and requires no hosted sandbox or SaaS account.
+### Dashboard
 
-## The web security tutorial
+- [`h5i ui`](https://h5i.dev/manual/#the-console): Inspect browser sessions, HTTP traffic, and agent activity in the local console.
 
-Guides and a cheatsheet for the runnable labs in h5i-dev/h5i-tutorial, from recon to a complete exploit chain.
+## Installation
 
-1. [Recon and IDOR](https://h5i.dev/guides/recon-and-idor/): Discover hidden endpoints, then test object-level authorization and why an unguessable URL is not an access control.
-2. [Broken Access Control](https://h5i.dev/guides/broken-access-control/): Test authorization with the least privileged account you hold, and find the fields a user interface never sends.
-3. [JWT Attacks](https://h5i.dev/guides/jwt-attacks/): alg confusion, a weak HMAC secret, and a key identifier turned into a path traversal.
-4. [SQL Injection](https://h5i.dev/guides/sql-injection/): A union read, then boolean and timing oracles when the application reveals almost nothing.
-5. [Injection Beyond SQL](https://h5i.dev/guides/injection-beyond-sql/): NoSQL operators, shell commands, server-side templates, XML entities, and second-order input.
-6. [The Browser as a Weapon](https://h5i.dev/guides/browser-as-a-weapon/): Reflected and stored XSS, CSRF, CORS misconfiguration, and an OAuth redirect_uri leak.
-7. [SSRF and File Attacks](https://h5i.dev/guides/ssrf-and-file-attacks/): Internal services, filter bypasses, encoded traversal, upload writes, and log poisoning.
-8. [HTTP Protocol Attacks](https://h5i.dev/guides/http-protocol-attacks/): Request smuggling, CRLF injection, host header poisoning, cache poisoning, WebSocket frames.
-9. [Business Logic, Time, and Crypto](https://h5i.dev/guides/logic-time-and-crypto/): Races, coupon stacking, predictable tokens, length extension, MFA state, and a pickled cookie.
-10. [Building Exploit Chains](https://h5i.dev/guides/exploit-chains/): Carry fresh values between requests and turn small findings into one reproducible compromise.
-11. [Cheatsheet](https://h5i.dev/guides/cheatsheet/): The loop, every --set target, the replay flags, probe values by class, and how to read a sweep.
+- Framework: `cargo add h5i-app`.
+- CLI with security plugins: `curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec --recon --test`.
+- Coding agent skill: `h5i skill install` or `npx skills add h5i-dev/h5i`. See the [skill manual](https://h5i.dev/manual/#h5i-skill).
 
-## Tool comparisons
+## Important limitations
 
-- [AI pentesting tools: Burp Suite, ZAP, Caido, or h5i?](https://h5i.dev/blog/ai-pentesting-tools/): Four tools compared through AI-assisted manual testing, AI-authored scan automation, and agent-led investigation.
-- [Burp Suite vs h5i for AI agents](https://h5i.dev/blog/burp-suite-vs-h5i-for-ai-agents/): A complete web-testing platform versus fully automated penetration testing driven by an external AI agent.
-- [OWASP ZAP vs h5i for AI agents](https://h5i.dev/blog/owasp-zap-vs-h5i-for-ai-agents/): Automated DAST and scanner findings versus an AI agent that directs the complete testing loop.
-- [Caido vs h5i for AI agents](https://h5i.dev/blog/caido-vs-h5i-for-ai-agents/): A full proxy workspace and agent API versus an external AI agent driving the investigation end to end.
-
-## Design essays
-
-- [Sandbox the entire workflow: browse, develop, review, apply](https://h5i.dev/blog/the-h5i-loop/): Put the browser, checkout, agent, tools, tests, and dev server in one box, then review the evidence before the patch crosses out.
-- [Why sandbox the entire AI agent workload](https://h5i.dev/blog/the-environment-is-the-sandbox/): Coding tasks execute dependencies, build tools, tests, servers, and pages—not only the agent process.
-- [How to choose an AI agent sandbox](https://h5i.dev/blog/choosing-agent-isolation/): Choose process, supervised, container, or microVM isolation by the failure it must prevent.
-- [Review AI-generated code with execution evidence](https://h5i.dev/blog/evidence-for-agent-work/): Check the diff alongside observed test results, denied actions, browser errors, and explicit gaps in collection.
-- [How to protect a coding agent from prompt injection](https://h5i.dev/blog/prompt-injection-is-a-boundary-problem/): Restrict host files, reusable credentials, network destinations, local sockets, browser state, and writes to the parent repository.
-
-## Honest limits
-
-- h5i cannot grant authorization or infer scope from a URL. Record the permitted hosts, accounts, techniques, request rate, and time window before running an agent.
-- h5i is not a vulnerability scanner. It ships no exploit library, payload generator, fingerprint database, or wordlist.
-- Recon produces no verdicts and no severities. confirmed means distinguishable from the not-found baseline, nothing more.
-- A response diff is evidence of a difference, not proof of impact. Severity and exploitability still require review.
-- The capture store can hold credentials and personal data in full. Treat it as sensitive test evidence and redact it before sharing an artifact.
-- A session's Chromium runs on the host and is not sandboxed, and h5i does not claim it is. Containment is a box.
-- The browser is launched with --ignore-https-errors so it accepts the proxy's certificates, and a Chromium relaunched by hand without the proxy settings is not captured.
-- h5i does not classify page content. It bounds what a persuaded agent can reach rather than detecting persuasion.
-- Containment cannot stop source code from being included in an allowed model request.
-- Every tier below microvm shares the host kernel.
-- Container egress scoping binds proxy-respecting software only.
-- Box-claimed receipt data can be omitted or fabricated; h5i keeps it distinct from host-observed evidence.
-- A local receipt is protected from the box, not notarized against the host owner.
+- Lean 4 proofs establish stated properties of extracted kernel logic under explicit assumptions. They do not prove external database behavior, deployment infrastructure, or GPU execution correctness.
+- CPU/GPU differential tests check backend behavior separately; they are not Lean proofs of GPU equivalence.
+- Recon results and HTTP response differences are evidence to investigate, not automatic vulnerability findings.
+- Security testing requires authorization and a restricted scope. Sandbox guarantees depend on the selected isolation tier; see the [policy manual](https://h5i.dev/manual/#policy).
