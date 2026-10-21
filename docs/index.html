@@ -272,7 +272,7 @@
     #cmt-history:checked ~ .bw-url .r-history, #cmt-sitemap:checked ~ .bw-url .r-sitemap, #cmt-actions:checked ~ .bw-url .r-actions, #cmt-findings:checked ~ .bw-url .r-findings, #cmt-recon:checked ~ .bw-url .r-recon, #cmt-about:checked ~ .bw-url .r-about { display: inline; }
     /* the tab after the open one pulses softly, a hint that the tabs are live */
     #cmt-history:checked ~ .console-plate .cm-tab[for="cmt-sitemap"], #cmt-sitemap:checked ~ .console-plate .cm-tab[for="cmt-actions"], #cmt-actions:checked ~ .console-plate .cm-tab[for="cmt-findings"], #cmt-findings:checked ~ .console-plate .cm-tab[for="cmt-recon"], #cmt-recon:checked ~ .console-plate .cm-tab[for="cmt-about"], #cmt-about:checked ~ .console-plate .cm-tab[for="cmt-history"] { animation: cm-hint 2.4s ease-in-out infinite; }
-    #cmv-sessions:checked ~ .console-plate .cm-view[for="cmv-boxes"], #cmv-boxes:checked ~ .console-plate .cm-view[for="cmv-apps"] { animation: cm-hint 2.4s ease-in-out infinite; }
+    #cmv-apps:checked ~ .console-plate .cm-view[for="cmv-sessions"], #cmv-sessions:checked ~ .console-plate .cm-view[for="cmv-boxes"], #cmv-boxes:checked ~ .console-plate .cm-view[for="cmv-apps"] { animation: cm-hint 2.4s ease-in-out infinite; }
     @keyframes cm-hint { 0%, 100% { color: var(--cm-ink-3); border-bottom-color: transparent; } 50% { color: var(--cm-accent-hi); border-bottom-color: var(--cm-accent-bg); } }
     @media (prefers-reduced-motion: reduce) { .browser-win .cm-tab, .browser-win .cm-view { animation: none; } }
     .browser-win .cm-wrap { overflow: hidden; }
@@ -958,9 +958,9 @@
       <div class="duet-col">
         <p class="duet-lbl"><b>02</b> review the workflow in <code>h5i ui</code></p>
         <div class="browser-win">
-          <input class="tabpick" type="radio" name="cmview" id="cmv-sessions" checked>
+          <input class="tabpick" type="radio" name="cmview" id="cmv-sessions">
           <input class="tabpick" type="radio" name="cmview" id="cmv-boxes">
-          <input class="tabpick" type="radio" name="cmview" id="cmv-apps">
+          <input class="tabpick" type="radio" name="cmview" id="cmv-apps" checked>
           <input class="tabpick" type="radio" name="cmtab" id="cmt-history" checked>
           <input class="tabpick" type="radio" name="cmtab" id="cmt-sitemap">
           <input class="tabpick" type="radio" name="cmtab" id="cmt-actions">
@@ -974,14 +974,14 @@
           </div>
           <div class="bw-url"><span class="bw-nav">&#8592;</span><span class="bw-nav dim">&#8594;</span><span class="bw-nav">&#8635;</span><span class="bw-addr"><i class="lock"></i><span class="bw-text"><span class="u-view u-boxes">localhost:8765/#/sandboxes/alice/sandbox</span><span class="u-view u-apps">localhost:8765/#/apps/board/theorems</span><span class="u-view u-sessions">localhost:8765/#/sessions/br_9f3k2a/<span class="bw-route"><span class="r-history">history</span><span class="r-sitemap">sitemap</span><span class="r-actions">actions</span><span class="r-findings">findings</span><span class="r-recon">recon</span><span class="r-about">about</span></span></span></span></span></div>
           <div class="console-plate">
-        <div class="console" role="group" aria-label="Interactive h5i console preview with Sessions, Sandboxes, and Apps views">
+        <div class="console" role="group" aria-label="Interactive h5i console preview with Apps, Sessions, and Sandboxes views">
           <div class="cm-app">
             <nav class="cm-rail" aria-hidden="true">
               <div class="cm-brand"><b>h5i</b><span>console</span></div>
             </nav>
             <div class="cm-main">
               <div class="cm-topbar">
-                <div class="cm-views"><label class="cm-view" for="cmv-sessions">Sessions</label><label class="cm-view" for="cmv-boxes">Sandboxes</label><label class="cm-view" for="cmv-apps">Apps</label></div>
+                <div class="cm-views"><label class="cm-view" for="cmv-apps">Apps</label><label class="cm-view" for="cmv-sessions">Sessions</label><label class="cm-view" for="cmv-boxes">Sandboxes</label></div>
                 <span class="vitals v-sessions"><span><b>3</b> live</span><span><b>214</b> recorded</span></span>
                 <span class="vitals v-boxes"><span><b>1</b> sandbox</span><span class="loud"><b>1</b> refused egress</span><span><b>9</b> runs</span><span>strongest <b>container</b></span></span>
                 <span class="vitals v-apps"><span><b>3</b> theorems proven</span></span>
