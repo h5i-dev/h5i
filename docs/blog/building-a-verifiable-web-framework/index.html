@@ -1,0 +1,129 @@
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Building a Verifiable Web Framework in Rust | h5i</title><meta name="description" content="Why h5i-app puts a small Rust decision kernel between Axum handlers and storage, then translates that kernel to Lean 4 for proofs.">
+<meta name="author" content="h5i-dev"><meta name="theme-color" content="#D21C1C">
+<meta name="color-scheme" content="dark"><meta name="robots" content="index, follow, max-image-preview:large">
+<link rel="canonical" href="https://h5i.dev/blog/building-a-verifiable-web-framework/"><link rel="icon" type="image/png" href="/_static/logo.png">
+<meta property="og:type" content="article"><meta property="og:site_name" content="h5i">
+<meta property="og:title" content="Building a Verifiable Web Framework in Rust | h5i"><meta property="og:description" content="Why h5i-app puts a small Rust decision kernel between Axum handlers and storage, then translates that kernel to Lean 4 for proofs.">
+<meta property="og:url" content="https://h5i.dev/blog/building-a-verifiable-web-framework/"><meta property="og:image" content="https://h5i.dev/_static/social-card.png">
+<meta property="og:image:alt" content="The h5i logo beside the words Agent-Native Web-Security"><meta property="og:locale" content="en_US">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Building a Verifiable Web Framework in Rust | h5i">
+<meta name="twitter:description" content="Why h5i-app puts a small Rust decision kernel between Axum handlers and storage, then translates that kernel to Lean 4 for proofs."><meta name="twitter:image" content="https://h5i.dev/_static/social-card.png">
+<meta name="twitter:image:alt" content="The h5i logo beside the words Agent-Native Web-Security">
+<script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "headline": "Building a Verifiable Web Framework in Rust",
+      "description": "Why h5i-app puts a small Rust decision kernel between Axum handlers and storage, then translates that kernel to Lean 4 for proofs.",
+      "author": {
+        "@type": "Organization",
+        "name": "h5i-dev"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "h5i"
+      },
+      "datePublished": "2026-10-21",
+      "dateModified": "2026-10-21",
+      "image": "https://h5i.dev/_static/social-card.png",
+      "inLanguage": "en",
+      "isPartOf": {
+        "@id": "https://h5i.dev/#website"
+      },
+      "mainEntityOfPage": "https://h5i.dev/blog/building-a-verifiable-web-framework/"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Home",
+          "item": "https://h5i.dev/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Blog",
+          "item": "https://h5i.dev/blog/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "Building a Verifiable Web Framework in Rust",
+          "item": "https://h5i.dev/blog/building-a-verifiable-web-framework/"
+        }
+      ]
+    }
+  ]
+}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&amp;family=IBM+Plex+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/_static/blog.css?v=38b3f8352f"><link rel="stylesheet" href="/_static/highlight.css?v=31b98f34a5">
+</head>
+<body><nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/features/">Features</a></li><li><a href="/guides/">Guides</a></li>
+    <li><a href="/manual/">Manual</a></li><li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &rarr;</a></li>
+  </ul>
+</nav><main class="article-wrap"><article class="post">
+<header><div class="post-eyebrow">Engineering / Framework &middot; 2026-10-21</div>
+<h1>Building a Verifiable Web Framework in Rust</h1><p class="post-deck">The difficult part of verifying a web app is deciding which code and assumptions a theorem actually covers. h5i-app makes that boundary visible in the architecture.</p>
+<div class="post-meta"><span>7 min read</span><span>Rust &middot; Axum &middot; Lean 4</span></div></header>
+
+<div class="callout"><strong>The design constraint.</strong> Keep ordinary Rust and Axum for the web server, but make application decisions small enough to translate and prove. h5i-app does that with a Rust kernel between HTTP and storage.</div>
+<figure class="feature-figure"><img src="/_static/calculator-rust-lean-proof.svg" alt="A Rust calculator kernel becomes a Lean 4 definition checked against a separate specification"><figcaption>Rust supplies the implementation. The Lean specification supplies the rule to check.</figcaption></figure>
+<h2 id="problem">The problem with proving a handler helper</h2>
+<p>An Axum handler can authenticate, authorize, query PostgreSQL, update rows, and render a response in one place. You can prove a helper function correct and still accidentally bypass it in another route. You can also authorize one object and issue a database write that touches more objects. The architecture has to constrain the path from request to committed change.</p>
+<div class="tbl-wrap"><table class="data"><thead><tr><th>Layer</th><th>Responsibility</th><th>How it is checked</th></tr></thead><tbody>
+<tr><th>Axum and auth</th><td>Parse HTTP and identify the actor</td><td>Trusted boundary; test the running route</td></tr>
+<tr><th>Rust kernel</th><td>Decide the write and reply from actor, snapshot, and command</td><td>Translate with Aeneas; prove properties in Lean 4</td></tr>
+<tr><th>Storage path</th><td>Apply writes and compile supported SQL</td><td>Extracted components and modeled SQL proofs; PostgreSQL remains trusted</td></tr>
+</tbody></table></div>
+<p>The kernel is a <em>decision surface</em>, not an HTTP framework hidden inside Lean. Axum still handles transport. The engine loads the snapshot, invokes the kernel, and applies its proposed write. The table shows why a theorem about kernel logic must be stated with a trust boundary.</p>
+<h2 id="kernel">A concrete Rust decision</h2>
+<p>The <a href="https://github.com/h5i-dev/h5i/blob/main/examples/app/calculator/kernel/src/lib.rs">calculator kernel</a> stores one value per user. Its <code>transition</code> matches commands; these two branches show the essential distinction:</p>
+<pre><code class="language-rust">Command::Set { value } =&gt; Ok((
+    Some(Memory { user: actor.user, value: *value }),
+    Reply::Value(*value),
+)),
+Command::Get =&gt; Ok((
+    None,
+    Reply::Value(memory_of(&amp;snap.memories, actor.user)),
+)),</code></pre>
+<p><code>Set</code> proposes a write to <code>actor.user</code>; <code>Get</code> proposes no write. Neither branch takes a database handle or an HTTP request. That restricted shape lets the same Rust implementation become a Lean definition. The full kernel also handles arithmetic errors and an <code>Apply</code> command.</p>
+<p>Extractability is a tradeoff. The kernel uses the Rust subset and framework crates supported by Charon and Aeneas; I/O stays in the application shell. This restriction makes the proof surface reviewable, but a handler that bypasses the engine would undermine the intended path. The framework and code review both matter.</p>
+<h2 id="theorem">What the Lean theorem actually says</h2>
+<p>After extraction, the <a href="https://github.com/h5i-dev/h5i/blob/main/examples/app/calculator/proofs/Proofs.lean">calculator proof</a> states that every successful write belongs to the caller:</p>
+<pre><code class="language-lean">theorem writes_own_memory (a : Principal) (s : Snapshot) (c : Command) :
+    transition a s c ⦃ r =&gt; ∀ w reply, r = .Ok (w, reply) →
+      ∀ m, w = some m → m.user = a.user ⦄ := by
+  unfold transition
+  cases c &lt;;&gt; step* &lt;;&gt; (try split) &lt;;&gt; simp_all</code></pre>
+<p>The quantified command matters: this is a claim over all successful kernel commands under the model, not a handful of sample requests. It still says nothing by itself about whether an HTTP route supplied the right principal, whether a separate read route skipped the kernel, or whether a GPU executes equivalent code.</p>
+<p>Kernel proofs describe a proposed write. Storage proofs address the modeled effect of applying and compiling writes. For tenant isolation, both are needed: a kernel unable to name another tenant would not excuse an SQL statement that omitted its tenant scope. The <a href="https://github.com/h5i-dev/h5i/blob/main/docs/app/TRUST.md">trust model</a names the proven components and the assumptions between them.</p>
+<h2 id="running-app">Returning to the running web app</h2>
+<p>The server connects that decision path to Axum. In the calculator example, the application engine is passed to <code>H5iApp</code>, and the resulting router is merged with the ordinary health route:</p>
+<pre><code class="language-rust">let app = H5iApp::new(engine, auth);
+let router = Router::new()
+    .route("/healthz", get(|| async { "ok" }))
+    .merge(rpc_router(app));</code></pre>
+<p>This bridge is where the proof meets a running service. Authentication, snapshot loading, transaction behavior, external dependencies, and PostgreSQL behavior still have to satisfy their documented assumptions. Integration tests and red-teaming examine those running boundaries. The <a href="/guides/build-and-verify-a-web-app/">build and verify guide</a> covers the commands for creating and checking a project.</p>
+<h2 id="proof-quality">A proof can pass for the wrong reason</h2>
+<p>Proving that <code>Get</code> writes nothing is useful, but it does not check whether <code>Apply</code> writes the correct user's row. Proof validation asks whether the specification covers the risky behavior. A deliberate mutation that redirects a write should break a relevant ownership theorem; if it does not, the missing sensitivity deserves investigation. Mutation testing gives feedback about the proof suite, not a new theorem about the whole deployment.</p>
+<p>The result is a Rust web app with a deliberately narrow formal core. The strength of this design is that a reviewer can point to the exact implementation, theorem, storage semantics, and remaining trust boundary instead of calling the entire server “verified.”</p>
+
+<a class="next-up" href="/blog/finding-bugs-verifying-rust-oss/"><span class="label">Field results</span><h3>I Tried to Verify Popular Rust OSS with Lean 4, but Found Bugs Instead</h3><p>See what failed proof attempts revealed in existing applications.</p></a>
+<div class="post-cta"><h3>Build a small verified app</h3><p>Follow the calculator example from a Rust kernel through a Lean 4 proof.</p>
+<div class="hero-actions"><a class="btn btn-primary" href="/guides/build-and-verify-a-web-app/">Read the guide</a></div></div>
+</article></main><footer class="blog-footer"><div class="blog-footer-inner">
+  <div class="brand">h5i<span class="red"> / high-five</span></div>
+  <nav class="links"><a href="/">Home</a><a href="/guides/">Guides</a><a href="/blog/">Blog</a><a href="/manual/">Manual</a><a href="https://github.com/h5i-dev/h5i">GitHub</a></nav>
+  <div class="legal">Apache 2.0 &middot; Built with Rust</div>
+</div></footer>
+<script src="/_static/blog.js?v=41dbda103a" defer></script><script src="/_static/highlight.js?v=ed81eee4e6" defer></script></body></html>

@@ -3,30 +3,30 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>h5i: is the web app your AI built really secure?</title>
-<meta name="description" content="A 60-second illustrated h5i workflow: build a Rust board app, verify its kernel with Lean 4, test its HTTP adapter, and keep the fix in regression tests.">
+<title>Build and Verify Your Web Apps | h5i 60-second demo</title>
+<meta name="description" content="A 60-second illustrated h5i workflow: build a Rust board app, prove kernel write properties with Lean 4, then test and fix an unverified HTTP read route.">
 <link rel="canonical" href="https://h5i.dev/demo/">
 <link rel="icon" type="image/png" href="https://h5i.dev/_static/logo.png">
 <link rel="apple-touch-icon" href="https://h5i.dev/_static/logo.png">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="h5i">
-<meta property="og:title" content="h5i: is the web app your AI built really secure?">
-<meta property="og:description" content="Build, verify, hack, and regression test one illustrated Rust board app in the h5i workspace.">
+<meta property="og:title" content="Build and Verify Your Web Apps | h5i demo">
+<meta property="og:description" content="A 60-second illustrated Rust web app story: verify kernel writes with Lean 4, then red-team and regression-test an HTTP adapter read route.">
 <meta property="og:url" content="https://h5i.dev/demo/">
 <meta property="og:locale" content="en_US">
-<meta property="og:image" content="https://h5i.dev/_static/social-card.png">
-<meta property="og:image:alt" content="The h5i logo beside the words Agent-Native Web-Security">
+<meta property="og:image" content="https://h5i.dev/demo/assets/cover.png">
+<meta property="og:image:alt" content="Build and Verify Your Web Apps with h5i — The Verifiable Web Framework for Rust">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="h5i: is the web app your AI built really secure?">
-<meta name="twitter:description" content="Build, verify, hack, and regression test one illustrated Rust board app in the h5i workspace.">
-<meta name="twitter:image" content="https://h5i.dev/_static/social-card.png">
-<meta name="twitter:image:alt" content="The h5i logo beside the words Agent-Native Web-Security">
+<meta name="twitter:title" content="Build and Verify Your Web Apps | h5i demo">
+<meta name="twitter:description" content="A 60-second illustrated Rust web app story: verify kernel writes with Lean 4, then red-team and regression-test an HTTP adapter read route.">
+<meta name="twitter:image" content="https://h5i.dev/demo/assets/cover.png">
+<meta name="twitter:image:alt" content="Build and Verify Your Web Apps with h5i — The Verifiable Web Framework for Rust">
 <meta name="robots" content="index, follow, max-image-preview:large, max-video-preview:-1">
 <script type="application/ld+json">
 {"@context":"https://schema.org","@type":"VideoObject",
- "name":"h5i: is the web app your AI built really secure?",
- "description":"A 60-second illustrated workflow: build a Rust board app, verify its kernel with Lean 4, test an HTTP adapter scenario, and keep the fix in regression tests.",
- "thumbnailUrl":"https://h5i.dev/_static/social-card.png",
+ "name":"Build and Verify Your Web Apps | h5i 60-second demo",
+ "description":"A 60-second illustrated workflow: build a Rust board app, prove kernel write properties with Lean 4, then test and fix an unverified HTTP read route.",
+ "thumbnailUrl":"https://h5i.dev/demo/assets/cover.png",
  "uploadDate":"2026-10-04",
  "duration":"PT60S",
  "embedUrl":"https://h5i.dev/demo/",
@@ -87,7 +87,7 @@
   .card .kick{font-family:var(--mono);font-size:20px;letter-spacing:.34em;text-transform:uppercase;color:var(--accent);margin-bottom:26px;text-indent:.34em}
   #c-1 h2.l2{margin-top:22px;opacity:0}
   #c-1 em{display:inline-block;color:var(--accent)}
-  #c-two h2{font-size:64px;line-height:1.25;white-space:normal}
+  #c-two h2{font-size:68px;line-height:1.22;white-space:normal}
 
   /* ws-css:start */
   /* ---- three windows on one desk: the agent's shell, the h5i console, and the app under test ---- */
@@ -256,18 +256,14 @@
   #cap em{font-style:normal;color:var(--accent);font-weight:700}
 
   /* ---- the finale ---- */
-  #logo .fin{margin-top:44px;display:flex;gap:46px;align-items:baseline}
-  #logo .fin .l1,#logo .fin .l2{font-size:40px;font-weight:700;text-transform:uppercase;letter-spacing:.2em;line-height:1.15;opacity:0}
-  #logo .fin .l2{color:var(--accent)}
+  #logo .fin{display:flex;align-items:center;justify-content:center}
+  #logo .fin .l1{font-size:76px;font-weight:700;letter-spacing:.06em;line-height:1.12;white-space:nowrap;opacity:0}
   #logo{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;opacity:0}
-  #logo .mark{font-family:var(--mono);font-weight:700;font-size:220px;letter-spacing:-.02em;line-height:1;
-    text-shadow:0 0 40px rgba(255,255,255,.25),0 0 120px rgba(255,122,89,.35)}
-  #logo .mark b{color:var(--accent);text-shadow:0 0 40px rgba(255,122,89,.8),0 0 140px rgba(255,122,89,.6)}
-  #logo .tag{margin-top:26px;font-size:28px;letter-spacing:.34em;text-indent:.34em;text-transform:uppercase;color:var(--dim);opacity:0}
-  #logo .tag b{color:var(--text);font-weight:400}
-  #logo .urls{margin-top:40px;font-family:var(--mono);font-size:24px;letter-spacing:.12em;color:var(--text);opacity:0}
+  #logo .mark{margin-top:30px;font-family:var(--sans);font-weight:500;font-size:68px;letter-spacing:.02em;line-height:1;opacity:0}
+  #logo .mark b{font-family:var(--mono);color:var(--accent);text-shadow:0 0 55px rgba(255,122,89,.45)}
+  #logo .tag{margin-top:26px;font-size:30px;letter-spacing:.12em;color:var(--dim);opacity:0}
+  #logo .urls{margin-top:56px;font-family:var(--mono);font-size:24px;letter-spacing:.12em;color:var(--text);opacity:0}
   #logo .urls span{color:var(--faint);margin:0 20px}
-  #logo .oss{margin-top:16px;font-family:var(--mono);font-size:16px;letter-spacing:.28em;text-transform:uppercase;color:var(--faint);opacity:0}
 
   /* ---- post: what sits between the lens and the screen ---- */
   #post{position:absolute;inset:0;pointer-events:none;z-index:40}
@@ -311,7 +307,7 @@
     <div id="dust"></div>
 
     <div class="card" id="c-1"><h2>Your AI built it.</h2><h2 class="l2">Is it really secure<em>?</em></h2></div>
-    <div class="card" id="c-two"><div class="kick">one app · one workspace</div><h2>Build. Verify. Hack.</h2></div>
+    <div class="card" id="c-two"><div class="kick">The Verifiable Web Framework for Rust</div><h2>Build and Verify<br>Your Web Apps.</h2></div>
 
     <div class="wsw" id="desk">
 <!-- ws:start -->
@@ -455,11 +451,10 @@
     </div>
 
     <div id="logo">
-      <div class="mark">h<b>5</b>i</div>
-      <div class="tag">secure web development <b>for every team</b></div>
-      <div class="fin"><span class="l1">Build. Verify.</span><span class="l2">Hack. Repeat.</span></div>
+      <div class="fin"><span class="l1">Build and Verify Your Web Apps.</span></div>
+      <div class="mark">with <b>h5i</b></div>
+      <div class="tag">The Verifiable Web Framework for Rust</div>
       <div class="urls">h5i.dev<span>·</span>github.com/h5i-dev/h5i</div>
-      <div class="oss">open source · apache 2.0 · available now</div>
     </div>
   </div>
 
@@ -707,10 +702,10 @@ const caps = [
   {at:T.extract+.6, html:`<b>Verify</b> the extracted kernel with Lean 4.`},
   {at:T.prove+.6, html:`Theorem <b>authorized</b> covers successful kernel writes.`},
   {at:T.verify+.6, html:`Lean checks the proof; mutations test whether it detects changed logic.`},
-  {at:T.tEvidence+.6, html:`The receipt names the boundary: <b>kernel writes</b>, not every HTTP route.`},
-  {at:T.hack+.6, html:`<b>Hack</b> the same board app through its HTTP adapter.`},
+  {at:T.tEvidence+.6, html:`<b>Verified kernel:</b> Lean 4 proves authorization of kernel writes.`},
+  {at:T.hack+.6, html:`<b>Unverified HTTP adapter:</b> red-team the same app's read route.`},
   {at:F+5.8, html:`Replay Alice's request with Bob's post ID.`},
-  {at:T.tFindings+.6, html:`<em>Finding:</em> the illustrative read route bypasses the kernel policy.`},
+  {at:T.tFindings+.6, html:`<em>Finding:</em> red-teaming exposes a read route that bypasses kernel policy.`},
   {at:T.deny+.3, html:`Fix the adapter's visibility check, then replay the request.`},
   {at:T.tBoxes+.6, html:`<b>Regression:</b> Alice gets 200; Bob's private post returns 403.`},
 ];
@@ -775,25 +770,23 @@ function draw(ms) {
 
   /* the finale */
   {
-    const lg = $('logo'); const lp = eo(ramp(t, T.logo, 1.1));
-    const l1 = lg.querySelector('.l1'), l2 = lg.querySelector('.l2');
-    const p1 = eo(ramp(t, T.logo + 1.0, .5)), p2 = p1;
-    l1.style.opacity = p1; l2.style.opacity = p2;
-    l1.style.letterSpacing = lerp(.36, .2, p1) + 'em'; l2.style.letterSpacing = lerp(.36, .2, p2) + 'em';
+    const lg = $('logo'); const lp = eo(ramp(t, T.logo, .8));
+    const l1 = lg.querySelector('.l1'); const p1 = eo(ramp(t, T.logo + .2, .55));
+    l1.style.opacity = p1;
+    l1.style.letterSpacing = lerp(.13, .06, p1) + 'em';
     lg.style.opacity = t >= T.logo ? 1 : 0;
-    lg.querySelector('.mark').style.transform = `scale(${lerp(1.25, 1, lp)})`;
-    lg.querySelector('.mark').style.opacity = lp;
-    const tg = lg.querySelector('.tag'); const tp = eo(ramp(t, T.logo + .3, .6)); tg.style.opacity = tp;
-    tg.style.letterSpacing = tg.style.textIndent = lerp(.5, .34, tp) + 'em';
-    const u = lg.querySelector('.urls'), o = lg.querySelector('.oss');
-    const up = eo(ramp(t, T.logo + 1.0, .5)), op = up;
-    u.style.opacity = up; u.style.transform = `translateY(${(1-up)*8}px)`; o.style.opacity = op; o.style.transform = `translateY(${(1-op)*8}px)`;
+    const mark = lg.querySelector('.mark'); const mp = eo(ramp(t, T.logo + .65, .55));
+    mark.style.opacity = mp; mark.style.transform = `translateY(${(1-mp)*14}px) scale(${lerp(1.08, 1, lp)})`;
+    const tg = lg.querySelector('.tag'); const tp = eo(ramp(t, T.logo + 1.0, .55));
+    tg.style.opacity = tp; tg.style.transform = `translateY(${(1-tp)*12}px)`;
+    const u = lg.querySelector('.urls'); const up = eo(ramp(t, T.logo + 1.1, .55));
+    u.style.opacity = up; u.style.transform = `translateY(${(1-up)*8}px)`;
   }
 
   /* post */
   const fl = flash(t); $('flash').style.opacity = fl.a; $('flash').style.background = fl.col;
   if (!LITE) $('turb').setAttribute('seed', String(Math.floor(t * 24) % 997));
-  $('fade').style.opacity = Math.max(ramp(ms, TOTAL-1300, 1300), 1 - ramp(ms, 0, 500));
+  $('fade').style.opacity = Math.max(ramp(ms, TOTAL-900, 900), 1 - ramp(ms, 0, 500));
 }
 
 function fit(){ const s = Math.min(innerWidth/1920, innerHeight/1080); $('stage').style.transform = `scale(${s})`; }

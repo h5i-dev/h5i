@@ -1,0 +1,128 @@
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Auditing AI Agent Workflows with Execution Evidence | h5i</title><meta name="description" content="A patch shows what changed, but reviewing agent work also needs commands, browser activity, network decisions, missing evidence, and a controlled export.">
+<meta name="author" content="h5i-dev"><meta name="theme-color" content="#D21C1C">
+<meta name="color-scheme" content="dark"><meta name="robots" content="index, follow, max-image-preview:large">
+<link rel="canonical" href="https://h5i.dev/blog/auditing-agent-workflows/"><link rel="icon" type="image/png" href="/_static/logo.png">
+<meta property="og:type" content="article"><meta property="og:site_name" content="h5i">
+<meta property="og:title" content="Auditing AI Agent Workflows with Execution Evidence | h5i"><meta property="og:description" content="A patch shows what changed, but reviewing agent work also needs commands, browser activity, network decisions, missing evidence, and a controlled export.">
+<meta property="og:url" content="https://h5i.dev/blog/auditing-agent-workflows/"><meta property="og:image" content="https://h5i.dev/_static/social-card.png">
+<meta property="og:image:alt" content="The h5i logo beside the words Agent-Native Web-Security"><meta property="og:locale" content="en_US">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Auditing AI Agent Workflows with Execution Evidence | h5i">
+<meta name="twitter:description" content="A patch shows what changed, but reviewing agent work also needs commands, browser activity, network decisions, missing evidence, and a controlled export."><meta name="twitter:image" content="https://h5i.dev/_static/social-card.png">
+<meta name="twitter:image:alt" content="The h5i logo beside the words Agent-Native Web-Security">
+<script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "headline": "Auditing AI Agent Workflows with Execution Evidence",
+      "description": "A patch shows what changed, but reviewing agent work also needs commands, browser activity, network decisions, missing evidence, and a controlled export.",
+      "author": {
+        "@type": "Organization",
+        "name": "h5i-dev"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "h5i"
+      },
+      "datePublished": "2026-10-21",
+      "dateModified": "2026-10-21",
+      "image": "https://h5i.dev/_static/social-card.png",
+      "inLanguage": "en",
+      "isPartOf": {
+        "@id": "https://h5i.dev/#website"
+      },
+      "mainEntityOfPage": "https://h5i.dev/blog/auditing-agent-workflows/"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Home",
+          "item": "https://h5i.dev/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Blog",
+          "item": "https://h5i.dev/blog/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "Auditing AI Agent Workflows with Execution Evidence",
+          "item": "https://h5i.dev/blog/auditing-agent-workflows/"
+        }
+      ]
+    }
+  ]
+}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&amp;family=IBM+Plex+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/_static/blog.css?v=38b3f8352f"><link rel="stylesheet" href="/_static/highlight.css?v=31b98f34a5">
+</head>
+<body><nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/features/">Features</a></li><li><a href="/guides/">Guides</a></li>
+    <li><a href="/manual/">Manual</a></li><li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &rarr;</a></li>
+  </ul>
+</nav><main class="article-wrap"><article class="post">
+<header><div class="post-eyebrow">Engineering / Execution Evidence &middot; 2026-10-21</div>
+<h1>Auditing AI Agent Workflows with Execution Evidence</h1><p class="post-deck">A clean diff says little about the processes that produced it. Review needs records from outside the agent's writable workspace and a clear account of their limits.</p>
+<div class="post-meta"><span>7 min read</span><span>Agent workflows &middot; Evidence &middot; Review</span></div></header>
+
+<div class="callout"><strong>The review question.</strong> What did the workload do while producing this proposal, and which parts of that account could the workload itself change?</div>
+<h2 id="diff">The diff is one piece of evidence</h2>
+<p>A Git diff shows persistent source changes. It cannot show that an install script tried to contact an unknown host, a test accessed a local service, or a browser opened an authenticated page. An agent-written summary may describe those events, but it is testimony from the subject of review. The useful record pairs the patch with independently captured execution facts.</p>
+<p>Consider a small agent change in this repository. The host creates a box pinned to the current revision; the agent works in its shell, and the test runs under the same box policy:</p>
+<pre><code class="language-bash">h5i box create review-demo --from HEAD --profile agent-claude
+h5i box status review-demo
+h5i box shell review-demo
+# Inside the box: ask the agent to make the change, then exit.
+h5i box run review-demo -- cargo test</code></pre>
+<p>This sequence gives the later review a base revision, an enforced policy, and an observed test exit. It does not say that the patch is correct or that the test covers it. The <a href="/guides/sandboxed-agent-workflows/">workflow guide</a> covers profile setup and the full procedure.</p>
+<h2 id="lanes">Ask each record the question it can answer</h2>
+<p>Command records show invocations, exits, and relevant output; browser records show navigation and requests; policy decisions show allowed and denied connections; a patch shows proposed source changes. A receipt can connect these records to one named run and report the isolation tier. None of these alone proves that the code is correct or that the agent understood the task.</p>
+<p>Before reading the agent's explanation, inspect the run from the host:</p>
+<pre><code class="language-bash">h5i box status review-demo
+h5i box log review-demo
+h5i box diff review-demo</code></pre>
+<p><code>status</code> reports the boundary that was actually enforced, <code>log</code> shows recorded events, and <code>diff</code> shows proposed source changes. During a live run, <code>h5i box watch review-demo --deny-only</code> can stream refusals until stopped. If the agent said “all tests passed,” compare that claim with the recorded <code>cargo test</code> exit before reading the patch.</p>
+<div class="tbl-wrap"><table class="data"><thead><tr><th>Observation</th><th>Supports</th><th>Does not establish</th></tr></thead><tbody>
+<tr><th>Test exited 0</th><td>The observed command completed successfully</td><td>The changed behavior was covered</td></tr>
+<tr><th>Denied connection</th><td>A policy-controlled attempt was refused</td><td>What the process intended to do</td></tr>
+<tr><th>Browser request and response</th><td>What that session observed</td><td>Whether application policy allowed the result</td></tr>
+<tr><th>Patch against pinned base</th><td>Which files the run proposes to change</td><td>What the workload did before producing it</td></tr>
+</tbody></table></div>
+<p>The distinction between observation and interpretation is especially important for web testing. A browser record can show the request that reached an invoice endpoint and the response it received. It cannot, without an application policy, establish that the response was unauthorized. Likewise, a command exit code can show that a test process returned zero; it cannot establish that the test covered the changed behavior. The report should point back to each source record instead of collapsing them into one confident sentence.</p>
+<p>Absence also matters. If browser recording was unavailable, the report should say so. Otherwise a blank browser log can be mistaken for a session with no browser activity. A denied request deserves a place in the review, even when it never changed a file.</p>
+<p>A useful receipt therefore includes not just successful events but the conditions under which events were captured: the chosen isolation tier, network-policy status, evidence lanes, and known gaps. If a browser crashed, quietly starting a fresh session would erase a meaningful boundary in the story. Recording the end of that session makes the gap visible to the reviewer.</p>
+<h2 id="boundary">Keep observation and acceptance outside</h2>
+<p>If the agent can edit its audit trail, the trail is merely another output file. Store records outside the box's writable paths and resolve its policy outside them too. The box can propose a patch; a host-side export gate packages the patch, report, and receipt for human review. Applying that patch to the parent repository is a separate decision.</p>
+<p>If the task used a browser, keep it and the local dev server in the same box so their requests belong to the same boundary. <code>h5i ui</code> lets a reviewer inspect active sessions and records; its display is a view of captured evidence, not an additional guarantee.</p>
+<p>Export is more than file copying. It is the point where proposed work leaves a lower-trust workspace and becomes something a person may apply elsewhere. The record should identify the base revision so the reviewer can recognize drift, and the patch should remain separate from the evidence explaining how it was produced. A detached pull-request workspace cannot safely apply its own changes to a parent checkout by assumption; the reviewer must choose the destination and reconcile conflicts.</p>
+<pre><code class="language-bash">h5i box export review-demo --out ./review-demo
+git apply --check ./review-demo/patch.diff</code></pre>
+<p>Read <code>review-demo/report.md</code> beside <code>review-demo/receipt.json</code> and <code>review-demo/patch.diff</code>. The check asks whether Git can apply the patch; it does not apply it or approve the change. A failed check may simply mean the destination has moved since the pinned base.</p>
+<h2 id="order">A useful review order</h2>
+<ol><li>Check the enforced isolation tier, policy, and any missing evidence.</li><li>Read denied network or file actions and failed commands.</li><li>Inspect browser actions, requests, and any human takeovers.</li><li>Compare executed tests and outcomes with the agent's claims.</li><li>Only then review the diff and decide what to import.</li></ol>
+<p>This order keeps the proposal from framing the evidence before the reviewer has seen the run. It also exposes a common mismatch: a plausible patch with no test execution or a successful test report that actually belongs to an earlier state.</p>
+<h2 id="limits">The limits of a receipt</h2>
+<p>Host-held evidence prevents the boxed workload from rewriting its own account. It does not prove that the host owner did not alter the bundle later, and it does not attest to facts no sensor captured. The isolation tier and evidence lanes must therefore travel with the report. A claim such as "nothing suspicious happened" is too broad; "no denied egress was recorded while this network policy was enforced" is reviewable.</p>
+<p>There is also a practical cost. Capturing more detail can expose secrets in logs and create more material for a reviewer to inspect. A good system keeps the evidence needed to answer the task's security questions, restricts who can read it, and reports where collection was incomplete. The point is an honest account with a bounded claim, not an ever-growing transcript.</p>
+<p>Execution evidence makes agent work easier to inspect and reject. It does not turn a human approval into a formality. The reviewer still decides whether the code, the observed behavior, and the evidence gaps are acceptable.</p>
+
+<a class="next-up" href="/blog/building-a-verifiable-web-framework/"><span class="label">Return to the application</span><h3>Building a Verifiable Web Framework in Rust</h3><p>Read how application logic is structured for formal proofs.</p></a>
+<div class="post-cta"><h3>Review a complete run</h3><p>Create a disposable box, inspect its record, and export only the result you accept.</p>
+<div class="hero-actions"><a class="btn btn-primary" href="/guides/sandboxed-agent-workflows/">Read the guide</a></div></div>
+</article></main><footer class="blog-footer"><div class="blog-footer-inner">
+  <div class="brand">h5i<span class="red"> / high-five</span></div>
+  <nav class="links"><a href="/">Home</a><a href="/guides/">Guides</a><a href="/blog/">Blog</a><a href="/manual/">Manual</a><a href="https://github.com/h5i-dev/h5i">GitHub</a></nav>
+  <div class="legal">Apache 2.0 &middot; Built with Rust</div>
+</div></footer>
+<script src="/_static/blog.js?v=41dbda103a" defer></script><script src="/_static/highlight.js?v=ed81eee4e6" defer></script></body></html>

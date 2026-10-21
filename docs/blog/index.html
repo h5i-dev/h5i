@@ -1,15 +1,15 @@
 <!DOCTYPE html><html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>h5i essays: agent browsers, sandboxes, and web security</title><meta name="description" content="Nine essays on auditable AI browsing, sandboxing, evidence, and comparisons of h5i with Burp Suite, OWASP ZAP, and Caido for agent testing.">
+<title>h5i Blog: framework design, formal verification, and agent security</title><meta name="description" content="Five engineering essays on the verifiable Rust framework, Lean 4 case studies, web security testing, agent isolation, and execution evidence.">
 <meta name="author" content="h5i-dev"><meta name="theme-color" content="#D21C1C">
 <meta name="color-scheme" content="dark"><meta name="robots" content="index, follow, max-image-preview:large">
 <link rel="canonical" href="https://h5i.dev/blog/"><link rel="alternate" type="application/rss+xml" title="The h5i Blog" href="/feed.xml"><link rel="icon" type="image/png" href="/_static/logo.png">
 <meta property="og:type" content="website"><meta property="og:site_name" content="h5i">
-<meta property="og:title" content="h5i essays: agent browsers, sandboxes, and web security"><meta property="og:description" content="Nine essays on auditable AI browsing, sandboxing, evidence, and comparisons of h5i with Burp Suite, OWASP ZAP, and Caido for agent testing.">
+<meta property="og:title" content="h5i Blog: framework design, formal verification, and agent security"><meta property="og:description" content="Five engineering essays on the verifiable Rust framework, Lean 4 case studies, web security testing, agent isolation, and execution evidence.">
 <meta property="og:url" content="https://h5i.dev/blog/"><meta property="og:image" content="https://h5i.dev/_static/social-card.png">
 <meta property="og:image:alt" content="The h5i logo beside the words Agent-Native Web-Security"><meta property="og:locale" content="en_US">
-<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="h5i essays: agent browsers, sandboxes, and web security">
-<meta name="twitter:description" content="Nine essays on auditable AI browsing, sandboxing, evidence, and comparisons of h5i with Burp Suite, OWASP ZAP, and Caido for agent testing."><meta name="twitter:image" content="https://h5i.dev/_static/social-card.png">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="h5i Blog: framework design, formal verification, and agent security">
+<meta name="twitter:description" content="Five engineering essays on the verifiable Rust framework, Lean 4 case studies, web security testing, agent isolation, and execution evidence."><meta name="twitter:image" content="https://h5i.dev/_static/social-card.png">
 <meta name="twitter:image:alt" content="The h5i logo beside the words Agent-Native Web-Security">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
@@ -18,10 +18,10 @@
       "@type": "CollectionPage",
       "@id": "https://h5i.dev/blog/#page",
       "url": "https://h5i.dev/blog/",
-      "name": "h5i essays: agent browsers, sandboxes, and web security",
-      "description": "Nine essays on auditable AI browsing, sandboxing, evidence, and comparisons of h5i with Burp Suite, OWASP ZAP, and Caido for agent testing.",
+      "name": "h5i Blog: framework design, formal verification, and agent security",
+      "description": "Five engineering essays on the verifiable Rust framework, Lean 4 case studies, web security testing, agent isolation, and execution evidence.",
       "inLanguage": "en",
-      "dateModified": "2026-10-11",
+      "dateModified": "2026-10-21",
       "isPartOf": {
         "@id": "https://h5i.dev/#website"
       },
@@ -51,61 +51,37 @@
     {
       "@type": "ItemList",
       "@id": "https://h5i.dev/blog/#list",
-      "name": "h5i essays: agent browsers, sandboxes, and web security",
+      "name": "h5i Blog: framework design, formal verification, and agent security",
       "itemListElement": [
         {
           "@type": "ListItem",
           "position": 1,
-          "url": "https://h5i.dev/blog/ai-pentesting-tools/",
-          "name": "AI pentesting tools: Burp Suite, ZAP, Caido, or h5i?"
+          "url": "https://h5i.dev/blog/building-a-verifiable-web-framework/",
+          "name": "Building a Verifiable Web Framework in Rust"
         },
         {
           "@type": "ListItem",
           "position": 2,
-          "url": "https://h5i.dev/blog/burp-suite-vs-h5i-for-ai-agents/",
-          "name": "Burp Suite vs h5i for AI agents"
+          "url": "https://h5i.dev/blog/finding-bugs-verifying-rust-oss/",
+          "name": "I Tried to Verify Popular Rust OSS with Lean 4, but Found Bugs Instead"
         },
         {
           "@type": "ListItem",
           "position": 3,
-          "url": "https://h5i.dev/blog/owasp-zap-vs-h5i-for-ai-agents/",
-          "name": "OWASP ZAP vs h5i for AI agents"
+          "url": "https://h5i.dev/blog/ai-powered-web-security-testing/",
+          "name": "AI-Powered Web Security Testing: h5i vs. Burp, ZAP, and Caido"
         },
         {
           "@type": "ListItem",
           "position": 4,
-          "url": "https://h5i.dev/blog/caido-vs-h5i-for-ai-agents/",
-          "name": "Caido vs h5i for AI agents"
+          "url": "https://h5i.dev/blog/sandboxing-ai-agents/",
+          "name": "Sandboxing AI Agents: Isolation, Security, and Prompt Injection"
         },
         {
           "@type": "ListItem",
           "position": 5,
-          "url": "https://h5i.dev/blog/the-h5i-loop/",
-          "name": "Sandbox the entire workflow: browse, develop, review, apply"
-        },
-        {
-          "@type": "ListItem",
-          "position": 6,
-          "url": "https://h5i.dev/blog/the-environment-is-the-sandbox/",
-          "name": "Why sandbox the entire AI agent workload"
-        },
-        {
-          "@type": "ListItem",
-          "position": 7,
-          "url": "https://h5i.dev/blog/choosing-agent-isolation/",
-          "name": "How to choose an AI agent sandbox"
-        },
-        {
-          "@type": "ListItem",
-          "position": 8,
-          "url": "https://h5i.dev/blog/evidence-for-agent-work/",
-          "name": "Review AI-generated code with execution evidence"
-        },
-        {
-          "@type": "ListItem",
-          "position": 9,
-          "url": "https://h5i.dev/blog/prompt-injection-is-a-boundary-problem/",
-          "name": "How to protect a coding agent from prompt injection"
+          "url": "https://h5i.dev/blog/auditing-agent-workflows/",
+          "name": "Auditing AI Agent Workflows with Execution Evidence"
         }
       ]
     }
@@ -122,26 +98,18 @@
     <li><a href="/manual/">Manual</a></li><li><a href="/blog/">Blog</a></li>
     <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &rarr;</a></li>
   </ul>
-</nav><section class="index-hero"><div class="post-eyebrow">9 essays and comparisons</div>
-<h1>h5i Blog</h1><p>Why an agent's browser and its boundary belong in one place, what counts as evidence of what an agent actually did, and where h5i differs from Burp Suite, OWASP ZAP, and Caido.</p></section><section class="post-list"><a class="post-card featured" href="/blog/ai-pentesting-tools/">
-<div class="card-meta"><span>Buyer guide</span><span>7 min</span></div>
-<h2>AI pentesting tools: Burp Suite, ZAP, Caido, or h5i?</h2><p>Burp Suite, ZAP, Caido, and h5i compared for AI pentesting: AI-assisted manual testing, AI-authored scan automation, and agent-led investigation.</p></a><a class="post-card" href="/blog/burp-suite-vs-h5i-for-ai-agents/">
-<div class="card-meta"><span>Comparison</span><span>4 min</span></div>
-<h2>Burp Suite vs h5i for AI agents</h2><p>Burp Suite vs h5i for AI agents: compare HTTP capture, request editing, browser automation, and fully automated penetration testing with Burp AT or h5i.</p></a><a class="post-card" href="/blog/owasp-zap-vs-h5i-for-ai-agents/">
-<div class="card-meta"><span>Comparison</span><span>4 min</span></div>
-<h2>OWASP ZAP vs h5i for AI agents</h2><p>OWASP ZAP vs h5i for AI agents: compare DAST scanning and MCP automation with fully automated, agent-driven browser testing, HTTP capture, editing, and replay.</p></a><a class="post-card" href="/blog/caido-vs-h5i-for-ai-agents/">
-<div class="card-meta"><span>Comparison</span><span>4 min</span></div>
-<h2>Caido vs h5i for AI agents</h2><p>Caido vs h5i for AI agents: compare proxy history, HTTPQL, Replay, Automate, and Skills with fully automated agent-driven browser and HTTP testing.</p></a><a class="post-card" href="/blog/the-h5i-loop/">
-<div class="card-meta"><span>Essay</span><span>10 min</span></div>
-<h2>Sandbox the entire workflow: browse, develop, review, apply</h2><p>Create one sandbox for an AI coding task, browse from inside it, develop and test there, then review the evidence before exporting or applying the patch.</p></a><a class="post-card" href="/blog/the-environment-is-the-sandbox/">
-<div class="card-meta"><span>Essay</span><span>6 min</span></div>
-<h2>Why sandbox the entire AI agent workload</h2><p>AI coding agents run package scripts, compilers, tests, servers, and browsers. Sandboxing the whole workload limits what mistakes and untrusted code can reach.</p></a><a class="post-card" href="/blog/choosing-agent-isolation/">
-<div class="card-meta"><span>Essay</span><span>6 min</span></div>
-<h2>How to choose an AI agent sandbox</h2><p>Choose an AI coding-agent sandbox by the failure it must prevent: host file access, unrestricted network traffic, environment drift, or a shared kernel.</p></a><a class="post-card" href="/blog/evidence-for-agent-work/">
-<div class="card-meta"><span>Essay</span><span>6 min</span></div>
-<h2>Review AI-generated code with execution evidence</h2><p>Review AI-generated code using the diff, externally observed test results, denied actions, browser errors, and explicit gaps in evidence.</p></a><a class="post-card" href="/blog/prompt-injection-is-a-boundary-problem/">
-<div class="card-meta"><span>Essay</span><span>6 min</span></div>
-<h2>How to protect a coding agent from prompt injection</h2><p>Limit the files, credentials, network destinations, local services, and repository writes available to a prompt-injected coding agent.</p></a></section><footer class="blog-footer"><div class="blog-footer-inner">
+</nav><section class="index-hero"><div class="post-eyebrow">5 engineering essays</div>
+<h1>h5i Blog</h1><p>Engineering notes on verifiable web applications, formal verification, and agent-driven security testing.</p></section><section class="post-list"><a class="post-card featured" href="/blog/building-a-verifiable-web-framework/">
+<div class="card-meta"><span>01 / Framework</span><span>7 min</span></div>
+<h2>Building a Verifiable Web Framework in Rust</h2><p>Why h5i-app puts a small Rust decision kernel between Axum handlers and storage, then translates that kernel to Lean 4 for proofs.</p></a><a class="post-card" href="/blog/finding-bugs-verifying-rust-oss/">
+<div class="card-meta"><span>02 / Formal Verification</span><span>7 min</span></div>
+<h2>I Tried to Verify Popular Rust OSS with Lean 4, but Found Bugs Instead</h2><p>Failed proof attempts led to confirmed Rust OSS bugs: an unscoped delete, a playlist metadata leak, and unbounded policy expansion.</p></a><a class="post-card" href="/blog/ai-powered-web-security-testing/">
+<div class="card-meta"><span>03 / Red-Teaming</span><span>7 min</span></div>
+<h2>AI-Powered Web Security Testing: h5i vs. Burp, ZAP, and Caido</h2><p>Compare Burp Suite, OWASP ZAP, Caido, and h5i by the investigation each supports: manual proxy work, scanning, agent tooling, and browser-to-HTTP testing.</p></a><a class="post-card" href="/blog/sandboxing-ai-agents/">
+<div class="card-meta"><span>04 / Agent Security</span><span>8 min</span></div>
+<h2>Sandboxing AI Agents: Isolation, Security, and Prompt Injection</h2><p>Why an agent sandbox must include child processes and browsers, how isolation tiers differ, and what prompt injection can still reach.</p></a><a class="post-card" href="/blog/auditing-agent-workflows/">
+<div class="card-meta"><span>05 / Execution Evidence</span><span>7 min</span></div>
+<h2>Auditing AI Agent Workflows with Execution Evidence</h2><p>A patch shows what changed, but reviewing agent work also needs commands, browser activity, network decisions, missing evidence, and a controlled export.</p></a></section><footer class="blog-footer"><div class="blog-footer-inner">
   <div class="brand">h5i<span class="red"> / high-five</span></div>
   <nav class="links"><a href="/">Home</a><a href="/guides/">Guides</a><a href="/blog/">Blog</a><a href="/manual/">Manual</a><a href="https://github.com/h5i-dev/h5i">GitHub</a></nav>
   <div class="legal">Apache 2.0 &middot; Built with Rust</div>

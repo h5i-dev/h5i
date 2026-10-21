@@ -17,6 +17,7 @@ import sys
 ROOT = Path(__file__).parent
 sys.path.insert(0, str(ROOT))
 from guide_hubs import GUIDES
+from blog_hubs import BLOG
 
 # When the documentation rewrite published this set of pages. A real
 # publication date, so it is genuinely a constant.
@@ -38,27 +39,23 @@ PUBLISHED = "2026-08-21"
 # without its date. Changing a page's content and forgetting the date is a
 # build error, not a silent regression.
 PAGE_HISTORY = {
-    "": ("2026-10-21", "8fa0c01dac4cb4ee"),
+    "": ("2026-10-21", "7b94f1b8006697c5"),
     "features/": ("2026-10-21", "21f5c8dddb47df96"),
     "manual/": ("2026-10-21", "0f7e605dc087544d"),
     "pitch/": ("2026-10-21", "7cfe9803d7d11df5"),
-    "demo/": ("2026-10-19", "47a41b9432d0fd60"),
+    "demo/": ("2026-10-21", "317b8850ecc3c5de"),
     "guides/": ("2026-10-21", "888b965163695896"),
     "guides/build-and-verify-a-web-app/": ("2026-10-21", "0b0d7ae775899b60"),
     "guides/red-team-a-web-app/": ("2026-10-21", "3af532e9ff5592f3"),
     "guides/advanced-web-security-testing/": ("2026-10-21", "ee29cf39a56e07d5"),
     "guides/security-regression-testing/": ("2026-10-21", "b7a8f9ea68eea371"),
     "guides/sandboxed-agent-workflows/": ("2026-10-21", "98e554bde6b6bd58"),
-    "blog/": ("2026-10-11", "467efd1f3cb9e97d"),
-    "blog/the-h5i-loop/": ("2026-10-21", "b0ccf2cf55e49699"),
-    "blog/the-environment-is-the-sandbox/": ("2026-10-21", "d060b28d5d1c39ce"),
-    "blog/choosing-agent-isolation/": ("2026-10-21", "f49b89db5500d2ed"),
-    "blog/evidence-for-agent-work/": ("2026-10-21", "f4731b432d863ec4"),
-    "blog/prompt-injection-is-a-boundary-problem/": ("2026-10-21", "86cc5551587c4990"),
-    "blog/ai-pentesting-tools/": ("2026-10-21", "8239e20d3f20e6fe"),
-    "blog/burp-suite-vs-h5i-for-ai-agents/": ("2026-10-21", "9d333979f125115d"),
-    "blog/owasp-zap-vs-h5i-for-ai-agents/": ("2026-10-21", "7436012620e8657e"),
-    "blog/caido-vs-h5i-for-ai-agents/": ("2026-10-21", "a120aa463cf17c14"),
+    "blog/": ("2026-10-21", "6b670194b9694f37"),
+    "blog/building-a-verifiable-web-framework/": ("2026-10-21", "fba684d83eaebd67"),
+    "blog/finding-bugs-verifying-rust-oss/": ("2026-10-21", "ee2d74b97bf0df5f"),
+    "blog/ai-powered-web-security-testing/": ("2026-10-21", "a380de1c91db2206"),
+    "blog/sandboxing-ai-agents/": ("2026-10-21", "2b9ca59124b152ef"),
+    "blog/auditing-agent-workflows/": ("2026-10-21", "969ae1325375f6d0"),
 }
 
 # The pages this script does not write. They are fingerprinted off disk.
@@ -234,533 +231,23 @@ def article_page(item):
 </article></main>{FOOTER}</body></html>"""
 
 
-ENVIRONMENT = {
-    "section": "blog", "slug": "the-environment-is-the-sandbox",
-    "eyebrow": "Essay / Motivation", "time": "6 min", "tags": "Coding agents &middot; Sandbox &middot; Supply chain",
-    "title": "Why sandbox the entire AI agent workload | h5i", "h1": "Why sandbox the entire AI agent workload",
-    "description": "AI coding agents run package scripts, compilers, tests, servers, and browsers. Sandboxing the whole workload limits what mistakes and untrusted code can reach.",
-    "deck": "A coding agent runs far more than its own executable. Dependencies, build tools, tests, servers, and web pages all execute during the task. They need one shared boundary.",
-    "body": """
-<div class="callout"><strong>The claim.</strong> Sandbox the workload, not only the agent executable. Every process and browser session used for the task should inherit the same limits on files, credentials, network access, and output.</div>
-<h2 id="risk">A coding task executes untrusted code</h2>
-<p>Ask an agent to update one dependency. It runs a package manager, which downloads other packages and may execute their install scripts. The build may load compiler plugins. Tests run project code. A dev server runs bundler plugins. A browser executes JavaScript returned by the application or by an external page.</p>
-<p>The agent did not write most of that code, and neither did you. Even a correct agent can trigger a compromised dependency, a malicious repository hook, or a test fixture that was never safe to run on a developer machine.</p>
-<p>The final Git diff does not show a script reading <code>~/.ssh</code>, probing a local service, or sending an environment variable to the network. Reviewing the patch is necessary, but it cannot reconstruct everything that executed while producing the patch.</p>
-<h2 id="command">One sandboxed command is not enough</h2>
-<p>A command wrapper protects only commands that use it. An agent may invoke hundreds of tools during one task, and those tools start their own children:</p>
-<div class="terminal"><div class="terminal-bar"><span class="terminal-path">one task, many processes</span></div><div class="terminal-body"><pre><code>agent
-  ├─ package manager ─ install scripts
-  ├─ compiler ─ linker ─ build helpers
-  ├─ test runner ─ workers ─ project code
-  ├─ dev server ─ bundler ─ plugins
-  └─ browser ─ page JavaScript</code></pre></div></div>
-<p>If safety depends on the agent remembering to prefix every command, one missed prefix removes the protection. Confinement must follow the process tree automatically.</p>
-<p>A separate Git worktree is also insufficient. It protects the parent checkout from ordinary edits, but it does not restrict reads from the home directory, access to credentials and Unix sockets, outbound connections, or use of a logged-in browser profile.</p>
-<h2 id="boundary">The sandbox should cover the complete workload</h2>
-<p>For a coding task, the boundary should contain:</p>
-<ul><li>the disposable checkout;</li><li>the agent and its shell;</li><li>package managers, build tools, hooks, and tests;</li><li>the dev server and its loopback network;</li><li>a fresh browser profile when the task uses a browser.</li></ul>
-<p>These components do not need identical permissions. They need to remain inside one outer boundary. A package script should not escape because it was started by npm instead of the agent. A browser opening <code>localhost</code> should reach the disposable dev server, not services on the host. Downloads should land in the disposable filesystem, not the user's home directory.</p>
-<p>In h5i, <code>box shell</code> and <code>box run</code> start the process tree inside a resolved policy. Their children inherit the boundary, and a box with the <code>browser</code> profile runs its Chromium inside that same boundary.</p>
-<h2 id="outside">Keep authority and approval outside</h2>
-<p>Not everything belongs inside. The policy must be resolved where the workload cannot rewrite it. Long-lived credentials should stay on the host and be injected only into approved requests. Execution evidence should be stored outside the box's writable paths.</p>
-<p>The agent also should not approve its own output. The box may propose a patch, but a human reviews the diff and execution record before exporting or applying it to the parent repository.</p>
-<p>This creates a useful asymmetry: the agent can work freely within the task boundary, while the path back to valuable state remains narrow and explicit.</p>
-<h2 id="limits">Sandboxing limits damage; it does not prove correctness</h2>
-<p>A sandbox does not make generated code correct. An agent can write a vulnerability, run the wrong tests, or misunderstand the task without escaping any boundary. Human review and appropriate tests remain necessary.</p>
-<p>The strength of the boundary also depends on the isolation mechanism. A worktree provides no process confinement. Host-kernel tiers still trust the host kernel. A microVM adds a separate guest kernel at greater cost. Network enforcement differs by tier, so the status of the actual run matters more than the word sandbox.</p>
-<p>Finally, an allowed model request may contain source code. Local confinement cannot keep source private from a model endpoint that policy permits. Use a self-hosted model or disable model egress when source must not leave.</p>
-<h2 id="test">A practical test</h2>
-<p>Before trusting an agent sandbox, ask:</p>
-<ol><li>Do package scripts, compiler helpers, tests, and servers inherit the boundary?</li><li>Which home directory, credentials, sockets, and network destinations can they reach?</li><li>Does browser work use a fresh profile inside the same boundary?</li><li>Is execution recorded somewhere the workload cannot edit?</li><li>Can the agent modify the parent repository without human approval?</li></ol>
-<p>If the answers describe several unrelated boundaries, part of the workload is probably still running with ambient host authority.</p>
-<h2 id="sources">Sources and further reading</h2>
-<ul><li><a href="/blog/the-h5i-loop/">Sandbox the entire workflow</a>, for the browser-to-patch workflow.</li><li><a href="/manual/#isolation-tiers">Isolation tiers</a>, for the enforcement and limits of each boundary.</li><li><a href="/guides/sandboxed-agent-workflows/">Sandboxed Agent Workflows</a>, for running one coding task in a box.</li></ul>""",
-    "faq": [
-        ("Is a Git worktree an agent sandbox?", "No. A worktree separates checkouts and branches. It does not constrain the process tree, filesystem reads, credentials, sockets, network destinations, or browser state."),
-        ("Why does the browser need to be inside?", "The browser executes untrusted page code and holds session state. Keeping it beside the dev server gives both the same isolated localhost while preventing the agent from inheriting a user's normal browser profile."),
-    ],
-    "next": ("/blog/choosing-agent-isolation/", "Choose a mechanism", "How to choose an AI agent sandbox", "Select a tier by the failure it must prevent."),
-    "cta": ("Try the whole loop once", "Create a box, do one real task, and review the patch beside the execution record.", "/guides/sandboxed-agent-workflows/", "Follow the sandbox guide"),
-}
+# Blog articles live in blog_hubs.py.
 
 
-TIERS = {
-    "section": "blog", "slug": "choosing-agent-isolation", "eyebrow": "Essay / Selection guide",
-    "time": "6 min", "tags": "Process &middot; Network &middot; Container &middot; MicroVM",
-    "title": "How to choose an AI agent sandbox | h5i", "h1": "How to choose an AI agent sandbox",
-    "description": "Choose an AI coding-agent sandbox by the failure it must prevent: host file access, unrestricted network traffic, environment drift, or a shared kernel.",
-    "deck": "Start with the failure you need to prevent. Use process isolation for host files, supervised isolation for raw network egress, containers for a fixed image, or a microVM for a separate kernel.",
-    "body": """
-<div class="callout"><strong>Choose by the required protection.</strong> Use <code>process</code> to restrict files and syscalls, <code>supervised</code> to block off-list network destinations at L3/L4, <code>container</code> to run a fixed image, and <code>microvm</code> to avoid sharing the host kernel. <code>workspace</code> only separates the checkout.</div>
-<h2 id="decision">Start with the failure you must prevent</h2>
-<div class="tbl-wrap"><table class="data"><thead><tr><th>Requirement</th><th>Choose</th><th>Main limitation</th></tr></thead><tbody>
-<tr><td>Keep edits out of the developer's checkout</td><td><code>workspace</code></td><td>No process confinement</td></tr>
-<tr><td>Restrict filesystem access and dangerous syscalls</td><td><code>process</code></td><td>Shares the host kernel; no L3/L4 destination allowlist</td></tr>
-<tr><td>Block raw connections to unapproved destinations</td><td><code>supervised</code></td><td>Shares the host kernel; cannot hold resident services today</td></tr>
-<tr><td>Use the same filesystem image across machines</td><td><code>container</code></td><td>Egress allowlist only covers proxy-respecting traffic</td></tr>
-<tr><td>Run without sharing the host kernel</td><td><code>microvm</code></td><td>Needs hardware virtualization and a prepared image</td></tr>
-</tbody></table></div>
-<p>Do not choose from the tier name alone. Decide which failure is unacceptable, then select the first tier that prevents it.</p>
-<h2 id="workspace">Workspace separates Git state; it does not sandbox code</h2>
-<p><code>workspace</code> gives the agent a separate worktree, branch, index, and pinned base. It prevents ordinary checkout collisions and makes the final diff easy to review.</p>
-<p>The process still runs as the host user. It can reach the user's files, credentials, sockets, and network. Use this tier only when checkout separation is the entire requirement.</p>
-<h2 id="process">Process restricts ordinary coding workloads</h2>
-<p><code>process</code> confines the agent and its descendants with filesystem allowlists, syscall restrictions, namespaces, and supported resource limits. On Linux, h5i uses Landlock and seccomp. Package scripts, compiler helpers, and test workers inherit the same restrictions.</p>
-<p>This is the practical choice for routine agent work when the main risks are unwanted file access, dangerous syscalls, or runaway subprocesses. It still shares the host kernel. Its network policy is coarse: deny networking or use the host network.</p>
-<h2 id="supervised">Supervised blocks raw off-list network traffic</h2>
-<p><code>supervised</code> adds a private network namespace, pinned DNS results, nftables rules, and a gate on socket creation. A process cannot bypass the allowlist by clearing proxy variables and opening a raw connection.</p>
-<p>Choose it when destination control matters more than long-lived services. The tier currently cannot keep a resident browser or dev server alive after the supervising command exits, and it still shares the host kernel.</p>
-<h2 id="container">Container provides a fixed toolchain image</h2>
-<p><code>container</code> runs a prepared OCI image with rootless Podman, dropped capabilities, a read-only root filesystem, and only the intended mounts. It is useful when developers and CI must use the same operating-system packages and toolchain.</p>
-<p>Its destination allowlist uses an HTTP/HTTPS proxy. Package managers and HTTP clients that respect the proxy are constrained; a program that opens a raw socket can bypass that route. Choose this tier for image portability, not packet-level egress enforcement.</p>
-<h2 id="microvm">MicroVM provides a separate guest kernel</h2>
-<p><code>microvm</code> runs the workload behind a guest kernel and hypervisor. Choose it for hostile native code or any task where a shared host kernel is outside the risk budget.</p>
-<p>It requires compatible hardware virtualization, a working microVM runtime, and a prepared image. Startup is heavier, some host credential routes are unavailable, and denied-network evidence is less detailed than proxy logs. On Linux today, it is also the tier that can keep a resident browser while enforcing network destinations outside that browser.</p>
-<h2 id="verify">Verify the selected tier on the actual host</h2>
-<p>Operating-system features may exist but be unusable because of kernel configuration, permissions, or another security policy. h5i therefore probes functionality and refuses an explicit tier instead of silently downgrading it.</p>
-<div class="terminal"><div class="terminal-bar"><span class="terminal-path">verify before work</span></div><div class="terminal-body"><pre><code>$ h5i box probe
-$ h5i box create review-1234 --profile agent-claude --isolation supervised
-$ h5i box status review-1234</code></pre></div></div>
-<p><code>probe</code> reports what the host can run. <code>status</code> reports what this box actually received. Check both when filesystem, network, resource, or kernel isolation affects the decision.</p>
-<h2 id="platform">Platform limits still apply</h2>
-<p>Linux and macOS do not provide identical enforcement. Linux supplies Landlock, seccomp, network namespaces, nftables, and cgroups. macOS uses Seatbelt and lacks equivalents for some network and resource controls. h5i reports unsupported controls instead of presenting them as active.</p>
-<h2 id="sources">Sources and further reading</h2>
-<ul><li><a href="/manual/#isolation-tiers">The isolation-tier reference</a>, including platform-specific limits.</li><li><a href="/guides/sandboxed-agent-workflows/">Write a box policy</a>, for storing the chosen controls in the repository.</li><li><a href="/blog/the-environment-is-the-sandbox/">Why sandbox the entire AI agent workload</a>, for the motivation behind using one boundary.</li></ul>""",
-    "faq": [
-        ("Should I use microVM for every agent task?", "No. Use it when the workload must not share the host kernel. Process isolation is lighter for routine coding, supervised provides packet-level destination control, and container provides a fixed toolchain image."),
-        ("Does container isolation block every off-list connection?", "No. Its HTTP and HTTPS proxy constrains software that uses the proxy. Use supervised or microvm when raw off-list connections must fail at the network boundary."),
-    ],
-    "next": ("/guides/sandboxed-agent-workflows/", "Put it into practice", "Write a box policy", "Turn the threat model into a profile the repository can review."),
-    "cta": ("Ask the host what it can enforce", "Run the functional probe before choosing a tier by name.", "/manual/#isolation-tiers", "Compare the tiers"),
-}
-
-
-EVIDENCE = {
-    "section": "blog", "slug": "evidence-for-agent-work", "eyebrow": "Essay / Code review",
-    "time": "6 min", "tags": "Code review &middot; Execution records &middot; Receipts",
-    "title": "Review AI-generated code with execution evidence | h5i", "h1": "Review AI-generated code with execution evidence",
-    "description": "Review AI-generated code using the diff, externally observed test results, denied actions, browser errors, and explicit gaps in evidence.",
-    "deck": "A diff shows what changed. It does not show which tests ran, what failed, or what the agent tried to access. Review the code together with execution records collected outside the agent.",
-    "body": """
-<div class="callout"><strong>The rule.</strong> Use the agent's summary to understand its intent. Use records collected outside the agent to verify what ran and what the sandbox allowed or refused.</div>
-<h2 id="gap">A diff does not record execution</h2>
-<p>Suppose an agent changes authentication code and reports: “Added token refresh, wrote regression tests, and all tests pass.” The diff can confirm the code and test files. It cannot confirm that the full suite ran or passed.</p>
-<p>A diff also cannot show an install script reading outside the workspace, a command killed by a resource limit, a refused network destination, or a browser error. These events may leave no file change.</p>
-<p>Code review therefore needs two kinds of information: repository state and execution records.</p>
-<h2 id="records">Use each record for the question it can answer</h2>
-<div class="tbl-wrap"><table class="data"><thead><tr><th>Record</th><th>Answers</th><th>Does not prove</th></tr></thead><tbody>
-<tr><td>Diff against the pinned base</td><td>What files changed</td><td>Which commands ran</td></tr>
-<tr><td>Host-observed process exit</td><td>Which launched command ended, and how</td><td>Every command typed inside an interactive shell</td></tr>
-<tr><td>Boundary refusal</td><td>Which file, socket, destination, or limit was denied</td><td>Why the workload attempted it</td></tr>
-<tr><td>Box-claimed browser or shell event</td><td>What the instrumented component reported</td><td>That the component reported everything honestly</td></tr>
-<tr><td>Agent summary</td><td>What the agent intended and believes it completed</td><td>That its claims are correct</td></tr>
-</tbody></table></div>
-<p>Do not merge these sources into one unlabeled log. <code>host-observed</code> means h5i recorded an event from outside the box. <code>box-claimed</code> means a component inside the box reported it. Both can be useful, but they support different conclusions.</p>
-<h2 id="storage">Store evidence outside the workload's write access</h2>
-<p>An external observation loses its value if the agent can edit it afterwards. h5i stores ingested receipts outside every filesystem path granted to the box. The workload can submit detailed records, but it cannot rewrite host-observed exits or earlier ingested history without escaping the sandbox.</p>
-<p>This is protection from the box, not from the host owner. A person who controls the machine can alter local files. h5i receipts are not third-party signatures, timestamps, or notarized audit records.</p>
-<h2 id="denials">Keep failures and refused actions</h2>
-<p>Retaining only the final successful test run removes useful context. An earlier failure may show what the agent fixed—or that it weakened an assertion until the test passed.</p>
-<p>Refused actions also matter. A request to a telemetry host may be harmless, while an attempt to read a credential directory may require investigation. The record should state what was refused without assigning intent.</p>
-<h2 id="missing">Report missing evidence explicitly</h2>
-<p>An empty browser-error list can mean that no errors occurred, no browser ran, or browser collection failed. An empty network section can mean no connections were refused or that the selected isolation tier does not report them.</p>
-<p>Use distinct states such as <code>empty</code> and <code>unavailable</code>. Missing observation must not appear as a successful result.</p>
-<h2 id="review">Review in this order</h2>
-<ol><li>Check the resolved policy and isolation tier.</li><li>Read refused actions, failed commands, and resource-limit events.</li><li>Confirm that the required build and test commands have observed results.</li><li>Read browser errors and other box-claimed records, including unavailable sections.</li><li>Review the diff against its pinned base.</li><li>Compare the agent's summary with the records above.</li></ol>
-<p>This order prevents a confident summary from becoming the evidence against which everything else is interpreted.</p>
-<h2 id="export">What h5i exports</h2>
-<div class="terminal"><div class="terminal-bar"><span class="terminal-path">review bundle</span></div><div class="terminal-body"><pre><code>review/
-├── patch.diff      # file changes against the pinned base
-├── report.md       # execution and browser records for review
-└── receipt.json    # events, observer labels, policy digest</code></pre></div></div>
-<p>The bundle does not approve the patch. It gives the reviewer the code change, the policy applied to the run, and the available execution records in one place.</p>
-<h2 id="sources">Sources and further reading</h2>
-<ul><li><a href="/manual/#receipts">Receipt fields and observer labels</a>.</li><li><a href="/manual/#h5i-box-export">Export bundle contents and limits</a>.</li><li><a href="/guides/sandboxed-agent-workflows/">Review a pull request by running it in a detached box</a>.</li></ul>""",
-    "faq": [
-        ("Is an h5i receipt tamper-proof?", "It is protected from the box, not from a user who controls the host. h5i stores ingested receipts outside every filesystem grant held by the box; it does not provide third-party notarization."),
-        ("Why keep agent-reported records at all?", "They provide useful detail that an external observer may not have. The requirement is to label their source and compare them with host-observed events, not to discard testimony."),
-    ],
-    "next": ("/guides/sandboxed-agent-workflows/", "Use the method", "Review a pull request by running it", "Read the report in an evidence-first order."),
-    "cta": ("Put the record beside the patch", "Export both, then review each artifact for the question it can actually answer.", "/manual/#receipts", "Read the receipt reference"),
-}
-
-
-INJECTION = {
-    "section": "blog", "slug": "prompt-injection-is-a-boundary-problem",
-    "eyebrow": "Essay / Security", "time": "6 min", "tags": "Prompt injection &middot; Sandboxing &middot; Least authority",
-    "title": "How to protect a coding agent from prompt injection | h5i", "h1": "How to protect a coding agent from prompt injection",
-    "description": "Limit the files, credentials, network destinations, local services, and repository writes available to a prompt-injected coding agent.",
-    "deck": "Assume a malicious instruction reaches the agent and the agent follows it. A sandbox cannot correct that decision, but it can restrict the files, credentials, services, and output the agent can reach.",
-    "body": """
-<div class="callout danger"><strong>Security assumption.</strong> The agent has accepted a malicious instruction and will use every available tool to follow it. Protection must come from controls the agent cannot change.</div>
-<h2 id="attack">A prompt injection uses normal agent capabilities</h2>
-<p>A repository tells the agent to read setup instructions before running tests. Those instructions include a hidden request: read the user's SSH directory and send its contents to a diagnostics host.</p>
-<p>This attack needs no software exploit. Reading repository text, opening files, and making HTTP requests are normal coding-agent operations. The malicious text can also arrive through an issue, test output, generated documentation, or a web page.</p>
-<h2 id="detection">Detection helps, but cannot enforce safety</h2>
-<p>A text filter or second model may identify obvious malicious instructions. It may also miss a reworded instruction or block legitimate setup steps. Because the attacker controls the text, detection should reduce exposure but should not decide what the agent is allowed to access.</p>
-<p>Assume detection fails. The remaining question is concrete: what files, credentials, destinations, local services, and repositories can the agent reach?</p>
-<h2 id="controls">Restrict the capabilities an injected agent can use</h2>
-<div class="tbl-wrap"><table class="data"><thead><tr><th>Attempt</th><th>Required control</th><th>Remaining risk</th></tr></thead><tbody>
-<tr><td>Read host secrets</td><td>Grant only required filesystem paths; use a separate agent home</td><td>Files placed inside the workspace remain readable</td></tr>
-<tr><td>Steal an API key</td><td>Keep the real key outside the box and broker approved requests</td><td>An allowed request may still contain source code</td></tr>
-<tr><td>Send data elsewhere</td><td>Allow only required network destinations at an enforced layer</td><td>Approved destinations remain reachable</td></tr>
-<tr><td>Use SSH, Docker, or desktop authority</td><td>Deny host Unix sockets and isolate loopback</td><td>Every explicit socket grant carries real authority</td></tr>
-<tr><td>Publish a harmful change</td><td>Require external review before export or apply</td><td>A reviewer can still approve bad code</td></tr>
-</tbody></table></div>
-<h2 id="files">Do not expose the developer's home directory</h2>
-<p>An h5i box receives only the filesystem paths granted by its resolved policy. Its agent home is a per-box copy with credential-shaped entries removed. Paths such as <code>~/.ssh</code> and <code>~/.aws</code> should not be present unless the task explicitly requires them.</p>
-<p>Workspace contents are intentionally readable. Do not copy a secret into the repository and expect the sandbox to hide it from the agent.</p>
-<h2 id="credentials">Keep reusable credentials outside the box</h2>
-<p>A secret in an environment variable or dotfile can be copied by any compromised process. h5i instead gives the box a per-run placeholder and sends approved requests through a host-side credential broker. The broker selects the upstream service and adds the real credential outside the box.</p>
-<p>The broker prevents direct theft of the key; it does not narrow the service permissions attached to that key. Use service credentials with the minimum required scope. It also cannot stop source code from appearing in an allowed model request.</p>
-<h2 id="network">Enforce network and local-service boundaries</h2>
-<p>Proxy variables constrain only software that uses the proxy. If raw off-list connections must fail, use an isolation tier that enforces destinations at L3/L4, such as <code>supervised</code> or <code>microvm</code>. The container tier's HTTP proxy does not constrain a program that opens its own socket.</p>
-<p>Unix sockets and loopback services need the same attention. An SSH agent or container daemon can give the box substantial host authority without any internet connection. Deny Unix sockets by default and grant only the specific local service a task needs.</p>
-<h2 id="browser">Use a fresh browser profile inside the box</h2>
-<p>A daily browser profile contains cookies, extensions, downloads, and authenticated sessions. Headless mode does not remove that authority. Place browser work inside the box with a fresh profile so page code cannot inherit the user's sessions and <code>localhost</code> refers to the box's dev server.</p>
-<h2 id="output">Review the patch outside the sandbox</h2>
-<p>Capability restrictions do not make the generated code safe. A prompt-injected agent can still write a backdoor or weaken a test inside its workspace. The box must not decide that its own result is acceptable.</p>
-<p>Export the patch with its execution report and receipt. Review them before applying the change to the parent repository.</p>
-<h2 id="limits">What remains possible</h2>
-<ul><li>The agent can damage or delete its disposable workspace.</li><li>It can misuse any file, destination, socket, or credential explicitly granted by policy.</li><li>It can send source through an allowed model request.</li><li>It can produce convincing but unsafe code for a human to review.</li><li>A shared-kernel tier does not protect against a successful host-kernel exploit.</li></ul>
-<p>Sandboxing reduces the authority available after prompt injection. It does not prevent the injection or verify the final code.</p>
-<h2 id="check">Check the boundary before running the agent</h2>
-<p>Inspect the resolved policy and answer five questions: Which host files are readable? Which reusable credentials enter the box? Which internet destinations and local sockets are reachable? Which browser profile is used? Can the box write directly to the parent repository?</p>
-<p>Test harmless denials for paths and destinations that should be unavailable. A security boundary should fail because of an enforced rule, not because the agent was asked to behave.</p>
-<h2 id="sources">Sources and further reading</h2>
-<ul><li><a href="/guides/sandboxed-agent-workflows/">Write a box policy</a>, for filesystem, network, socket, and resource controls.</li><li><a href="/manual/#credentials">Credential handling</a> and <a href="/manual/#af_unix-sockets">Unix-socket policy</a>.</li><li><a href="/guides/sandboxed-agent-workflows/">Run the browser beside the dev server inside a box</a>.</li></ul>""",
-    "faq": [
-        ("Does sandboxing prevent source code from reaching the model?", "No. A coding agent can include source in an allowed model request. Preventing that requires a self-hosted model or a policy with no model egress."),
-        ("Are permission prompts still useful inside a box?", "They catch mistakes and are fine to keep, but they are not the security boundary. A prompt-injected agent can approve or bypass its own application-level permissions; the box policy sits outside it."),
-    ],
-    "next": ("/guides/sandboxed-agent-workflows/", "Build the boundary", "Write down what the agent may reach", "Create a fail-closed profile for filesystem, network, and resources."),
-    "cta": ("Limit what the agent can reach", "A narrow box makes a successful injection much less consequential.", "/guides/sandboxed-agent-workflows/", "Write a policy"),
-}
-
-
-AI_PENTESTING_TOOLS = {
-    "section": "blog", "slug": "ai-pentesting-tools", "eyebrow": "Buyer guide / Web security",
-    "published": "2026-09-09", "time": "7 min", "tags": "AI pentesting &middot; DAST &middot; Agent security",
-    "social_image": "https://h5i.dev/_static/ai-security-tools-map.png",
-    "social_alt": "Burp Suite and Caido sit toward human-led investigation, OWASP ZAP toward plan-driven scanning, and h5i toward agent-led investigation with a bounded session",
-    "title": "AI pentesting tools compared: Burp, ZAP, Caido, h5i",
-    "h1": "AI pentesting tools: Burp Suite, ZAP, Caido, or h5i?",
-    "description": "Burp Suite, ZAP, Caido, and h5i compared for AI pentesting: AI-assisted manual testing, AI-authored scan automation, and agent-led investigation.",
-    "meta": "Burp Suite, ZAP, Caido, and h5i compared for AI pentesting: AI-assisted manual testing, AI-authored scan automation, and agent-led investigation.",
-    "deck": "The right tool depends on what you want to delegate: help with manual testing, repeatable vulnerability scans, or an investigation where the agent chooses what to try next.",
-    "body": f"""
-<p>AI agents have already demonstrated strong capabilities in web security testing. Research has shown that agents can find and exploit web vulnerabilities and carry out multistep attacks (<a href="https://arxiv.org/abs/2402.06664">website hacking study</a>).</p>
-<p>Putting those capabilities to work means choosing the tools an agent will use. Should it operate Burp Suite, run ZAP scans, investigate traffic in Caido, or use a CLI-based tool like h5i?</p>
-<p>The answer depends on what you want to delegate. This article compares the four tools through three practical uses.</p>
-<h2 id="three-uses">What do you want AI to do?</h2>
-<p>&ldquo;AI pentesting&rdquo; covers several kinds of work. Consider an application that lets users download invoices.</p>
-<p>In <strong>AI-assisted manual testing</strong>, you inspect the download request and ask a model to explain its parameters or suggest tests. You decide which requests to send and check the results.</p>
-<p>In <strong>AI-authored automation</strong>, you ask a model to prepare a scan configuration. You review it, then run the scanner. The scan follows the configured procedure.</p>
-<p>In <strong>agent-led testing</strong>, the agent logs in, finds an invoice, changes its identifier, compares responses, and decides what to investigate next. It needs browser interaction, HTTP request control, and enough history to track its experiments.</p>
-<p>These approaches can overlap. They are useful starting points for choosing a tool, rather than exclusive categories.</p>
-<div class="tbl-wrap"><table class="data"><thead><tr><th>Your main task</th><th>A useful starting point</th><th>Why</th></tr></thead><tbody>
-<tr><td>Investigate a web application manually</td><td>Burp Suite</td><td>Integrated request testing tools and a large extension ecosystem</td></tr>
-<tr><td>Run repeatable vulnerability scans in CI</td><td>OWASP ZAP</td><td>Open-source scanning with a YAML Automation Framework</td></tr>
-<tr><td>Explore traffic and let an agent use a proxy workspace</td><td>Caido</td><td>Request search, replay, payload testing, and official agent skills</td></tr>
-<tr><td>Let an agent browse and test through a CLI</td><td>h5i</td><td>Browser interaction and direct HTTP control in one session</td></tr>
-</tbody></table></div>
-<figure class="feature-figure"><img src="/_static/ai-security-tools-map.svg" alt="A map places Burp Suite and Caido near human-led interactive investigation, OWASP ZAP near plan-driven scanning, and h5i near agent-led interactive investigation"><figcaption>The same four tools placed by who drives the test and how. This describes workflow fit, not product quality, and each tool can reach neighboring ground through APIs, extensions, or surrounding automation.</figcaption></figure>
-<h2 id="burp">Burp Suite: a comprehensive web testing toolkit</h2>
-<p>Burp combines a proxy, browser, and tools for investigating captured traffic. You can send a request to Repeater to modify and resend it, or use Intruder to test payload variations. Burp Scanner is available in Professional and DAST. Extensions add further testing and integrations (<a href="https://portswigger.net/burp/documentation/desktop/tools">Burp tool documentation</a>).</p>
-<p>For someone already working in Burp, AI can build on that familiar process: explain a response, suggest an experiment, or help automate a task. PortSwigger also documents AI features in Repeater. The details of an external agent's access depend on the integration you use.</p>
-<p>Burp is a good starting point when you want a human to investigate findings with a broad set of tools close at hand. <a href="/blog/burp-suite-vs-h5i-for-ai-agents/">Read the detailed Burp Suite vs h5i comparison.</a></p>
-<h2 id="zap">OWASP ZAP: repeatable scanning and CI automation</h2>
-<p>ZAP's Automation Framework lets you describe a scan in YAML, including authentication, crawling, passive and active scanning, reports, and exit behavior. An AI model can help prepare that configuration, while ZAP executes the jobs (<a href="https://www.zaproxy.org/docs/automate/automation-framework/">ZAP Automation Framework</a>).</p>
-<p>This fits a recurring task such as scanning a staging application after deployment. You can review the configuration, keep it in version control, and reuse it across runs.</p>
-<p>An agent can also use ZAP during an investigation. Its particular appeal here is that you can get automated vulnerability checks without making every testing decision depend on a live conversation with a model. <a href="/blog/owasp-zap-vs-h5i-for-ai-agents/">Read the detailed OWASP ZAP vs h5i comparison.</a></p>
-<h2 id="caido">Caido: a proxy workspace agents can use</h2>
-<p>Caido provides traffic search with HTTPQL, individual request experiments with Replay, and payload testing with Automate. Its workflows support reusable processing. Official Caido Skills let coding agents interact with Caido through its APIs (<a href="https://docs.caido.io/app/tutorials/skills">Caido documentation</a>).</p>
-<p>That makes Caido relevant to both manual and agent-assisted testing. You can investigate captured traffic yourself, then ask an agent to help with work in the same workspace.</p>
-<p>Choose it when the proxy workflow suits you and you want an agent to use the requests and testing tools already available there. Check the installed skills and their permissions to understand what the agent can access. <a href="/blog/caido-vs-h5i-for-ai-agents/">Read the detailed Caido vs h5i comparison.</a></p>
-<h2 id="h5i">h5i: browser interaction and HTTP testing from the terminal</h2>
-<p>h5i is a headless browser controlled through a CLI. It combines page interaction with direct HTTP request inspection and manipulation, so an agent can browse an application, inspect the requests it generates, edit and replay them, and compare responses without a separate interception proxy (<a href="/manual/#h5i-websec">h5i HTTP workbench</a>).</p>
-<p>For the invoice example, the agent can find the download link through the page, inspect its request, change the invoice identifier, and examine the result. Page navigation and request experiments belong to the same session.</p>
-<p>h5i also supports destination restrictions, audit logs, and sandboxing for the browser or the surrounding workflow. Those controls matter when you want to limit an agent's access. It does not include a vulnerability scanner: the agent or tester interprets the responses and develops the tests.</p>
-<p>Choose h5i when you want an agent to work through browser and HTTP operations from the terminal, and are comfortable letting that agent direct the investigation.</p>
-<h2 id="combine">You can combine them</h2>
-<p>You do not need to commit every stage of testing to one product. A ZAP scan might produce a finding that you investigate manually in Burp or Caido. An agent using h5i might identify a suspicious authorization flow that you reproduce in Repeater.</p>
-<p>Before choosing, ask what you need most: scanner-generated findings, an interactive traffic workspace, or browser and HTTP tools for an agent. Then check how you will authenticate, retain requests and responses, and reproduce a finding.</p>
-<p>For work on a real target, follow the engagement or bug bounty program's scope and automation rules. Tool settings can help enforce those limits, but no tool establishes authorization.</p>
-<div class="callout"><strong>Scope of this comparison.</strong> This is a workflow and feature comparison, based on the linked documentation. It does not rank vulnerability detection rates or benchmark performance. Features and availability vary by version and edition.</div>
-<h2 id="sources">Official sources</h2>
-<ul><li><a href="https://portswigger.net/burp/documentation/desktop/tools">PortSwigger: Burp Suite tools</a></li><li><a href="https://www.zaproxy.org/docs/automate/automation-framework/">ZAP Automation Framework</a></li><li><a href="https://docs.caido.io/app/tutorials/skills">Caido Skills</a></li><li><a href="/manual/#h5i-websec">h5i HTTP workbench</a> and <a href="/manual/#h5i-recon">recon ledger</a></li></ul>""",
-    "faq": [
-        ("Which AI pentesting tool should I start with?", "Start from the task. Burp Suite suits manual investigation with a broad toolkit, ZAP suits repeatable scans described in YAML, Caido suits traffic exploration that an agent can join through its official skills, and h5i suits an agent that browses and tests HTTP from the terminal."),
-        ("Can an agent drive the whole investigation?", "Yes, if it has browser interaction, control over HTTP requests, and enough history to compare its experiments. Caido offers that inside a proxy workspace through its skills, and h5i offers it as a CLI session. In both cases decide beforehand what the agent may reach."),
-        ("Which tool should I use for automated vulnerability scanning?", "ZAP for an open-source scanner with CI automation, or Burp Scanner in Burp Suite Professional or DAST. h5i has no vulnerability scanner: the agent or tester interprets the responses."),
-    ],
-    "next": ("/guides/red-team-a-web-app/", "Run a bounded test", "Authorized web security testing with h5i", "Turn target scope and request budgets into an auditable agent session."),
-    "cta": ("Decide what you want to delegate", "Then select the scanner, workbench, or agent session that fits it.", "/guides/red-team-a-web-app/", "Follow the red-teaming guide"),
-}
-
-
-BURP_COMPARISON = {
-    "section": "blog", "slug": "burp-suite-vs-h5i-for-ai-agents", "eyebrow": "Comparison / Web security",
-    "published": "2026-09-09",
-    "social_image": "https://h5i.dev/_static/burp-vs-h5i.png",
-    "social_alt": "Burp Suite provides a broad browser, proxy, scanner, and extension workbench; h5i supports an external AI agent driving a penetration test end to end",
-    "time": "4 min", "tags": "Burp Suite &middot; AI agents &middot; Pentesting",
-    "title": "Burp Suite vs h5i for AI agents",
-    "h1": "Burp Suite vs h5i for AI agents",
-    "description": "Burp Suite vs h5i for AI agents: compare HTTP capture, request editing, browser automation, and fully automated penetration testing with Burp AT or h5i.",
-    "meta": "Burp Suite vs h5i for AI agents: compare HTTP capture, request editing, browser automation, and fully automated penetration testing with Burp AT or h5i.",
-    "deck": "Both tools support AI-driven web testing. Burp Suite provides the deeper testing platform and its own agent; h5i is designed for fully automated penetration tests driven end to end by an external AI agent.",
-    "body": f"""
-<div class="callout"><strong>The short answer.</strong> Choose Burp Suite for a mature proxy workbench, Scanner, Intruder, extensions, and Burp's own agent. Choose h5i when the primary workflow is a fully automated penetration test in which an external AI agent drives the browser, inspects and modifies traffic, and decides what to test next.</div>
-<figure class="feature-figure"><img src="/_static/burp-vs-h5i.svg" alt="Burp Suite provides a broad browser, proxy, scanner, and extension workbench, while h5i gives an AI agent browser and HTTP operations through a scoped session"><figcaption>Both support agent-driven testing. Burp provides the broader workbench; h5i gives an external agent a direct browser-and-HTTP loop for running the test end to end.</figcaption></figure>
-<div class="tbl-wrap"><table class="data"><thead><tr><th>Decision</th><th>Burp Suite</th><th>h5i</th></tr></thead><tbody>
-<tr><td>Traffic capture</td><td>Intercepting proxy records traffic from browsers and other clients</td><td>The agent browser records its own requests and responses</td></tr>
-<tr><td>Request modification</td><td>Repeater, Intruder, Scanner, extensions</td><td>Structured edits, replay, diff, match, and sequences</td></tr>
-<tr><td>Browser use</td><td>Mainstream browser through the proxy; Burp AT can operate Burp tools</td><td>Open, snapshot, click, fill, and inspect traffic in the same session</td></tr>
-<tr><td>Agent interface</td><td>Burp AT inside a Burp project</td><td>CLI or JSON RPC for an external coding agent</td></tr>
-<tr><td>Additional safety</td><td>Project scope and Burp AT tool permissions</td><td>Origin policy and an optional sandbox for the agent process tree</td></tr>
-</tbody></table></div>
-<h2 id="burp">Burp provides the deeper testing platform</h2>
-<p>Burp's proxy collects traffic from a full browser or another configured client. Repeater supports manual request experiments; Intruder automates payload variations; Scanner crawls and audits applications; Collaborator and extensions cover further testing workflows.</p>
-<p>Burp AT, currently a public beta in Burp Suite Professional, gives an agent direct access to these tools and the open project's data. Burp applies project scope, lets users disable individual tools, and provides manual, smart, and autonomous approval modes. Choose Burp when testing depth, its graphical workbench, or its scanner matters.</p>
-<h2 id="h5i">h5i gives an external agent the complete testing loop</h2>
-<p>h5i's browser is directly controlled by the agent. The same session that opens, reads, clicks, and fills a page also records the HTTP messages. The agent can address a captured request by ID, edit a structured field, resend it, and compare the response:</p>
-{terminal('browser and HTTP traffic in one session', '$ h5i browser open https://target.example --allow target.example\n$ h5i browser snapshot\n$ h5i browser click @e3\n$ h5i browser requests\n$ h5i websec replay req_42 --set query.id=456\n$ h5i websec diff res_42 res_43')}
-<p>This is h5i's main comparison with Burp: an external agent can conduct the penetration test end to end through a direct, machine-readable path from browser action to request inspection, modification, and the next decision. h5i has fewer testing features, no vulnerability scanner, and no equivalent to Burp's extension ecosystem.</p>
-<h2 id="sandbox">Sandboxing is an optional safety measure</h2>
-<p>For an autonomous red-team task, h5i can place the agent and browser in a box with restricted files, credentials, processes, and egress. This can limit the damage from a mistaken or prompt-injected agent. It is additional containment, not the reason h5i can capture or modify HTTP traffic; those features also work without a box.</p>
-<h2 id="decision">Choose by the testing workflow</h2>
-<ul><li><strong>Choose Burp Suite</strong> for the richer proxy workbench, Scanner, Intruder, Collaborator, extensions, or Burp AT.</li><li><strong>Choose h5i</strong> for a fully automated penetration test driven end to end by an external AI agent.</li><li><strong>Consider h5i's sandbox</strong> separately when that autonomous agent's host or network authority should be restricted.</li></ul>
-<p>Neither tool establishes authorization. For pentesting, bug bounty, red teaming, or CTF automation, the target owner or competition rules define what is allowed. Network controls help enforce part of that scope; they do not replace it.</p>
-<h2 id="sources">Product references</h2>
-<ul><li><a href="https://portswigger.net/burp/documentation/desktop/burp-at">Burp AT</a> and its <a href="https://portswigger.net/burp/documentation/desktop/burp-at/tools">tools and permissions</a></li><li><a href="https://portswigger.net/burp/documentation/scanner">Burp Scanner</a></li><li><a href="/manual/#h5i-browser">h5i browser</a></li><li><a href="/manual/#h5i-websec">h5i HTTP workbench</a></li></ul>""",
-    "faq": [
-        ("Is h5i a replacement for Burp Suite?", "No. Burp Suite provides a much broader proxy, scanner, and extension platform. h5i is aimed at fully automated penetration tests driven through browser and HTTP operations by an external AI agent."),
-        ("Can Burp Suite be used by AI agents?", "Yes. Burp AT is a native agent in Burp Suite Professional, with direct access to Burp tools, project scope, and configurable approvals."),
-        ("Does h5i require a sandbox?", "No. Browser automation, traffic capture, and HTTP replay work without one. A box is an optional boundary for autonomous agent work."),
-    ],
-    "next": ("/guides/red-team-a-web-app/", "Try the workflow", "Run an authorized web security test", "Create a scoped session, build an endpoint ledger, and replay one captured request."),
-    "cta": ("Give the agent a narrow assignment", "Make target scope, request budget, captured evidence, and the stopping point part of the run.", "/guides/red-team-a-web-app/", "Follow the red-teaming guide"),
-}
-
-
-ZAP_COMPARISON = {
-    "section": "blog", "slug": "owasp-zap-vs-h5i-for-ai-agents", "eyebrow": "Comparison / Web security",
-    "published": "2026-09-09",
-    "social_image": "https://h5i.dev/_static/zap-vs-h5i.png",
-    "social_alt": "OWASP ZAP automates spiders and vulnerability scans, while h5i supports an external AI agent driving browser and HTTP testing end to end",
-    "time": "4 min", "tags": "OWASP ZAP &middot; AI agents &middot; DAST",
-    "title": "OWASP ZAP vs h5i for AI agents",
-    "h1": "OWASP ZAP vs h5i for AI agents",
-    "description": "OWASP ZAP vs h5i for AI agents: compare DAST scanning and MCP automation with fully automated, agent-driven browser testing, HTTP capture, editing, and replay.",
-    "meta": "OWASP ZAP vs h5i for AI agents: compare DAST scanning and MCP automation with fully automated, agent-driven browser testing, HTTP capture, editing, and replay.",
-    "deck": "ZAP automates crawling and vulnerability scanning. h5i is designed for a fully automated penetration test in which an external AI agent explores the application and chooses each next experiment.",
-    "body": f"""
-<div class="callout"><strong>The short answer.</strong> Choose ZAP when the required result is crawl coverage, vulnerability alerts, or a repeatable DAST report. Choose h5i for a fully automated penetration test driven end to end by an external AI agent that browses, inspects traffic, changes requests, and chooses what to test next.</div>
-<figure class="feature-figure"><img src="/_static/zap-vs-h5i.svg" alt="OWASP ZAP executes an Automation Framework plan through spiders and scanners, while an agent uses h5i to observe a page, send and record requests, and decide what to test next"><figcaption>The ZAP side shows its Automation Framework; ZAP can also be driven through its API or MCP add-on. h5i exposes browser and request operations instead of a scan engine.</figcaption></figure>
-<div class="tbl-wrap"><table class="data"><thead><tr><th>Decision</th><th>OWASP ZAP</th><th>h5i</th></tr></thead><tbody>
-<tr><td>Main result</td><td>Alerts, scan coverage, and reports</td><td>Browser state, captured messages, endpoint evidence, and an execution receipt</td></tr>
-<tr><td>Automation</td><td>Automation Framework, API, CLI, Docker, MCP and LLM add-ons</td><td>CLI or JSON RPC called by an external agent</td></tr>
-<tr><td>Discovery</td><td>Traditional, AJAX, and client spiders</td><td>Small bounded crawl and evidence-linked endpoint states</td></tr>
-<tr><td>Security testing</td><td>Passive and active scanners</td><td>Replay and comparison; no vulnerability scanner</td></tr>
-<tr><td>Additional safety</td><td>ZAP contexts and scan policies</td><td>Origin policy and an optional sandbox for the agent process tree</td></tr>
-</tbody></table></div>
-<h2 id="zap">ZAP is a scanner, including when AI drives it</h2>
-<p>ZAP's Automation Framework can combine authentication, spiders, passive and active scans, API imports, tests, reports, and exit status in a YAML plan. It is suited to CI and repeatable DAST runs. Its MCP Integration add-on also lets an external AI client start spiders and scans or read alerts; the separate LLM Support add-on can invoke those MCP tools from ZAP itself.</p>
-<p>The MCP add-on is currently alpha, and ZAP warns that its server grants broad control and must remain on localhost for trusted clients. The important point is that ZAP is not limited to fixed YAML plans and is not “non-agentic.”</p>
-<h2 id="h5i">h5i lets the agent drive the entire investigation</h2>
-<p>h5i lets an agent browse, capture a request, change structured fields, replay it, compare responses, and keep endpoint observations tied to messages. It does not generate vulnerability alerts or replace ZAP's scan rules.</p>
-{terminal('agent-led browser and HTTP testing', '$ h5i browser open https://target.example --allow target.example\n$ h5i browser snapshot\n$ h5i browser requests\n$ h5i websec replay req_42 --set query.id=456\n$ h5i websec diff res_42 res_43')}
-<p>The difference is the unit of work. ZAP applies spider and scan rules and produces alerts. With h5i, the external agent drives the complete penetration-testing loop: observe the application, form a hypothesis, run an HTTP experiment, interpret the result, and choose the next action.</p>
-<h2 id="sandbox">Sandboxing is optional</h2>
-<p>For an autonomous red-team run, h5i can also place the agent and browser in a box with restricted host and network access. This limits possible damage if the agent makes a bad decision; it is not required for traffic capture, request modification, or replay.</p>
-<h2 id="decision">Choose by the required result</h2>
-<ul><li><strong>Choose ZAP</strong> for open-source DAST, spidering, automated alerts, or CI reports—even if an AI agent launches the work.</li><li><strong>Choose h5i</strong> for a fully automated penetration test whose direction is decided continuously by an external AI agent.</li><li><strong>Use both</strong> when ZAP supplies scan coverage and an h5i-driven agent investigates or reproduces selected findings.</li></ul>
-<p>Only test systems you own or are authorized to assess. Neither a context definition nor an origin allowlist grants permission.</p>
-<h2 id="sources">Product references</h2>
-<ul><li><a href="https://www.zaproxy.org/docs/automate/automation-framework/">ZAP Automation Framework</a></li><li><a href="https://www.zaproxy.org/docs/desktop/addons/mcp-integration/">ZAP MCP Integration</a> and <a href="https://www.zaproxy.org/docs/desktop/addons/llm-support/mcp/">LLM MCP Support</a></li><li><a href="/manual/#h5i-browser">h5i browser</a></li><li><a href="/manual/#h5i-websec">h5i HTTP workbench</a></li></ul>""",
-    "faq": [
-        ("Is h5i an alternative to OWASP ZAP?", "Not for automated vulnerability scanning. h5i provides interactive browser automation, traffic capture, and HTTP replay; ZAP provides DAST alerts, spiders, and reports."),
-        ("Can an AI agent use OWASP ZAP?", "Yes. ZAP has an API, Automation Framework, and an MCP Integration add-on; its LLM Support add-on can also invoke MCP tools."),
-        ("Are both tools open source?", "Yes. The relevant choice is workflow: scanners and automation plans in ZAP, or interactive browser and HTTP operations in h5i."),
-    ],
-    "next": ("/blog/caido-vs-h5i-for-ai-agents/", "Compare another workbench", "Caido vs h5i for AI agents", "Compare a complete proxy workspace with an agent-driven browser and HTTP session."),
-    "cta": ("Start with one scoped session", "Use a target you are authorized to test and make the request ceiling explicit.", "/guides/red-team-a-web-app/", "Follow the testing guide"),
-}
-
-
-CAIDO_COMPARISON = {
-    "section": "blog", "slug": "caido-vs-h5i-for-ai-agents", "eyebrow": "Comparison / Web security",
-    "published": "2026-09-09",
-    "social_image": "https://h5i.dev/_static/caido-vs-h5i.png",
-    "social_alt": "Caido provides a broad proxy workspace with HTTPQL, Replay, Automate, workflows, and skills, while h5i connects an agent's browser actions to captured traffic and replay",
-    "time": "4 min", "tags": "Caido &middot; AI agents &middot; Pentesting",
-    "title": "Caido vs h5i for AI agents",
-    "h1": "Caido vs h5i for AI agents",
-    "description": "Caido vs h5i for AI agents: compare proxy history, HTTPQL, Replay, Automate, and Skills with fully automated agent-driven browser and HTTP testing.",
-    "meta": "Caido vs h5i for AI agents: compare proxy history, HTTPQL, Replay, Automate, and Skills with fully automated agent-driven browser and HTTP testing.",
-    "deck": "Caido gives humans and agents a complete proxy workspace. h5i is designed for fully automated penetration tests driven end to end by an external AI agent through browser and HTTP operations.",
-    "body": f"""
-<div class="callout"><strong>The short answer.</strong> Choose Caido for proxy history, HTTPQL, Replay, Automate, workflows, and agent access to the whole Caido API. Choose h5i for a fully automated penetration test in which an external AI agent drives browser exploration and HTTP experiments from start to finish.</div>
-<figure class="feature-figure"><img src="/_static/caido-vs-h5i.svg" alt="Caido offers a broad workspace with HTTPQL, Replay, Automate, workflows, proxy history, and agent skills, while h5i connects browser actions, captured traffic, and request replay"><figcaption>Caido provides the broader traffic workbench. h5i gives an external agent the browser-and-HTTP loop needed to drive an investigation end to end.</figcaption></figure>
-<div class="tbl-wrap"><table class="data"><thead><tr><th>Decision</th><th>Caido</th><th>h5i</th></tr></thead><tbody>
-<tr><td>Traffic model</td><td>Intercepting proxy with searchable history</td><td>Browser session with captured messages</td></tr>
-<tr><td>Request testing</td><td>Replay, payload fuzzing with Automate, reusable workflows</td><td>Structured replay, diff, match, and sequences</td></tr>
-<tr><td>AI interface</td><td>Official skills with complete Caido API coverage</td><td>CLI or JSON RPC called by an external agent</td></tr>
-<tr><td>Analysis</td><td>HTTPQL over a large traffic corpus</td><td>Small endpoint ledger tied to request and response evidence</td></tr>
-<tr><td>Additional safety</td><td>Caido access follows the connected instance and credentials</td><td>Origin policy and an optional sandbox for the agent process tree</td></tr>
-</tbody></table></div>
-<h2 id="caido">Caido already has strong agent support</h2>
-<p>HTTPQL filters proxied requests and responses by fields such as host, path, headers, body, status, timing, and source. Replay edits and resends individual requests. Automate runs payload sets, and workflows make processing reusable.</p>
-<p>Official Caido Skills use the Client SDK and state that they cover the complete Caido API. An agent can search traffic, use Replay, fuzz with Automate, and operate the rest of the exposed workspace. Caido is therefore neither GUI-only nor merely “AI-assisted.” For an agent that needs a capable proxy workbench, Caido is usually the better fit.</p>
-<h2 id="h5i">h5i starts from an autonomous testing loop</h2>
-<p>h5i has much less testing machinery. Its browser is also the source of its HTTP record: the agent opens and operates a page, lists the resulting requests, then edits and replays a captured message by ID.</p>
-{terminal('browser and HTTP traffic in one session', '$ h5i browser open https://target.example --allow target.example\n$ h5i browser snapshot\n$ h5i browser click @e3\n$ h5i browser requests\n$ h5i websec replay req_42 --set query.id=456')}
-<p>This direct browser-to-request path lets the external agent conduct the penetration test from exploration through HTTP experiments and follow-up decisions. Caido is better when the task starts from a large proxy history, needs expressive HTTPQL queries, or requires Automate and reusable workflows.</p>
-<h2 id="sandbox">Sandboxing is optional</h2>
-<p>For an autonomous red-team run, h5i can place the agent and browser in a box with restricted files, credentials, processes, and egress. This is an additional way to limit agent mistakes, not the main difference in traffic capture or request testing.</p>
-<h2 id="decision">Choose by the testing interface</h2>
-<ul><li><strong>Choose Caido</strong> for a rich proxy UI, large-scale traffic search, request replay, payload fuzzing, workflows, or agent access to those capabilities.</li><li><strong>Choose h5i</strong> for a fully automated penetration test driven end to end by an external AI agent.</li><li><strong>Consider h5i's sandbox</strong> separately when that agent's host and network access should be restricted.</li></ul>
-<p>Neither product grants permission to test a target. Keep target ownership, rules of engagement, rate limits, and authorization outside the agent and visible to the reviewer.</p>
-<h2 id="sources">Product references</h2>
-<ul><li><a href="https://docs.caido.io/app/reference/httpql">Caido HTTPQL</a>, <a href="https://docs.caido.io/app/quickstart/replay">Replay</a>, and <a href="https://docs.caido.io/app/quickstart/automate">Automate</a></li><li><a href="https://docs.caido.io/app/concepts/workflows_intro">Caido workflows</a></li><li><a href="https://docs.caido.io/app/tutorials/skills">Caido Skills</a></li><li><a href="/manual/#h5i-browser">h5i browser</a></li><li><a href="/manual/#h5i-websec">h5i HTTP workbench</a></li></ul>""",
-    "faq": [
-        ("Is h5i an alternative to Caido?", "Only for smaller browser and HTTP tasks. Caido is much broader for proxy traffic analysis, payload automation, workflows, and web testing."),
-        ("Can AI agents use Caido?", "Yes. Official Caido Skills use the Client SDK and cover the complete Caido API, including Replay, Automate, and traffic search."),
-        ("What is the main architectural difference?", "Caido gives an agent a full proxy workspace. h5i gives an external agent a direct browser-and-HTTP loop for driving a penetration test end to end."),
-    ],
-    "next": ("/blog/burp-suite-vs-h5i-for-ai-agents/", "Compare the established suite", "Burp Suite vs h5i for AI agents", "Compare Burp's full testing platform with h5i's browser and HTTP command interface."),
-    "cta": ("Choose by the traffic workflow", "Decide whether the agent needs a full proxy workspace or a direct browser-to-request loop.", "/guides/red-team-a-web-app/", "Run an agent-led test"),
-}
-
-
-LOOP = {
-    "section": "blog", "slug": "the-h5i-loop", "eyebrow": "Essay / Sandboxed workflow",
-    "time": "10 min", "tags": "Browse &middot; Develop &middot; Review &middot; Apply",
-    "title": "Sandbox the AI agent workflow: browse, develop, apply | h5i",
-    "h1": "Sandbox the entire workflow: browse, develop, review, apply",
-    "description": "Create one sandbox for an AI coding task, browse from inside it, develop and test there, then review the evidence before exporting or applying the patch.",
-    "meta": "Keep browsing, code development, tests, and the dev server in one sandbox, then review its evidence before exporting or applying the patch.",
-    "deck": "A browser and a coding sandbox are not two adjacent workflows. Put the browser, checkout, agent, tools, and dev server in one box; review what crossed that boundary before you apply the result.",
-    "body": f"""
-<p>A coding agent rarely stays in an editor. It reads documentation, installs dependencies, runs tests, starts a local application, opens that application in a browser, follows an error back into the code, and tries again. Sandboxing only the shell while the browser runs on the host splits one job across two security boundaries.</p>
-<p>That split is easy to miss because browsing and code development have different interfaces. They are still one authority problem. The page can influence the agent. The browser can hold cookies and reach network destinations. The dev server can expose the code the agent just changed. If one of those pieces sits outside the box, the workflow is only partly contained.</p>
-<div class="callout"><strong>The claim.</strong> Create the boundary before the work starts. Put the browser, checkout, agent, toolchain, tests, and dev server inside the same named box. Keep the evidence and the decision to export or apply outside it.</div>
-<div class="tbl-wrap"><table class="data"><thead><tr><th>Phase</th><th>Inside the box</th><th>Outside the box</th></tr></thead><tbody>
-<tr><td>Browse</td><td>Fresh browser profile, page state, cookies, network client</td><td>Policy, request observation where the tier supports it</td></tr>
-<tr><td>Develop</td><td>Checkout, agent, package scripts, tests, dev server</td><td>Credential broker and resolved policy</td></tr>
-<tr><td>Review</td><td>The proposed tree stays unchanged</td><td>Human reads diff, denials, commands, and browser evidence</td></tr>
-<tr><td>Apply</td><td>No direct write path to the parent repository</td><td>Human exports or applies the accepted patch</td></tr>
-</tbody></table></div>
-<h2 id="box">1. Start with one boundary</h2>
-<p>Create a named box from the repository before opening the browser or starting the agent. The <code>browser</code> profile supplies a fresh browser identity and the control path needed to operate it inside the box.</p>
-{terminal('repository root', '$ h5i box --profile browser --isolation process --name fix-auth\n$ h5i box status fix-auth')}
-<p>Creation freezes the base revision and resolves the policy before the workspace exists. <code>status</code> tells you which isolation tier the host actually provided, which paths are writable, how network access is scoped, and the digest that later receipts carry. If the requested policy cannot be enforced, creation fails instead of quietly substituting a weaker tier.</p>
-<p>The source determines the output path. A box made from the current repository is a worktree on its own branch, so an accepted result can later be applied locally. A URL, pull request, or <code>--new</code> produces a detached box. Detached work can be exported as a patch, but <code>apply</code> and <code>rebase</code> refuse because that box has no authority over the parent repository.</p>
-<div class="tbl-wrap">
-<table class="data">
-<thead><tr><th>Tier</th><th>What confines the code</th><th>Egress scoping</th></tr></thead>
-<tbody>
-<tr><td><code>workspace</code></td><td>A separate worktree, no confinement</td><td>none</td></tr>
-<tr><td><code>process</code></td><td>Landlock, seccomp, namespaces; a supervisor and a private pid namespace</td><td>deny or host</td></tr>
-<tr><td><code>supervised</code></td><td>The above plus a private netns and a seccomp-notify gate on <code>socket()</code></td><td>L3/L4</td></tr>
-<tr><td><code>container</code></td><td>Rootless Podman on a portable image</td><td>L7 proxy</td></tr>
-<tr><td><code>microvm</code></td><td>A guest with its own kernel, booted by microsandbox</td><td>L3/L4 in the guest</td></tr>
-</tbody>
-</table>
-</div>
-<p>The example names <code>process</code> because it can hold a resident browser without a heavyweight runtime. The tier changes what “inside” proves. A process-tier browser is confined for files and environment; a tier with egress enforcement outside the browser also decides what it may reach. Read <code>status</code> rather than inferring guarantees from the word sandbox.</p>
-<h2 id="browse">2. Put browsing inside the same box</h2>
-<p>The <code>browser</code> profile puts a Chromium, driven by agent-browser, inside the box:</p>
-{terminal('host', '$ h5i box run fix-auth -- agent-browser open https://docs.rs/\n$ h5i box run fix-auth -- agent-browser snapshot\n$ h5i box run fix-auth -- agent-browser click @e3')}
-<p>The browser and its fresh profile live in the named box, so the page state, cookies, downloads, and requests stay with the development environment instead of appearing in a host browser profile. h5i mediates the agent-browser socket from outside the box, so every action is recorded where the box cannot rewrite it.</p>
-<p>The distinction matters in both directions. External documentation can contain instructions that influence the agent, so it should not gain more filesystem or network authority than the coding task. Later, when the browser opens <code>http://localhost:3000</code>, loopback should mean the dev server inside the box—not some unrelated service on the developer's machine.</p>
-<p>What the browser may reach is the box's egress allowlist, enforced at the box's boundary. Placement and evidence strength are related, but they are not the same claim: read the receipt's lanes rather than assuming one.</p>
-<h2 id="work">3. Develop and verify without crossing the boundary</h2>
-<p>Enter the same named box for the coding session:</p>
-{terminal('inside fix-auth', '$ h5i box shell fix-auth\nbox$ claude                          # or codex\nbox$ npm ci\nbox$ npm test\nbox$ npm run dev &')}
-<p><code>shell</code> inherits stdio, and every descendant stays inside the resolved policy. The agent does not have to remember to wrap package-manager hooks, compiler workers, test processes, or the dev server separately. They are contained because they are children of the box session.</p>
-<p>Now point the already-contained browser at the application. From a second host terminal:</p>
-{terminal('browser in the same box', '$ h5i box run fix-auth -- agent-browser open http://localhost:3000\n$ h5i box run fix-auth -- agent-browser snapshot')}
-<p>The browser and server meet on the box's loopback. The useful loop is now continuous: the agent edits, tests, starts the app, reads the page, inspects failed requests or console errors, fixes the code, and tests again. There is no host-browser detour in the middle.</p>
-<p>From inside an existing <code>box shell</code>, the agent runs <code>agent-browser</code> directly; it is already in the box.</p>
-<p>Model API keys remain on the host. A reverse proxy injects the right key into outbound model requests and scopes it to the runtime, so a Claude box cannot obtain the OpenAI credential. The box gets a copy of the agent's HOME state with credential-shaped entries removed.</p>
-<p>The human can observe the page without moving the browser back onto the host:</p>
-{terminal('watch', "$ h5i box view fix-auth          # the box's page, on a loopback-only forward\n$ h5i box view fix-auth --term   # draw it in this terminal instead\n$ h5i ui                         # the whole fleet, read-only, every route a GET")}
-<p>Frames cross outward through the viewer. The browser profile, page execution, and network identity do not. If a human takes control, the control transfer is recorded and stale page handles are invalidated before the agent resumes.</p>
-<h2 id="review">4. Review the whole run, not only the diff</h2>
-{terminal('export', '$ h5i box diff fix-auth                    # against the pinned base\n$ h5i box export fix-auth --out ./review\n  wrote ./review/patch.diff, ./review/report.md, ./review/receipt.json\n\n$ $EDITOR ./review/report.md              # read this first\n$ git apply --3way ./review/patch.diff')}
-<p>The patch answers what changed. It does not answer which tests ran, what the browser reached, what the boundary refused, or whether a human changed page state during the run. <code>report.md</code> brings those records together without flattening their sources.</p>
-<p>Start with denied egress and unavailable evidence. Then read commands with their lanes and exit codes, browser requests and errors, control handovers, and finally the agent's proposal. The proposal comes last because it is testimony from the subject of the review, not an outside observation.</p>
-<p>Export is an output gate, not another agent command. The box cannot write <code>./review</code>; h5i writes the validated bundle from outside after the human asks. Reviewers can carry the patch elsewhere with <code>git apply --3way</code>, which is mandatory for detached boxes.</p>
-<h2 id="apply">5. Apply only the result you accept</h2>
-{terminal('local box only', '$ h5i box status fix-auth          # check base drift and evidence gaps\n$ h5i box apply fix-auth           # land the reviewed proposal')}
-<p><code>apply</code> is available only when the box was created from the current repository. It is never an automatic final step. If the parent branch moved, status names the drift; you can rebase the box deliberately, export the patch, or decline the work.</p>
-<p>This is where keeping the workflow in one boundary pays off. The reviewer is not reconciling an uncontained browser history with a sandboxed shell and an agent-authored summary. The code, browser behavior, request decisions, and executions belong to one named run, and the parent repository changes only after that run has been examined.</p>
-<h2 id="lifecycle">Cleaning up</h2>
-{terminal('lifecycle', "$ h5i box ls                  # every box on this clone\n$ h5i box status fix-auth     # policy enforced, evidence, base drift\n$ h5i box rebase fix-auth     # re-pin onto the parent's current tip\n$ h5i box abort fix-auth      # stop, preserving it for forensics\n$ h5i box rm fix-auth\n$ h5i box gc                  # reclaim finished workspaces")}
-<p><code>abort</code> stops the box but keeps its evidence. <code>rm</code> deletes it. Keeping those actions separate matters most when a run has done something surprising.</p>
-<h2 id="cost">Making it cheap enough to do constantly</h2>
-<p>A sandbox saved for obviously dangerous jobs will miss ordinary dependency installs, where supply-chain surprises often arrive. The boundary needs to be cheap enough for routine work.</p>
-<p>The lighter tiers start quickly. Dependency caches are shared carefully: each project and package ecosystem gets a cache keyed by its lockfile digest. Agent boxes mount it read-only. Only a box with no agent inside may update it, so two agents never meet through writable cache state.</p>
-{terminal('cache', '$ h5i box cache refresh npm\n$ h5i box cache ls            # which are stale, and therefore unused')}
-<h2 id="test">A test you can apply to any agent sandbox</h2>
-<p>You can ask the same questions of any tool that claims to contain an agent:</p>
-<ol>
-<li>Where do package install scripts execute, and under which home directory?</li>
-<li>Does the browser run inside the same boundary as the checkout and dev server?</li>
-<li>When the browser opens localhost, whose loopback does it reach?</li>
-<li>Who wrote the record of what ran: the thing being reviewed, or something outside it?</li>
-<li>Is a refused action recorded, or does it simply not appear?</li>
-<li>Can the agent write the accepted result directly, or does a person carry it across?</li>
-</ol>
-<p>If one of those answers points outside the boundary, part of the job is still running uncontained.</p>
-<h2 id="limits">What this does not claim</h2>
-<p>Containment can stop the agent from touching your host. It cannot stop private source from appearing in a model request that policy already allows. If the source must not leave, use a self-hosted model or disable model egress.</p>
-<p>Every tier below <code>microvm</code> shares the host kernel. Those tiers are meant for runaway agents and careless dependency code, not a targeted kernel exploit. The microVM tier moves the boundary to a hypervisor.</p>
-<p>A receipt is protected from the box, but the host owner can still alter it. It answers a narrow question: could the agent have written this record? It does not prove that the person presenting the receipt left it untouched.</p>
-<h2 id="sources">Sources and further reading</h2>
-<ul>
-<li><a href="/blog/the-environment-is-the-sandbox/">Why sandbox the entire AI agent workload</a>, for the threat model behind the workflow.</li>
-<li><a href="/blog/evidence-for-agent-work/">Review AI-generated code with execution evidence</a>, for what a diff, receipt, and agent summary can each establish.</li>
-<li><a href="/guides/sandboxed-agent-workflows/">Sandboxed Agent Workflows</a>, for running this workflow once on a real repository and observing browser work.</li>
-<li><a href="/manual/#command-groups">The manual</a>, for every flag named above.</li>
-</ul>""",
-    "faq": [
-        ("How does the browser get into the box?", "Create the box with --profile browser. Its Chromium, driven by agent-browser, runs inside the box under its resolved policy; drive it with h5i box run <box> -- agent-browser ..., or from inside a box shell."),
-        ("What is the difference between export and apply?", "export writes patch.diff, report.md and receipt.json to a directory and touches nothing else, so you decide what happens next. apply lands the work directly on the parent repository and is only available when the box came from that repository. On a detached box, created from a URL, a pull request or --new, apply refuses and points at export."),
-    ],
-    "next": ("/blog/the-environment-is-the-sandbox/", "Why sandbox it", "Why sandbox the entire AI agent workload", "See why dependencies, tools, tests, servers, and browsers need one boundary."),
-    "cta": ("Start with one box", "Run h5i box probe, create a box, and inspect what the host actually enforced.", "/guides/sandboxed-agent-workflows/", "Follow the sandbox guide"),
-}
-
-
-# The five chapters of the h5i web security course, whose 42 runnable labs
-# live in h5i-dev/h5i-tutorial. Numbered in the book ("1. The workbench",
-# "## 1.4 Replay"); here they are pages rather than a numbered part of
-# anything, so the numbers are off the titles and the headings.
-
-
-# The h5i web security tutorial, ten articles that walk the labs in
-# h5i-dev/h5i-tutorial. Published as a numbered series whose first part is on
-# Medium; here they are pages in order, so the numbers are off the titles.
-
-
-ARTICLES = GUIDES + [AI_PENTESTING_TOOLS, BURP_COMPARISON, ZAP_COMPARISON, CAIDO_COMPARISON,
-            LOOP, ENVIRONMENT, TIERS, EVIDENCE, INJECTION]
+ARTICLES = GUIDES + BLOG
 
 
 def index_page(section, items):
     guides = section == "guides"
-    title = "h5i guides: build, verify, test, and sandbox web apps" if guides else "h5i essays: agent browsers, sandboxes, and web security"
+    title = "h5i guides: build, verify, test, and sandbox web apps" if guides else "h5i Blog: framework design, formal verification, and agent security"
     description = ("Five task guides for building and verifying Rust web apps, red-teaming running apps, regression testing in CI/CD, and sandboxing agent workflows."
-                   if guides else "Nine essays on auditable AI browsing, sandboxing, evidence, and comparisons of h5i with Burp Suite, OWASP ZAP, and Caido for agent testing.")
+                   if guides else "Five engineering essays on the verifiable Rust framework, Lean 4 case studies, web security testing, agent isolation, and execution evidence.")
     # A hub heading names the section. It is the one page on the site whose
     # job is to be a label, so the argument goes in the deck.
     h1 = "h5i Guides" if guides else "h5i Blog"
     deck = ("Start by building and formally verifying a Rust web app. Then test the running application, turn confirmed findings into CI checks, and run agent work inside a reviewed sandbox."
             if guides else
-            "Why an agent's browser and its boundary belong in one place, what counts as evidence of what an agent actually did, and where h5i differs from Burp Suite, OWASP ZAP, and Caido.")
+            "Engineering notes on verifiable web applications, formal verification, and agent-driven security testing.")
     url = f"https://h5i.dev/{section}/"
     # A hub is a page in its own right. Without CollectionPage and a breadcrumb
     # it is the one level of the site with no trail, while every article under
@@ -779,34 +266,43 @@ def index_page(section, items):
     ]}
     rows = ""
     for i, item in enumerate(items, 1):
-        label = item["eyebrow"].split(" / ")[0]
+        label = item["eyebrow"].split(" / ")[0] if guides else f"{i:02d} / {item['eyebrow'].split(' / ')[-1]}"
         rows += f"""<a class="post-card{' featured' if i == 1 else ''}" href="/{section}/{item['slug']}/">
 <div class="card-meta"><span>{label}</span><span>{item['time']}</span></div>
 <h2>{item['h1']}</h2><p>{item['description']}</p></a>"""
     return f"""{head(title, description, url, schema, kind="website", rss=not guides)}
-<body>{NAV}<section class="index-hero"><div class="post-eyebrow">{len(items)} {"task guides" if guides else "essays and comparisons"}</div>
+<body>{NAV}<section class="index-hero"><div class="post-eyebrow">{len(items)} {"task guides" if guides else "engineering essays"}</div>
 <h1>{h1}</h1><p>{deck}</p></section><section class="post-list">{rows}</section>{FOOTER}</body></html>"""
 
 
 REDIRECTS = {
     "blog": {
-        "agent-sandbox-env": "the-environment-is-the-sandbox", "what-is-ai-aware-version-control": "the-environment-is-the-sandbox",
-        "orchestration-patterns-beyond-ensemble": "the-environment-is-the-sandbox", "git-notes-vs-h5i-ai-coding-workflows": "the-environment-is-the-sandbox",
-        "sandboxing-ai-agents-foundations": "choosing-agent-isolation", "sandboxing-ai-agents-implementation": "choosing-agent-isolation",
-        "sandboxing-ai-agents-landscape": "choosing-agent-isolation", "sandboxing-ai-agents-h5i": "choosing-agent-isolation",
-        "auditable-workspaces-for-ai-agents": "evidence-for-agent-work", "why-git-diffs-are-not-enough-for-ai-generated-code": "evidence-for-agent-work",
-        "structured-tool-output-schema": "evidence-for-agent-work", "uncertainty-heatmap": "evidence-for-agent-work",
-        "track-claude-code-prompts-diffs-git": "evidence-for-agent-work", "from-git-blame-to-ai-blame": "evidence-for-agent-work",
-        "pr-body-ai-code-review": "evidence-for-agent-work", "review-code-written-by-ai-agents": "evidence-for-agent-work",
-        "auditing-ai-generated-code": "evidence-for-agent-work", "prompt-injection-in-agent-traces": "prompt-injection-is-a-boundary-problem",
-        "cve-2026-33068-bypass-permissions-settings": "prompt-injection-is-a-boundary-problem",
-        "cve-2025-59536-startup-trust-dialog": "prompt-injection-is-a-boundary-problem",
-        "claude-code-hooks-vs-git-hooks": "evidence-for-agent-work", "programmable-agent-orchestration-edsl": "choosing-agent-isolation",
-        "write-your-first-orchestra-score": "choosing-agent-isolation", "context-dag-versioned-agent-reasoning": "evidence-for-agent-work",
-        "persistent-memory-for-claude-code": "prompt-injection-is-a-boundary-problem", "token-reduction-object-store": "the-environment-is-the-sandbox",
-        "git-communication-layer-ai-agents": "the-environment-is-the-sandbox", "i5h-agent-to-agent-messaging": "the-environment-is-the-sandbox",
-        "prompt-maturity-score": "the-environment-is-the-sandbox", "agent-ensembles-with-h5i-team": "the-environment-is-the-sandbox",
-        "agents-share-information-never-permissions": "the-environment-is-the-sandbox",
+        "ai-pentesting-tools": "ai-powered-web-security-testing",
+        "burp-suite-vs-h5i-for-ai-agents": "ai-powered-web-security-testing",
+        "owasp-zap-vs-h5i-for-ai-agents": "ai-powered-web-security-testing",
+        "caido-vs-h5i-for-ai-agents": "ai-powered-web-security-testing",
+        "the-h5i-loop": "auditing-agent-workflows",
+        "the-environment-is-the-sandbox": "sandboxing-ai-agents",
+        "choosing-agent-isolation": "sandboxing-ai-agents",
+        "prompt-injection-is-a-boundary-problem": "sandboxing-ai-agents",
+        "evidence-for-agent-work": "auditing-agent-workflows",
+        "agent-sandbox-env": "sandboxing-ai-agents", "what-is-ai-aware-version-control": "sandboxing-ai-agents",
+        "orchestration-patterns-beyond-ensemble": "sandboxing-ai-agents", "git-notes-vs-h5i-ai-coding-workflows": "sandboxing-ai-agents",
+        "sandboxing-ai-agents-foundations": "sandboxing-ai-agents", "sandboxing-ai-agents-implementation": "sandboxing-ai-agents",
+        "sandboxing-ai-agents-landscape": "sandboxing-ai-agents", "sandboxing-ai-agents-h5i": "sandboxing-ai-agents",
+        "auditable-workspaces-for-ai-agents": "auditing-agent-workflows", "why-git-diffs-are-not-enough-for-ai-generated-code": "auditing-agent-workflows",
+        "structured-tool-output-schema": "auditing-agent-workflows", "uncertainty-heatmap": "auditing-agent-workflows",
+        "track-claude-code-prompts-diffs-git": "auditing-agent-workflows", "from-git-blame-to-ai-blame": "auditing-agent-workflows",
+        "pr-body-ai-code-review": "auditing-agent-workflows", "review-code-written-by-ai-agents": "auditing-agent-workflows",
+        "auditing-ai-generated-code": "auditing-agent-workflows", "prompt-injection-in-agent-traces": "sandboxing-ai-agents",
+        "cve-2026-33068-bypass-permissions-settings": "sandboxing-ai-agents",
+        "cve-2025-59536-startup-trust-dialog": "sandboxing-ai-agents",
+        "claude-code-hooks-vs-git-hooks": "auditing-agent-workflows", "programmable-agent-orchestration-edsl": "sandboxing-ai-agents",
+        "write-your-first-orchestra-score": "sandboxing-ai-agents", "context-dag-versioned-agent-reasoning": "auditing-agent-workflows",
+        "persistent-memory-for-claude-code": "sandboxing-ai-agents", "token-reduction-object-store": "sandboxing-ai-agents",
+        "git-communication-layer-ai-agents": "sandboxing-ai-agents", "i5h-agent-to-agent-messaging": "sandboxing-ai-agents",
+        "prompt-maturity-score": "sandboxing-ai-agents", "agent-ensembles-with-h5i-team": "sandboxing-ai-agents",
+        "agents-share-information-never-permissions": "sandboxing-ai-agents",
     },
     "guides": {
         "drive-a-browser-session": "red-team-a-web-app",
@@ -841,7 +337,7 @@ REDIRECTS = {
 
 # Retired top-level pages. `/workflows/` was a sixth section holding one page,
 # the end-to-end loop, which is an essay and now lives in the blog as one.
-TOP_REDIRECTS = {"workflows": "/blog/the-h5i-loop/"}
+TOP_REDIRECTS = {"workflows": "/blog/auditing-agent-workflows/"}
 
 
 def redirect_page(target):

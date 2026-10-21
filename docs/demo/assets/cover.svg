@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+  <title id="title">Build and Verify Your Web Apps with h5i</title>
+  <desc id="desc">The Verifiable Web Framework for Rust. A dark card with a warm accent echoing the demo finale.</desc>
+  <defs>
+    <radialGradient id="glow">
+      <stop stop-color="#5b241f" stop-opacity=".55"/>
+      <stop offset=".55" stop-color="#241313" stop-opacity=".22"/>
+      <stop offset="1" stop-color="#060608" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1200" height="630" fill="#060608"/>
+  <ellipse cx="600" cy="325" rx="610" ry="350" fill="url(#glow)"/>
+  <path d="M90 92h1020M90 538h1020" stroke="#393037" stroke-width="2"/>
+  <text x="600" y="224" fill="#ececf0" font-family="Arial, sans-serif" font-size="75" font-weight="700" text-anchor="middle">Build and Verify</text>
+  <text x="600" y="310" fill="#ececf0" font-family="Arial, sans-serif" font-size="75" font-weight="700" text-anchor="middle">Your Web Apps.</text>
+  <text x="600" y="394" fill="#ececf0" font-family="Arial, sans-serif" font-size="54" text-anchor="middle">with <tspan fill="#ff7a59" font-weight="700">h5i</tspan></text>
+  <text x="600" y="464" fill="#b9b9c2" font-family="Arial, sans-serif" font-size="29" text-anchor="middle">The Verifiable Web Framework for Rust</text>
+  <text x="600" y="580" fill="#9a9aa4" font-family="Arial, sans-serif" font-size="22" text-anchor="middle">h5i.dev  ·  github.com/h5i-dev/h5i</text>
+</svg>

@@ -1,0 +1,105 @@
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sandboxing AI Agents: Isolation, Security, and Prompt Injection | h5i</title><meta name="description" content="Why an agent sandbox must include child processes and browsers, how isolation tiers differ, and what prompt injection can still reach.">
+<meta name="author" content="h5i-dev"><meta name="theme-color" content="#D21C1C">
+<meta name="color-scheme" content="dark"><meta name="robots" content="index, follow, max-image-preview:large">
+<link rel="canonical" href="https://h5i.dev/blog/sandboxing-ai-agents/"><link rel="icon" type="image/png" href="/_static/logo.png">
+<meta property="og:type" content="article"><meta property="og:site_name" content="h5i">
+<meta property="og:title" content="Sandboxing AI Agents: Isolation, Security, and Prompt Injection | h5i"><meta property="og:description" content="Why an agent sandbox must include child processes and browsers, how isolation tiers differ, and what prompt injection can still reach.">
+<meta property="og:url" content="https://h5i.dev/blog/sandboxing-ai-agents/"><meta property="og:image" content="https://h5i.dev/_static/social-card.png">
+<meta property="og:image:alt" content="The h5i logo beside the words Agent-Native Web-Security"><meta property="og:locale" content="en_US">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Sandboxing AI Agents: Isolation, Security, and Prompt Injection | h5i">
+<meta name="twitter:description" content="Why an agent sandbox must include child processes and browsers, how isolation tiers differ, and what prompt injection can still reach."><meta name="twitter:image" content="https://h5i.dev/_static/social-card.png">
+<meta name="twitter:image:alt" content="The h5i logo beside the words Agent-Native Web-Security">
+<script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "headline": "Sandboxing AI Agents: Isolation, Security, and Prompt Injection",
+      "description": "Why an agent sandbox must include child processes and browsers, how isolation tiers differ, and what prompt injection can still reach.",
+      "author": {
+        "@type": "Organization",
+        "name": "h5i-dev"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "h5i"
+      },
+      "datePublished": "2026-10-21",
+      "dateModified": "2026-10-21",
+      "image": "https://h5i.dev/_static/social-card.png",
+      "inLanguage": "en",
+      "isPartOf": {
+        "@id": "https://h5i.dev/#website"
+      },
+      "mainEntityOfPage": "https://h5i.dev/blog/sandboxing-ai-agents/"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Home",
+          "item": "https://h5i.dev/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Blog",
+          "item": "https://h5i.dev/blog/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "Sandboxing AI Agents: Isolation, Security, and Prompt Injection",
+          "item": "https://h5i.dev/blog/sandboxing-ai-agents/"
+        }
+      ]
+    }
+  ]
+}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&amp;family=IBM+Plex+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/_static/blog.css?v=38b3f8352f"><link rel="stylesheet" href="/_static/highlight.css?v=31b98f34a5">
+</head>
+<body><nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/features/">Features</a></li><li><a href="/guides/">Guides</a></li>
+    <li><a href="/manual/">Manual</a></li><li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &rarr;</a></li>
+  </ul>
+</nav><main class="article-wrap"><article class="post">
+<header><div class="post-eyebrow">Engineering / Agent Security &middot; 2026-10-21</div>
+<h1>Sandboxing AI Agents: Isolation, Security, and Prompt Injection</h1><p class="post-deck">A coding agent runs a workload, not a single executable. The security boundary must follow that workload through dependencies, tests, local servers, and browser sessions.</p>
+<div class="post-meta"><span>8 min read</span><span>Isolation &middot; Prompt injection &middot; Threat model</span></div></header>
+
+<div class="callout"><strong>The threat model.</strong> A repository, dependency, tool result, or web page may be untrusted. The agent may follow malicious instructions or simply execute code whose behavior it did not inspect.</div>
+<h2 id="workload">Contain the process tree</h2>
+<p>One task can start a package manager, install scripts, compiler plugins, tests, a dev server, and a browser. Wrapping only the agent executable leaves an escape route through its children. A Git worktree separates the checkout but grants no filesystem or network confinement. The outer boundary needs to cover all processes involved in the task, while the policy can grant narrower permissions to particular tools.</p>
+<p>A browser belongs inside that model. It executes page code, carries session state, and may connect to a local dev server. A browser running on the host can expose the developer's normal profile or reach a different <code>localhost</code> than the boxed server. A fresh browser profile inside the same task boundary avoids that mismatch.</p>
+<p>Consider an apparently harmless dependency update. The agent runs the package manager; an install script reads environment variables, then tests start a local service, then the agent opens a documentation page in a browser. A final diff may contain only one lockfile change. The security question is which of those subprocesses could see the developer's home directory or contact the network. The scope of the box must be defined before the first command, not added after a suspicious step appears.</p>
+<h2 id="tiers">Choose isolation by the failure to prevent</h2>
+<p>Workspace separation addresses accidental edits to the parent checkout. Process isolation restricts host file access. Supervised execution can enforce network rules on raw traffic. A container also fixes a toolchain image; a microVM adds a guest kernel boundary at greater cost. These are different guarantees, and availability depends on the host. Check the selected tier and enforced policy for the actual run; the <a href="/manual/#isolation-tiers">isolation reference</a> records the limits.</p>
+<figure class="feature-figure"><img src="/_static/fast-supervised-sandbox.svg" alt="Agent, repository, tools, development server, and browser inside one policy-controlled box, with a reviewed export outside"><figcaption>The boundary follows the task; the proposed result crosses out through review.</figcaption></figure>
+<p>Even strong local isolation cannot protect a secret sent to an allowed model endpoint. Credentials should remain outside the writable box and be supplied only through constrained host-side mechanisms. If source must not leave the machine, model egress must be disabled or served locally.</p>
+<p>A tier name alone is not evidence of enforcement. The host may lack the relevant Linux feature, a network rule may be unavailable, or the run may have fallen back to a weaker mode. The run's status should report what was actually enforced. Different tasks justify different costs: a routine local edit may value quick startup, while running an unknown pull request may justify a separate guest kernel and a stricter outbound policy.</p>
+<h2 id="injection">Prompt injection is an authority problem</h2>
+<p>A malicious README, issue comment, page, or tool result can tell the agent to read credentials, change a policy file, or send data away. Detecting the sentence is useful but fragile: the attacker can rephrase it. The stronger control is to keep the requested action outside the agent's authority. A page can suggest exfiltration, but the box should lack access to host credentials and disallow the destination.</p>
+<p>Policy must be resolved outside the workload's writable paths. Otherwise the agent can rewrite the rule that is supposed to constrain it. Network controls must account for local services and DNS behavior as well as public hosts. Denied actions are worth recording because an attempted escape may leave no Git diff.</p>
+<p>Imagine a malicious page instructing the agent to "verify setup" by reading a token file and sending it to an attacker-controlled endpoint. A classifier may or may not recognize the instruction as hostile. The durable defenses are that the token file is inaccessible and the destination is disallowed. If the agent is permitted to read the token for the legitimate task, policy design becomes harder: it must narrow where that token can be used, and the run needs close review. Isolation reduces available authority; it does not magically classify intent.</p>
+<h2 id="limits">Containment leaves other risks</h2>
+<p>A confined agent can still write vulnerable code, choose weak tests, or produce a persuasive but inaccurate report. Human review and application-level tests remain necessary. Host-kernel tiers also continue to trust the host kernel; a microVM moves, but does not eliminate, the trusted computing base.</p>
+<p>The practical design is to let the agent work in a disposable environment, then cross a narrow review boundary with a proposed patch and execution record. The <a href="/guides/sandboxed-agent-workflows/">sandboxed workflow guide</a> has the commands and policy examples. The companion <a href="/blog/auditing-agent-workflows/">audit essay</a> explains what the reviewer can infer from the records.</p>
+
+<a class="next-up" href="/blog/auditing-agent-workflows/"><span class="label">Review the run</span><h3>Auditing AI Agent Workflows with Execution Evidence</h3><p>Examine what an execution record can and cannot establish.</p></a>
+<div class="post-cta"><h3>Run one bounded task</h3><p>Use a disposable box and review its policy before the agent starts.</p>
+<div class="hero-actions"><a class="btn btn-primary" href="/guides/sandboxed-agent-workflows/">Read the guide</a></div></div>
+</article></main><footer class="blog-footer"><div class="blog-footer-inner">
+  <div class="brand">h5i<span class="red"> / high-five</span></div>
+  <nav class="links"><a href="/">Home</a><a href="/guides/">Guides</a><a href="/blog/">Blog</a><a href="/manual/">Manual</a><a href="https://github.com/h5i-dev/h5i">GitHub</a></nav>
+  <div class="legal">Apache 2.0 &middot; Built with Rust</div>
+</div></footer>
+<script src="/_static/blog.js?v=41dbda103a" defer></script><script src="/_static/highlight.js?v=ed81eee4e6" defer></script></body></html>

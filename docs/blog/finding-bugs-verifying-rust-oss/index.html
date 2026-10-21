@@ -1,0 +1,125 @@
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>I Tried to Verify Popular Rust OSS with Lean 4, but Found Bugs Instead | h5i</title><meta name="description" content="Failed proof attempts led to confirmed Rust OSS bugs: an unscoped delete, a playlist metadata leak, and unbounded policy expansion.">
+<meta name="author" content="h5i-dev"><meta name="theme-color" content="#D21C1C">
+<meta name="color-scheme" content="dark"><meta name="robots" content="index, follow, max-image-preview:large">
+<link rel="canonical" href="https://h5i.dev/blog/finding-bugs-verifying-rust-oss/"><link rel="icon" type="image/png" href="/_static/logo.png">
+<meta property="og:type" content="article"><meta property="og:site_name" content="h5i">
+<meta property="og:title" content="I Tried to Verify Popular Rust OSS with Lean 4, but Found Bugs Instead | h5i"><meta property="og:description" content="Failed proof attempts led to confirmed Rust OSS bugs: an unscoped delete, a playlist metadata leak, and unbounded policy expansion.">
+<meta property="og:url" content="https://h5i.dev/blog/finding-bugs-verifying-rust-oss/"><meta property="og:image" content="https://h5i.dev/_static/social-card.png">
+<meta property="og:image:alt" content="The h5i logo beside the words Agent-Native Web-Security"><meta property="og:locale" content="en_US">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="I Tried to Verify Popular Rust OSS with Lean 4, but Found Bugs Instead | h5i">
+<meta name="twitter:description" content="Failed proof attempts led to confirmed Rust OSS bugs: an unscoped delete, a playlist metadata leak, and unbounded policy expansion."><meta name="twitter:image" content="https://h5i.dev/_static/social-card.png">
+<meta name="twitter:image:alt" content="The h5i logo beside the words Agent-Native Web-Security">
+<script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "headline": "I Tried to Verify Popular Rust OSS with Lean 4, but Found Bugs Instead",
+      "description": "Failed proof attempts led to confirmed Rust OSS bugs: an unscoped delete, a playlist metadata leak, and unbounded policy expansion.",
+      "author": {
+        "@type": "Organization",
+        "name": "h5i-dev"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "h5i"
+      },
+      "datePublished": "2026-10-21",
+      "dateModified": "2026-10-21",
+      "image": "https://h5i.dev/_static/social-card.png",
+      "inLanguage": "en",
+      "isPartOf": {
+        "@id": "https://h5i.dev/#website"
+      },
+      "mainEntityOfPage": "https://h5i.dev/blog/finding-bugs-verifying-rust-oss/"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Home",
+          "item": "https://h5i.dev/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Blog",
+          "item": "https://h5i.dev/blog/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "I Tried to Verify Popular Rust OSS with Lean 4, but Found Bugs Instead",
+          "item": "https://h5i.dev/blog/finding-bugs-verifying-rust-oss/"
+        }
+      ]
+    }
+  ]
+}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&amp;family=IBM+Plex+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/_static/blog.css?v=38b3f8352f"><link rel="stylesheet" href="/_static/highlight.css?v=31b98f34a5">
+</head>
+<body><nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/features/">Features</a></li><li><a href="/guides/">Guides</a></li>
+    <li><a href="/manual/">Manual</a></li><li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &rarr;</a></li>
+  </ul>
+</nav><main class="article-wrap"><article class="post">
+<header><div class="post-eyebrow">Engineering / Formal Verification &middot; 2026-10-21</div>
+<h1>I Tried to Verify Popular Rust OSS with Lean 4, but Found Bugs Instead</h1><p class="post-deck">A failed theorem is a question, not a finding. Following that question into the original code uncovered three different ways an intended invariant could fail.</p>
+<div class="post-meta"><span>7 min read</span><span>Lean 4 &middot; Rust OSS &middot; Case studies</span></div></header>
+
+<div class="callout"><strong>The experiment.</strong> Port selected Rust OSS behavior into an extractable h5i-app kernel, state a security property, and investigate why a proof does not go through. A failed proof is a lead; only reproduction against upstream establishes a bug.</div>
+<h2 id="workflow">From proof attempt to upstream finding</h2>
+<div class="tbl-wrap"><table class="data"><thead><tr><th>Step</th><th>Question</th><th>Evidence</th></tr></thead><tbody>
+<tr><th>1. Specify</th><td>What should hold for every relevant actor and state?</td><td>A reviewable Lean property</td></tr>
+<tr><th>2. Attempt</th><td>Does the translated Rust satisfy it?</td><td>A proof, counterexample, or unresolved obligation</td></tr>
+<tr><th>3. Compare</th><td>Does the port preserve the upstream path?</td><td>Source comparison and differential tests</td></tr>
+<tr><th>4. Reproduce</th><td>Can the original project exhibit the behavior?</td><td>A focused upstream test and report</td></tr>
+</tbody></table></div>
+<p>The <a href="https://github.com/h5i-dev/h5i-app-bench">benchmark repository</a> contains published ports and their proof projects. For example, its documented checks for the RustFS port and the full corpus are:</p>
+<pre><code class="language-bash">h5i app doctor ports/rustfs
+h5i app extract --check ports/rustfs
+h5i app check --all ports</code></pre>
+<p>These commands check the port and proof workspace; they do not reproduce any vulnerability. The last command is a strict gate and can fail on unfinished proofs. The RustiCal case discussed below was still being prepared for publication when the <a href="https://medium.com/@Koukyosyumei/i-tried-to-formally-verify-popular-rust-projects-with-lean-4-but-found-more-bugs-than-i-expected-5badd0017b7c">research account</a> appeared. Distinguishing a port from its original application is essential: an omitted upstream check can create a false counterexample in the port.</p>
+<h2 id="rustical">RustiCal: the checked object and deleted rows diverged</h2>
+<p>A calendar object is identified by principal, calendar ID, and object ID. The hard-delete path authorized the caller's own object, but the database operation selected rows using only the latter two identifiers. In simplified SQL, the vulnerable scope was:</p>
+<pre><code class="language-sql">DELETE FROM calendarobjects
+WHERE cal_id = ? AND id = ?;
+-- The principal is missing from the selection.</code></pre>
+<p>The property worth proving is a frame condition: after Alice deletes one of her objects, Bob's objects are unchanged. The telling reproduction uses Alice and Bob with the same local calendar and object names. A direct attempt to delete Bob's object can be denied, yet deleting Alice's matching object can still remove Bob's row because the write is wider than the authorization decision. The <a href="https://github.com/lennart-k/rustical/security/advisories/GHSA-9cp5-7crm-9cf7">RustiCal advisory</a> documents the confirmed issue.</p>
+<h2 id="oxicloud">OxiCloud: playlist access did not imply file access</h2>
+<p>The playlist path crossed a different boundary. A user could modify a playlist they owned, refer to another user's private file, and then receive that file's metadata in a track response. The permissions are on two objects, not one:</p>
+<pre><code class="language-text">can edit playlist  ≠  can read every referenced file
+             │
+             └── response may include filename, size, MIME type, metadata</code></pre>
+<p>A property over playlist ownership alone would pass while the leak remained. The useful property quantifies over the response: every file represented in the returned tracks must be readable by the caller. The <a href="https://github.com/AtalayaLabs/OxiCloud/pull/796">upstream fix discussion</a> shows how the missing file check was addressed.</p>
+<h2 id="rustfs">RustFS: the outer limit did not bound the inner work</h2>
+<p>RustFS expanded policy variables through nested substitution. An iteration cap guarded an outer loop, but a nested scan could rebuild an expression and continue without consuming that cap. A tiny input could drive disproportionate resolver work. A useful termination argument must show that every substitution decreases a measure or consumes a shared budget; merely finding a counter in the outer loop is insufficient.</p>
+<p>The benchmark's <a href="https://github.com/h5i-dev/h5i-app-bench/blob/main/ports/rustfs/kernel/src/awsvars.rs">ported resolver</a> models the corrected resume point explicitly:</p>
+<pre><code class="language-rust">pub struct Pending {
+    pub text: Vec&lt;u8&gt;,
+    pub resume: usize,
+}
+// A newly substituted placeholder waits for a bounded later pass.</code></pre>
+<p>The <code>resume</code> position stops one scan from immediately restarting at the beginning of its newly substituted text. The <a href="https://github.com/rustfs/rustfs/security/advisories/GHSA-9wgh-5r68-49p7">RustFS advisory</a> records the upstream denial-of-service condition; the port's code shows the related model used for differential checks.</p>
+<h2 id="lesson">What the three cases teach</h2>
+<p>They fail for different reasons: a write scope wider than its check, a reference to an object with its own permission, and a nested computation outside its intended bound. The common method is to state the invariant, inspect the exact implementation path, and reproduce any suspected failure in the original application before calling it a finding.</p>
+<p>Formal verification did not automatically diagnose these bugs. An unsuccessful proof could also mean a missing lemma, a bad model, or unsupported Rust. Its value was forcing a precise question that could be tested against real behavior. This article is an original synthesis of the <a href="https://medium.com/@Koukyosyumei/i-tried-to-formally-verify-popular-rust-projects-with-lean-4-but-found-more-bugs-than-i-expected-5badd0017b7c">original research account</a>, the <a href="https://github.com/h5i-dev/h5i-app-bench">benchmark</a>, and the linked upstream reports.</p>
+
+<a class="next-up" href="/blog/ai-powered-web-security-testing/"><span class="label">Running systems</span><h3>AI-Powered Web Security Testing: h5i vs. Burp, ZAP, and Caido</h3><p>Compare tools for investigating the behavior of a deployed application.</p></a>
+<div class="post-cta"><h3>See how the framework is built</h3><p>Read the architecture behind the Rust kernels and Lean 4 proofs.</p>
+<div class="hero-actions"><a class="btn btn-primary" href="/blog/building-a-verifiable-web-framework/">Read the framework essay</a></div></div>
+</article></main><footer class="blog-footer"><div class="blog-footer-inner">
+  <div class="brand">h5i<span class="red"> / high-five</span></div>
+  <nav class="links"><a href="/">Home</a><a href="/guides/">Guides</a><a href="/blog/">Blog</a><a href="/manual/">Manual</a><a href="https://github.com/h5i-dev/h5i">GitHub</a></nav>
+  <div class="legal">Apache 2.0 &middot; Built with Rust</div>
+</div></footer>
+<script src="/_static/blog.js?v=41dbda103a" defer></script><script src="/_static/highlight.js?v=ed81eee4e6" defer></script></body></html>

@@ -1,4 +1,4 @@
-# h5i demo: Build → Verify → Hack → Regression
+# h5i demo: Build → Verify → Red-team → Regression
 
 The 60-second film is a deterministic HTML timeline, rendered to MP4. It keeps
 the opening question and the shell, console, editor, and browser windows. The
@@ -6,12 +6,12 @@ agent follows one board application through four stages.
 
 | Time | Beat |
 | --- | --- |
-| 0:00–0:07 | Opening question and the Build / Verify / Hack title card. |
+| 0:00–0:07 | Opening question and the Build and Verify Your Web Apps title card. |
 | 0:07–0:13 | Build: the agent writes the board's Rust kernel. |
 | 0:13–0:29 | Verify: extract to Lean 4, show `authorized`, run proof and the configured mutation, then reveal the kernel proof boundary. |
-| 0:29–0:49 | Hack: open the same board in a browser, replay Alice's request with Bob's post ID, and record the adapter finding. |
+| 0:29–0:49 | Red-team: open the same board in a browser, replay Alice's request with Bob's post ID, and record the adapter finding. |
 | 0:49–0:56 | Regression: fix the adapter's visibility check and replay a YAML test; Alice gets 200 and Bob's private post returns 403. |
-| 0:56–1:00 | Close: Build. Verify. Hack. Repeat. |
+| 0:56–1:00 | Close: Build and Verify Your Web Apps. with h5i. The Verifiable Web Framework for Rust. |
 
 The Rust kernel and Lean theorem names shown are drawn from
 `examples/app/board`. Its `authorized` theorem concerns successful **kernel
@@ -32,7 +32,7 @@ receipt outputs are scripted.
   `T` holds absolute beat times; `term` holds scripted shell events; `caps`
   holds lower-third text; `drawConsole()` controls UI state.
 - `render.mjs`: drives `window.SEEK(t)` in headless Chromium and pipes frames
-  to ffmpeg. `assets/` holds the fonts and logo.
+  to ffmpeg. `assets/` holds the fonts, logo, and demo cover image.
 
 The page plays in a browser. Space pauses or resumes; the scrub bar seeks.
 Rendering needs ffmpeg, Playwright, and Chromium:

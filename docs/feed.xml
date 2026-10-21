@@ -3,30 +3,18 @@
 <description>Design essays on giving an AI agent a browser you can audit: boundaries, evidence, and what a request log has to prove.</description>
 <language>en-us</language><lastBuildDate>Wed, 21 Oct 2026 12:00:00 GMT</lastBuildDate>
 <atom:link xmlns:atom="http://www.w3.org/2005/Atom" href="https://h5i.dev/feed.xml" rel="self" type="application/rss+xml"/>
-    <item><title>AI pentesting tools: Burp Suite, ZAP, Caido, or h5i?</title><link>https://h5i.dev/blog/ai-pentesting-tools/</link>
-      <guid isPermaLink="true">https://h5i.dev/blog/ai-pentesting-tools/</guid><pubDate>Wed, 09 Sep 2026 12:00:00 GMT</pubDate>
-      <description>Burp Suite, ZAP, Caido, and h5i compared for AI pentesting: AI-assisted manual testing, AI-authored scan automation, and agent-led investigation.</description></item>
-    <item><title>Burp Suite vs h5i for AI agents</title><link>https://h5i.dev/blog/burp-suite-vs-h5i-for-ai-agents/</link>
-      <guid isPermaLink="true">https://h5i.dev/blog/burp-suite-vs-h5i-for-ai-agents/</guid><pubDate>Wed, 09 Sep 2026 12:00:00 GMT</pubDate>
-      <description>Burp Suite vs h5i for AI agents: compare HTTP capture, request editing, browser automation, and fully automated penetration testing with Burp AT or h5i.</description></item>
-    <item><title>OWASP ZAP vs h5i for AI agents</title><link>https://h5i.dev/blog/owasp-zap-vs-h5i-for-ai-agents/</link>
-      <guid isPermaLink="true">https://h5i.dev/blog/owasp-zap-vs-h5i-for-ai-agents/</guid><pubDate>Wed, 09 Sep 2026 12:00:00 GMT</pubDate>
-      <description>OWASP ZAP vs h5i for AI agents: compare DAST scanning and MCP automation with fully automated, agent-driven browser testing, HTTP capture, editing, and replay.</description></item>
-    <item><title>Caido vs h5i for AI agents</title><link>https://h5i.dev/blog/caido-vs-h5i-for-ai-agents/</link>
-      <guid isPermaLink="true">https://h5i.dev/blog/caido-vs-h5i-for-ai-agents/</guid><pubDate>Wed, 09 Sep 2026 12:00:00 GMT</pubDate>
-      <description>Caido vs h5i for AI agents: compare proxy history, HTTPQL, Replay, Automate, and Skills with fully automated agent-driven browser and HTTP testing.</description></item>
-    <item><title>Sandbox the entire workflow: browse, develop, review, apply</title><link>https://h5i.dev/blog/the-h5i-loop/</link>
-      <guid isPermaLink="true">https://h5i.dev/blog/the-h5i-loop/</guid><pubDate>Fri, 21 Aug 2026 12:00:00 GMT</pubDate>
-      <description>Create one sandbox for an AI coding task, browse from inside it, develop and test there, then review the evidence before exporting or applying the patch.</description></item>
-    <item><title>Why sandbox the entire AI agent workload</title><link>https://h5i.dev/blog/the-environment-is-the-sandbox/</link>
-      <guid isPermaLink="true">https://h5i.dev/blog/the-environment-is-the-sandbox/</guid><pubDate>Fri, 21 Aug 2026 12:00:00 GMT</pubDate>
-      <description>AI coding agents run package scripts, compilers, tests, servers, and browsers. Sandboxing the whole workload limits what mistakes and untrusted code can reach.</description></item>
-    <item><title>How to choose an AI agent sandbox</title><link>https://h5i.dev/blog/choosing-agent-isolation/</link>
-      <guid isPermaLink="true">https://h5i.dev/blog/choosing-agent-isolation/</guid><pubDate>Fri, 21 Aug 2026 12:00:00 GMT</pubDate>
-      <description>Choose an AI coding-agent sandbox by the failure it must prevent: host file access, unrestricted network traffic, environment drift, or a shared kernel.</description></item>
-    <item><title>Review AI-generated code with execution evidence</title><link>https://h5i.dev/blog/evidence-for-agent-work/</link>
-      <guid isPermaLink="true">https://h5i.dev/blog/evidence-for-agent-work/</guid><pubDate>Fri, 21 Aug 2026 12:00:00 GMT</pubDate>
-      <description>Review AI-generated code using the diff, externally observed test results, denied actions, browser errors, and explicit gaps in evidence.</description></item>
-    <item><title>How to protect a coding agent from prompt injection</title><link>https://h5i.dev/blog/prompt-injection-is-a-boundary-problem/</link>
-      <guid isPermaLink="true">https://h5i.dev/blog/prompt-injection-is-a-boundary-problem/</guid><pubDate>Fri, 21 Aug 2026 12:00:00 GMT</pubDate>
-      <description>Limit the files, credentials, network destinations, local services, and repository writes available to a prompt-injected coding agent.</description></item></channel></rss>
+    <item><title>Building a Verifiable Web Framework in Rust</title><link>https://h5i.dev/blog/building-a-verifiable-web-framework/</link>
+      <guid isPermaLink="true">https://h5i.dev/blog/building-a-verifiable-web-framework/</guid><pubDate>Wed, 21 Oct 2026 12:00:00 GMT</pubDate>
+      <description>Why h5i-app puts a small Rust decision kernel between Axum handlers and storage, then translates that kernel to Lean 4 for proofs.</description></item>
+    <item><title>I Tried to Verify Popular Rust OSS with Lean 4, but Found Bugs Instead</title><link>https://h5i.dev/blog/finding-bugs-verifying-rust-oss/</link>
+      <guid isPermaLink="true">https://h5i.dev/blog/finding-bugs-verifying-rust-oss/</guid><pubDate>Wed, 21 Oct 2026 12:00:00 GMT</pubDate>
+      <description>Failed proof attempts led to confirmed Rust OSS bugs: an unscoped delete, a playlist metadata leak, and unbounded policy expansion.</description></item>
+    <item><title>AI-Powered Web Security Testing: h5i vs. Burp, ZAP, and Caido</title><link>https://h5i.dev/blog/ai-powered-web-security-testing/</link>
+      <guid isPermaLink="true">https://h5i.dev/blog/ai-powered-web-security-testing/</guid><pubDate>Wed, 21 Oct 2026 12:00:00 GMT</pubDate>
+      <description>Compare Burp Suite, OWASP ZAP, Caido, and h5i by the investigation each supports: manual proxy work, scanning, agent tooling, and browser-to-HTTP testing.</description></item>
+    <item><title>Sandboxing AI Agents: Isolation, Security, and Prompt Injection</title><link>https://h5i.dev/blog/sandboxing-ai-agents/</link>
+      <guid isPermaLink="true">https://h5i.dev/blog/sandboxing-ai-agents/</guid><pubDate>Wed, 21 Oct 2026 12:00:00 GMT</pubDate>
+      <description>Why an agent sandbox must include child processes and browsers, how isolation tiers differ, and what prompt injection can still reach.</description></item>
+    <item><title>Auditing AI Agent Workflows with Execution Evidence</title><link>https://h5i.dev/blog/auditing-agent-workflows/</link>
+      <guid isPermaLink="true">https://h5i.dev/blog/auditing-agent-workflows/</guid><pubDate>Wed, 21 Oct 2026 12:00:00 GMT</pubDate>
+      <description>A patch shows what changed, but reviewing agent work also needs commands, browser activity, network decisions, missing evidence, and a controlled export.</description></item></channel></rss>
