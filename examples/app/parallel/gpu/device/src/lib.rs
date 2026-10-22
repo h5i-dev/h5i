@@ -1,10 +1,10 @@
 #![cfg(feature = "gpu")]
 #![allow(improper_ctypes_definitions)]
 #![no_std]
-#[path = "../../../../../examples/app/parallel/kernel/src/lib.rs"]
+#[path = "../../../kernel/src/lib.rs"]
 mod shared;
 // The SoA widths are the single source of truth shared with the host crate.
-#[path = "../../../src/layout.rs"]
+#[path = "../../src/layout.rs"]
 mod layout;
 use cuda_std::{kernel, thread};
 use layout::{MAX_ROWS, ROW_BYTES, RULE_BYTES};

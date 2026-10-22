@@ -1,0 +1,13 @@
+[package]
+name = "discount-gpu-example"
+version = "0.1.0"
+edition = "2024"
+publish = false
+[features]
+default = []
+gpu = ["dep:h5i-app-gpu-backend-nvvm"]
+[dependencies]
+h5i-app-gpu = { path = "../../../crates/h5i-app-gpu" }
+h5i-app-gpu-backend-nvvm = { path = "../../../crates/h5i-app-gpu/backend-nvvm", optional = true }
+[workspace]
+members = ["device"]

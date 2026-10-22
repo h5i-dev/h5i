@@ -1,5 +1,6 @@
 [workspace]
 resolver = "3"
+exclude = ["parallel/gpu", "discount-gpu"]
 members = [
     "parallel/kernel",
     "board/kernel",

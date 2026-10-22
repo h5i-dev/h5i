@@ -2,9 +2,9 @@
 name = "h5i-app-gpu"
 version = "0.1.2"
 edition = "2024"
-publish = false
-[dependencies]
-parallel-kernel = { path = "../../examples/app/parallel/kernel" }
+license = "Apache-2.0"
+description = "Optional batch execution adapters and differential checks for application kernels"
 [workspace]
-members = ["backend-nvvm", "backend-nvvm/device"]
+members = ["backend-nvvm"]
+default-members = ["."]
 exclude = ["backend-oxide"]

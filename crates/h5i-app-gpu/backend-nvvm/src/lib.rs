@@ -1,17 +1,13 @@
-//! Trusted NVVM launch/ABI shell. Input slices become pointer/length pairs.
-use cust::{
-    event::{Event, EventFlags},
-    prelude::*,
-};
-use h5i_app_gpu::batch::{Backend, Batch, Decision, Output};
-use std::{error::Error, time::Instant};
+//! Rust-CUDA host adapter. Applications own PTX, device-compatible layouts and
+//! entry points. No application kernel or tutorial is linked into this crate.
+use cust::prelude::*;
+use std::error::Error;
 pub type Failure = Box<dyn Error>;
+
 pub struct Nvvm {
     module: Module,
     stream: Stream,
     _context: Context,
-    pub kernel_ms: f32,
-    pub total_ms: f64,
 }
 impl Nvvm {
     pub fn new(ptx: &str) -> Result<Self, Failure> {
@@ -20,78 +16,54 @@ impl Nvvm {
             module: Module::from_ptx(ptx, &[])?,
             stream: Stream::new(StreamFlags::NON_BLOCKING, None)?,
             _context: context,
-            kernel_ms: 0.,
-            total_ms: 0.,
         })
     }
-}
-impl Backend for Nvvm {
-    type Error = Failure;
-    fn run(&mut self, decision: Decision, b: &Batch) -> Result<Output, Failure> {
-        if b.n > 1_000_001 {
-            return Err("output arena exceeds probe capacity".into());
-        }
-        if b.n == 0 {
-            return Ok(Output {
-                values: vec![],
-                errors: vec![],
-            });
-        }
-        let start = Instant::now();
-        let text = DeviceBuffer::from_slice(&b.text)?;
-        let mut out = Output {
-            values: vec![u32::MAX; b.n],
-            errors: vec![u32::MAX; b.n],
-        };
-        let values = DeviceBuffer::from_slice(&out.values)?;
-        let errors = DeviceBuffer::from_slice(&out.errors)?;
-        let begin = Event::new(EventFlags::DEFAULT)?;
-        let end = Event::new(EventFlags::DEFAULT)?;
-        let stream = &self.stream;
-        let grid = (b.n as u32).div_ceil(128);
-        match decision {
-            Decision::Search => {
-                let tags = DeviceBuffer::from_slice(&b.tags)?;
-                let terms = DeviceBuffer::from_slice(&b.terms)?;
-                let f = self.module.get_function("search_batch")?;
-                begin.record(stream)?;
-                // All output pointers have n disjoint slots. The device checks each
-                // input capacity before indexing; lengths are in elements, not bytes.
-                unsafe {
-                    cust::launch!(f<<<grid,128,0,stream>>>(text.as_device_ptr(),text.len(),tags.as_device_ptr(),tags.len(),terms.as_device_ptr(),terms.len(),b.count,b.any,b.negated,b.required,values.as_device_ptr(),errors.as_device_ptr(),b.n))?;
-                }
-                end.record(stream)?;
-                end.synchronize()?;
-            }
-            Decision::Push => {
-                let patterns = DeviceBuffer::from_slice(&b.patterns)?;
-                let displays = DeviceBuffer::from_slice(&b.displays)?;
-                let members = DeviceBuffer::from_slice(&b.members)?;
-                let powers = DeviceBuffer::from_slice(&b.powers)?;
-                let f = self.module.get_function("push_batch")?;
-                begin.record(stream)?;
-                unsafe {
-                    cust::launch!(f<<<grid,128,0,stream>>>(text.as_device_ptr(),text.len(),patterns.as_device_ptr(),patterns.len(),displays.as_device_ptr(),displays.len(),members.as_device_ptr(),members.len(),powers.as_device_ptr(),powers.len(),b.minimum,b.maximum,b.required,b.enabled,b.require_display,values.as_device_ptr(),errors.as_device_ptr(),b.n))?;
-                }
-                end.record(stream)?;
-                end.synchronize()?;
-            }
-        }
-        self.kernel_ms = end.elapsed_time_f32(&begin)?;
-        values.copy_to(&mut out.values)?;
-        errors.copy_to(&mut out.errors)?;
-        self.total_ms = start.elapsed().as_secs_f64() * 1000.;
-        Ok(out)
-    }
-}
 
-impl Nvvm {
-    /// The loaded PTX module, so a downstream benchmark can launch its own
-    /// kernels over device buffers it uploads.
+    /// Execute independent rows using the ABI `(input: *const I, output:
+    /// *mut O, len: usize)`. Outputs are initialized with `O::default()` and
+    /// copied back only after the stream completes. Empty batches do not launch.
+    ///
+    /// # Safety
+    /// The named PTX function must have exactly this ABI and matching layouts.
+    /// Each thread must bounds-check its index against `len`, access only the
+    /// supplied allocations, and fully write valid `O` values to its disjoint
+    /// output row. It must not write the input, race with other threads, or
+    /// retain pointers after completion. It must implement the
+    /// application's pure computation with no external effects. `DeviceCopy`
+    /// alone does not establish that a PTX function obeys this contract.
+    pub unsafe fn map<I, O>(&mut self, entry: &str, input: &[I]) -> Result<Vec<O>, Failure>
+    where
+        I: cust::memory::DeviceCopy,
+        O: cust::memory::DeviceCopy + Default + Clone,
+    {
+        let mut output = vec![O::default(); input.len()];
+        if input.is_empty() {
+            return Ok(output);
+        }
+        let grid = u32::try_from(input.len().div_ceil(128))
+            .map_err(|_| "batch exceeds CUDA grid capacity")?;
+        let rows = DeviceBuffer::from_slice(input)?;
+        let results = DeviceBuffer::from_slice(&output)?;
+        let function = self.module.get_function(entry)?;
+        let stream = &self.stream;
+        // Drain the stream even if launch reports an error, before buffers drop.
+        let launch = unsafe {
+            cust::launch!(function<<<grid, 128, 0, stream>>>(
+                rows.as_device_ptr(), results.as_device_ptr(), input.len()
+            ))
+        };
+        let completion = stream.synchronize();
+        launch?;
+        completion?;
+        results.copy_to(&mut output)?;
+        Ok(output)
+    }
+
+    /// Escape hatch for application-specific multi-buffer launch adapters.
+    /// The caller is responsible for layout, aliasing, capacity and lifetimes.
     pub fn module(&self) -> &Module {
         &self.module
     }
-    /// The non-blocking stream those launches run on.
     pub fn stream(&self) -> &Stream {
         &self.stream
     }

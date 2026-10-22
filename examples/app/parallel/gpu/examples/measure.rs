@@ -1,11 +1,12 @@
-use h5i_app_gpu::{
+use h5i_app_gpu_backend_nvvm::Failure;
+use parallel_gpu::ParallelGpu;
+use parallel_gpu::{
     batch::{Backend, Cpu, Decision},
     differential::{check, fixture},
 };
-use h5i_app_gpu_backend_nvvm::{Failure, Nvvm};
 fn main() -> Result<(), Failure> {
     let ptx = std::fs::read_to_string(std::env::args().nth(1).ok_or("pass PTX path")?)?;
-    let mut gpu = Nvvm::new(&ptx)?;
+    let mut gpu = ParallelGpu::new(&ptx)?;
     check(&mut gpu)?;
     eprintln!("random differential, error slots, batch independence, SoA boundaries: passed");
     if std::env::args().any(|arg| arg == "--check-only") {

@@ -259,16 +259,61 @@ no GPU advantage follows from that observation.
 ## Real-application GPU benchmark
 
 `batch::Backend<Input, Operation, Response>` is the common execution interface.
-Its default types preserve the search/push probes; applications can implement
-it for their own batch, operation and output types without adding application
-variants to the framework's `Decision` enum. This interface does not generate
-device code: device entry points, layouts and launches remain explicit.
+It has no default application types. `batch::Cpu` wraps an application's pure
+Rust function; `runtime::execute_batch` selects CPU, required GPU, or an explicit
+minimum-batch-size Auto policy. Auto uses CPU when the GPU is absent or the batch
+is small. Errors after selecting a backend propagate without CPU replay, and
+output cardinality must match input cardinality. Applications still validate
+row-level errors and invariants before committing state.
 
-For backends returning `batch::Output`, call `output.validate(input_row_count)`
-before consuming decisions. It rejects incomplete columns and every nonzero
-row error; an unsupported row must not silently become a negative decision.
-Values still have kernel-specific semantics. Applications choose their fallback
-policy, and CPU/GPU equivalence remains a separate differential-test obligation.
+`repr::DeviceRepr` provides optional fallible boundary conversions.
+`differential::compare` accepts application-owned inputs, backends and a comparison
+policy; `check_batch` checks cardinality, repeated execution and partitions.
+Neither shared source nor these empirical checks establishes formal equivalence.
+The ordinary application kernel and its Lean extraction API do not change.
+
+`backend-nvvm::Nvvm` owns the CUDA context, PTX module and stream. Its unsafe
+`map` helper handles transfer, launch, synchronization and readback for the
+explicit `(input pointer, output pointer, usize row count)` ABI. Applications
+encapsulate that unsafe contract in their own typed adapters. Multi-buffer or
+resident workloads can use `module()` and `stream()` with cust buffers directly.
+There is no scheduler or persistent-state abstraction in this change.
+
+The search/push `Batch`, `Decision`, `Output::validate`, CPU oracle, fixed SoA
+layouts, Rust-CUDA device wrappers and conformance fixtures now live together in
+[`examples/app/parallel/gpu`](../../examples/app/parallel/gpu). The runtime and
+NVVM adapter no longer depend on `parallel-kernel`. Existing build/measure script
+paths forward to this application workspace. The archived cuda-oxide compiler
+probes retain their own application dependencies and separate workspace.
+
+A second independent workload is
+[`examples/app/discount-gpu`](../../examples/app/discount-gpu): checked integer
+pricing using `[u64; 3]` inputs and `[u64; 2]` outputs through `Nvvm::map`.
+Host and device compile the same pure function. CPU tests compare its arithmetic
+with a u128 oracle; the GPU executable checks output/status equality, empty
+batches, block boundaries, partition independence and determinism. This example
+has no Lean proof and makes no formal-verification claim.
+
+CPU-only checks (no CUDA toolkit required):
+
+```sh
+cargo test --release --manifest-path crates/h5i-app-gpu/Cargo.toml
+cargo test --release --manifest-path examples/app/discount-gpu/Cargo.toml -p discount-gpu-example
+```
+
+Using the pinned environment from setup above:
+
+```sh
+bash examples/app/parallel/gpu/build-device.sh
+bash examples/app/parallel/gpu/measure.sh --check-only
+bash examples/app/discount-gpu/build-device.sh
+bash examples/app/discount-gpu/check.sh
+```
+
+The public API removes the tutorial defaults: existing consumers must provide
+explicit `Backend` type arguments and move search/push imports to `parallel_gpu`.
+AI Town integration remains downstream work; its sequential/two-phase movement
+and tick semantics are not changed by this runtime refactor.
 
 The real linkding bookmark-search predicate is an application workload, not part
 of this framework. Its GPU benchmark — the `linkding_batch` kernel, resident

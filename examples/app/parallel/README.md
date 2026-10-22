@@ -10,4 +10,5 @@ From the repository root, `cargo app extract examples/app/parallel` regenerates
 the Aeneas and schema fixtures; `cargo app check examples/app/parallel` builds
 the proofs and checks their axiom dependencies. Use the workspace's isolated
 cache/CPU constraints. Device wrappers live in the separately built
-`crates/h5i-app-gpu` workspace, behind `gpu`; Charon never sees them.
+`examples/app/parallel/gpu` workspace, behind `gpu`; Charon never sees them.
+The optional runtime lives in `crates/h5i-app-gpu` and its `backend-nvvm` adapter.

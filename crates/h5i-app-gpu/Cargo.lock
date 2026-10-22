@@ -63,20 +63,6 @@ name = "bytemuck"
 version = "1.25.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "95832e849adfb21180ccb6826a99da14e5d266ae5c2e668e1602cf234f153797"
-dependencies = [
- "bytemuck_derive",
-]
-
-[[package]]
-name = "bytemuck_derive"
-version = "1.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a1f896587b6f2c069c73d2f0913e2d590c3990285cd2f0b6aa02b786b4c679c"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 3.0.9",
-]
 
 [[package]]
 name = "cc"
@@ -112,35 +98,6 @@ dependencies = [
  "glob",
  "libc",
  "libloading",
-]
-
-[[package]]
-name = "crunchy"
-version = "0.2.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
-
-[[package]]
-name = "cuda_std"
-version = "0.2.2"
-source = "git+https://github.com/Rust-GPU/rust-cuda?rev=3a82c35a7196731fb60eebdac2a40d2b1bf0ba95#3a82c35a7196731fb60eebdac2a40d2b1bf0ba95"
-dependencies = [
- "bitflags",
- "cuda_std_macros",
- "glam",
- "half",
- "paste",
- "vek",
-]
-
-[[package]]
-name = "cuda_std_macros"
-version = "0.2.0"
-source = "git+https://github.com/Rust-GPU/rust-cuda?rev=3a82c35a7196731fb60eebdac2a40d2b1bf0ba95#3a82c35a7196731fb60eebdac2a40d2b1bf0ba95"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
 ]
 
 [[package]]
@@ -208,7 +165,6 @@ version = "0.30.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19fc433e8437a212d1b6f1e68c7824af3aed907da60afa994e7f542d18d12aa9"
 dependencies = [
- "bytemuck",
  "libm",
 ]
 
@@ -221,9 +177,6 @@ checksum = "e4eba85ea1d0a966a983acd07deee566e67395d2d96b6fb39e62b5a833f1eb0b"
 [[package]]
 name = "h5i-app-gpu"
 version = "0.1.2"
-dependencies = [
- "parallel-kernel",
-]
 
 [[package]]
 name = "h5i-app-gpu-backend-nvvm"
@@ -231,33 +184,6 @@ version = "0.1.0"
 dependencies = [
  "cust",
  "h5i-app-gpu",
- "parallel-kernel",
-]
-
-[[package]]
-name = "h5i-app-gpu-nvvm-device"
-version = "0.1.0"
-dependencies = [
- "cuda_std",
-]
-
-[[package]]
-name = "h5i-app-schema"
-version = "0.1.2"
-
-[[package]]
-name = "h5i-app-sql"
-version = "0.1.2"
-
-[[package]]
-name = "half"
-version = "2.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6ea2d84b969582b4b1864a92dc5d27cd2b77b622a8d79306834f1be5ba20d84b"
-dependencies = [
- "cfg-if",
- "crunchy",
- "zerocopy",
 ]
 
 [[package]]
@@ -349,20 +275,6 @@ dependencies = [
  "autocfg",
  "libm",
 ]
-
-[[package]]
-name = "parallel-kernel"
-version = "0.1.0"
-dependencies = [
- "h5i-app-schema",
- "h5i-app-sql",
-]
-
-[[package]]
-name = "paste"
-version = "1.0.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
 name = "prettyplease"
@@ -541,26 +453,6 @@ name = "windows-link"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f0805222e57f7521d6a62e36fa9163bc891acd422f971defe97d64e70d0a4fe5"
-
-[[package]]
-name = "zerocopy"
-version = "0.8.63"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e5fe1f8f1b06191a00962174c61aa5005e0bb391a6d80d07e24d115c01a92ed8"
-dependencies = [
- "zerocopy-derive",
-]
-
-[[package]]
-name = "zerocopy-derive"
-version = "0.8.63"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "863ad3ac83293fb4d740aedbfdc9240dd8d1a50c1099acd76ce80ce7c7230c7f"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
 
 [[package]]
 name = "zmij"
