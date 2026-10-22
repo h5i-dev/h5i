@@ -43,7 +43,7 @@ PAGE_HISTORY = {
     "features/": ("2026-10-21", "21f5c8dddb47df96"),
     "manual/": ("2026-10-21", "0f7e605dc087544d"),
     "pitch/": ("2026-10-21", "7cfe9803d7d11df5"),
-    "demo/": ("2026-10-21", "317b8850ecc3c5de"),
+    "demo/": ("2026-10-22", "9dae5fe7a3dbf01b"),
     "guides/": ("2026-10-21", "888b965163695896"),
     "guides/build-and-verify-a-web-app/": ("2026-10-21", "0b0d7ae775899b60"),
     "guides/red-team-a-web-app/": ("2026-10-21", "3af532e9ff5592f3"),

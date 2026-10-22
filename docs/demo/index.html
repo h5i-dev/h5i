@@ -3,32 +3,32 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Build and Verify Your Web Apps | h5i 60-second demo</title>
-<meta name="description" content="A 60-second illustrated h5i workflow: build a Rust board app, prove kernel write properties with Lean 4, then test and fix an unverified HTTP read route.">
+<title>Build and Verify Your Web Apps | h5i demo</title>
+<meta name="description" content="An 80-second illustrated h5i workflow: build a Rust board app, inspect its Lean 4 proof and theorem dependencies, then test and fix an unverified HTTP read route.">
 <link rel="canonical" href="https://h5i.dev/demo/">
 <link rel="icon" type="image/png" href="https://h5i.dev/_static/logo.png">
 <link rel="apple-touch-icon" href="https://h5i.dev/_static/logo.png">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="h5i">
 <meta property="og:title" content="Build and Verify Your Web Apps | h5i demo">
-<meta property="og:description" content="A 60-second illustrated Rust web app story: verify kernel writes with Lean 4, then red-team and regression-test an HTTP adapter read route.">
+<meta property="og:description" content="An 80-second illustrated Rust web app story: inspect the Lean 4 proof and theorem dependencies, then red-team an HTTP read route.">
 <meta property="og:url" content="https://h5i.dev/demo/">
 <meta property="og:locale" content="en_US">
 <meta property="og:image" content="https://h5i.dev/demo/assets/cover.png">
 <meta property="og:image:alt" content="Build and Verify Your Web Apps with h5i — The Verifiable Web Framework for Rust">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Build and Verify Your Web Apps | h5i demo">
-<meta name="twitter:description" content="A 60-second illustrated Rust web app story: verify kernel writes with Lean 4, then red-team and regression-test an HTTP adapter read route.">
+<meta name="twitter:description" content="An 80-second illustrated Rust web app story: inspect the Lean 4 proof and theorem dependencies, then red-team an HTTP read route.">
 <meta name="twitter:image" content="https://h5i.dev/demo/assets/cover.png">
 <meta name="twitter:image:alt" content="Build and Verify Your Web Apps with h5i — The Verifiable Web Framework for Rust">
 <meta name="robots" content="index, follow, max-image-preview:large, max-video-preview:-1">
 <script type="application/ld+json">
 {"@context":"https://schema.org","@type":"VideoObject",
- "name":"Build and Verify Your Web Apps | h5i 60-second demo",
- "description":"A 60-second illustrated workflow: build a Rust board app, prove kernel write properties with Lean 4, then test and fix an unverified HTTP read route.",
+ "name":"Build and Verify Your Web Apps | h5i demo",
+ "description":"An 80-second illustrated workflow: build a Rust board app, inspect its Lean 4 proof and theorem dependencies, then test and fix an unverified HTTP read route.",
  "thumbnailUrl":"https://h5i.dev/demo/assets/cover.png",
  "uploadDate":"2026-10-04",
- "duration":"PT60S",
+ "duration":"PT80S",
  "embedUrl":"https://h5i.dev/demo/",
  "publisher":{"@type":"Organization","name":"h5i","logo":{"@type":"ImageObject","url":"https://h5i.dev/_static/logo.png"}}}
 </script>
@@ -108,17 +108,56 @@
   #win-shell{left:40px;top:160px;width:600px;height:760px}
   #win-con{left:670px;top:160px;width:1210px;height:760px}
   #win-app{left:1130px;top:528px;width:730px;height:376px;z-index:3}
-  #win-ed{left:1130px;top:528px;width:730px;height:376px;z-index:3}
+  #win-ed{left:150px;top:170px;width:1620px;height:704px;z-index:5}
+  #desk.code-focus #win-shell,#desk.code-focus #win-con{opacity:.12!important}
+  #desk.code-focus #win-ed{box-shadow:0 36px 110px rgba(0,0,0,.88)}
   .etabs{flex:none;display:flex;gap:2px;padding:8px 10px 0;background:var(--w-surface);border-bottom:1px solid var(--w-line)}
   .etab{padding:6px 12px 8px;font-family:var(--w-mono);font-size:13px;color:var(--w-ink3);border-bottom:2px solid transparent;margin-bottom:-1px;white-space:nowrap}
   .etab.cur{color:var(--w-ink);border-bottom-color:var(--w-accent)}
   .etab i{font-style:normal;margin-left:8px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--w-accent)}
-  .code{display:none;flex:1;padding:12px 16px;font-family:var(--w-mono);font-size:13.5px;line-height:1.5;overflow:hidden}
+  .code{display:none;flex:1;padding:28px 38px;font-family:var(--w-mono);font-size:20px;line-height:1.55;overflow:hidden}
+  #ed-thm{font-size:18.5px;line-height:1.65}
   .code.on{display:block}
   .cl{display:flex;gap:14px;white-space:pre;opacity:0}
   .cl.on{opacity:1}
-  .cl .n{width:22px;text-align:right;color:var(--w-ink4);flex:none;font-size:12px;padding-top:2px}
+  .cl .n{width:32px;text-align:right;color:var(--w-ink4);flex:none;font-size:15px;padding-top:3px}
   .cl .c{color:var(--w-ink)} .kw{color:var(--w-violet)}
+  .cl.focus .c{color:#fff;background:rgba(52,211,153,.12);box-shadow:0 0 0 5px rgba(52,211,153,.12);border-radius:2px}
+  .cl.focus .c .kw{color:var(--w-green)}
+  #extract-view{position:absolute;inset:81px 0 0;z-index:2;padding:42px 48px;background:#0b0e12;opacity:0;pointer-events:none}
+  .extract-heading{display:flex;align-items:center;justify-content:space-between;font-family:var(--w-mono);font-size:17px;color:var(--w-ink2)}
+  .extract-heading b{color:var(--w-accent);font-weight:700}
+  .extract-columns{display:grid;grid-template-columns:1fr 132px 1fr;gap:26px;align-items:stretch;margin-top:28px;height:385px}
+  .extract-pane{padding:26px 25px;border:1px solid var(--w-line2);border-radius:11px;background:#12161b;overflow:hidden}
+  .extract-pane.generated{border-color:rgba(81,208,210,.5)}
+  .extract-label{font-family:var(--w-mono);font-size:14px;letter-spacing:.08em;color:var(--w-ink3);text-transform:uppercase;margin-bottom:22px}
+  .extract-label strong{color:var(--w-ink);font-weight:400;letter-spacing:0;text-transform:none}
+  .extract-pane pre{font-family:var(--w-mono);font-size:17px;line-height:1.8;white-space:pre;color:var(--w-ink)}
+  .extract-pane .mark{color:var(--w-green)}
+  .extract-flow{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;font-family:var(--w-mono);font-size:13px;color:var(--w-ink3);text-align:center}
+  .extract-flow .arrow{font-size:48px;color:var(--w-accent);text-shadow:0 0 22px var(--w-accent)}
+  .extract-line{display:block;opacity:0;transform:translateX(-12px)}
+  .extract-progress{display:flex;align-items:center;gap:22px;margin-top:26px;font-family:var(--w-mono);font-size:16px;color:var(--w-ink2)}
+  .extract-progress span{width:245px;color:var(--w-accent)}
+  .extract-track{flex:1;height:7px;border-radius:7px;background:#252a30;overflow:hidden}
+  #extract-fill{height:100%;width:0;background:linear-gradient(90deg,var(--w-accent),#51d0d2);box-shadow:0 0 20px #51d0d2}
+  #extract-done{width:230px;text-align:right;color:#51d0d2}
+  #proof-status{position:absolute;right:42px;bottom:34px;padding:17px 24px;border:1px solid rgba(52,211,153,.55);border-radius:10px;background:#10241e;color:var(--w-green);font-family:var(--w-mono);font-size:19px;opacity:0}
+  #proof-status small{display:block;color:var(--w-ink2);font-size:14px;margin-top:5px}
+  #win-graph{left:250px;top:195px;width:1420px;height:640px;z-index:6}
+  .graph-head{padding:25px 34px 16px;border-bottom:1px solid var(--w-line)}
+  .graph-head h3{font-size:29px;letter-spacing:-.02em}
+  .graph-head p{font-size:16px;color:var(--w-ink2);margin-top:5px}
+  .graph-body{position:relative;flex:1;background-image:radial-gradient(#292d34 1px,transparent 1px);background-size:21px 21px}
+  .graph-body svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+  .graph-edge{fill:none;stroke:#51d0d2;stroke-width:3;opacity:.9}
+  .graph-node{position:absolute;width:255px;min-height:92px;padding:15px 18px;border:1px solid #4d5668;border-radius:10px;background:#171a20;box-shadow:0 15px 35px rgba(0,0,0,.45)}
+  .graph-node b{display:block;font-family:var(--w-mono);font-size:20px;color:#f0eef8}
+  .graph-node small{display:block;margin-top:7px;font-size:14px;color:var(--w-ink2)}
+  .graph-node.selected{border:2px solid var(--w-accent);background:#252025}
+  .graph-node.source{border-color:#51d0d2}
+  .graph-foot{padding:13px 34px;color:var(--w-ink2);font-size:15px;border-top:1px solid var(--w-line)}
+  .graph-foot b{color:var(--w-green)}
   .agent{flex:none;display:flex;align-items:center;gap:16px;padding:14px 20px 10px;border-bottom:1px solid var(--w-line)}
   .mascot{margin:0;font-family:var(--w-mono);font-size:13px;line-height:1.05;color:#e0241b;text-shadow:0 0 14px rgba(224,36,27,.5)}
   .who{font-size:15px;color:var(--w-ink2)} .who b{color:var(--w-ink);font-weight:600}
@@ -394,9 +433,9 @@
             <div class="pane on" id="p-theorems">
               <div class="note">Each row is a statement about the extracted kernel. It holds for the running app only within the trust boundary.</div>
               <table class="ptable">
-                <thead><tr><th>theorem</th><th>statement</th><th>status</th><th>mutants</th></tr></thead>
+                <thead><tr><th>theorem</th><th>statement</th><th>status</th><th>scope</th></tr></thead>
                 <tbody>
-                  <tr id="th1"><td><code>authorized</code><span class="sub">Theorems.lean:79</span></td><td>Every write a successful command makes is allowed by the policy.</td><td class="st"><span class="chip u">unconfirmed</span><span class="chip g p">proven</span></td><td class="mu"><span class="chip">kernel</span></td></tr>
+                  <tr id="th1"><td><code>authorized</code><span class="sub">Theorems.lean:79</span></td><td>Every write a successful command makes is allowed by the policy.</td><td class="st"><span class="chip u">unconfirmed</span><span class="chip g p">proven</span></td><td class="mu"><span class="chip">kernel writes</span></td></tr>
                   <tr id="th2"><td><code>inv_preserved</code><span class="sub">Theorems.lean:160</span></td><td>Invariants hold in every state the board can reach.</td><td class="st"><span class="chip u">unconfirmed</span><span class="chip g p">proven</span></td><td class="mu"><span class="chip">kernel</span></td></tr>
                   <tr id="th3"><td><code>transition_total</code><span class="sub">Theorems.lean:55</span></td><td>The kernel transition returns a result for every command.</td><td class="st"><span class="chip u">unconfirmed</span><span class="chip g p">proven</span></td><td class="mu"><span class="chip">kernel</span></td></tr>
                 </tbody>
@@ -408,8 +447,7 @@
                 <div class="rline" id="ev1"><span class="k">extraction</span><span class="v ok">ok</span><span>BoardKernel.lean matches kernel/src/lib.rs · no drift</span></div>
                 <div class="rline" id="ev2"><span class="k">Lean 4</span><span class="v ok">ok</span><span>3 shown theorems · 0 sorry</span></div>
                 <div class="rline" id="ev3"><span class="k">axiom gate</span><span class="v ok">ok</span><span>propext, Quot.sound, Classical.choice only</span></div>
-                <div class="rline" id="ev4"><span class="k">mutant</span><span class="v ok">1 of 1 caught</span><span>configured kernel mutation broke a proof</span></div>
-                <div class="rline" id="ev5"><span class="k">scope</span><span class="v">kernel writes</span><span>HTTP adapter reads require runtime testing</span></div>
+                <div class="rline" id="ev4"><span class="k">scope</span><span class="v">kernel writes</span><span>HTTP adapter reads require runtime testing</span></div>
               </div>
             </div>
           </div>
@@ -441,10 +479,39 @@
     <!-- the editor: the kernel the agent writes, what Aeneas makes of it, and the proof the agent writes -->
     <div class="wnd" id="win-ed">
       <div class="wbar"><span class="d"></span><span class="d"></span><span class="d"></span><span class="tt">examples/app/board</span><span class="r">the agent's editor</span></div>
-      <div class="etabs"><span class="etab cur" id="et-rs">kernel/src/lib.rs</span><span class="etab" id="et-lean">BoardKernel.lean<i>extracted</i></span><span class="etab" id="et-thm">proofs/Theorems.lean</span></div>
+      <div class="etabs"><span class="etab cur" id="et-rs">kernel/src/lib.rs</span><span class="etab" id="et-lean">BoardKernel.lean<i>extracted excerpt</i></span><span class="etab" id="et-thm">proofs/Theorems.lean<i>excerpt</i></span></div>
       <div class="code on" id="ed-rs"><div class="cl" id="rs0"><span class="n">1</span><span class="c"><span class="kw">fn</span> delete(user: u64, s: &amp;Snapshot, id: u64)</span></div><div class="cl" id="rs1"><span class="n">2</span><span class="c"> -&gt; Outcome {</span></div><div class="cl" id="rs2"><span class="n">3</span><span class="c">  <span class="kw">match</span> find_post(&amp;s.posts, id) {</span></div><div class="cl" id="rs3"><span class="n">4</span><span class="c">    None =&gt; Err(Error::NotFound),</span></div><div class="cl" id="rs4"><span class="n">5</span><span class="c">    Some(p) =&gt; {</span></div><div class="cl" id="rs5"><span class="n">6</span><span class="c">      <span class="kw">if</span> p.author == user</span></div><div class="cl" id="rs6"><span class="n">7</span><span class="c">        || is_moderator(&amp;s.moderators, user) {</span></div><div class="cl" id="rs7"><span class="n">8</span><span class="c">        Ok((one(Write::DelPost(id)), Reply::Done))</span></div><div class="cl" id="rs8"><span class="n">9</span><span class="c">      } <span class="kw">else</span> {</span></div><div class="cl" id="rs9"><span class="n">10</span><span class="c">        Err(Error::Forbidden)</span></div><div class="cl" id="rs10"><span class="n">11</span><span class="c">      }</span></div><div class="cl" id="rs11"><span class="n">12</span><span class="c">    }</span></div><div class="cl" id="rs12"><span class="n">13</span><span class="c">  }</span></div><div class="cl" id="rs13"><span class="n">14</span><span class="c">}</span></div></div>
-      <div class="code" id="ed-lean"><div class="cl" id="le0"><span class="n">1</span><span class="c"><span class="kw">def</span> delete (user : U64) (s : Snapshot) (id : U64) := <span class="kw">do</span></span></div><div class="cl" id="le1"><span class="n">2</span><span class="c">  <span class="kw">let</span> o ← find_post s.posts id</span></div><div class="cl" id="le2"><span class="n">3</span><span class="c">  <span class="kw">match</span> o <span class="kw">with</span></span></div><div class="cl" id="le3"><span class="n">4</span><span class="c">  | none =&gt; ok (.Err .NotFound)</span></div><div class="cl" id="le4"><span class="n">5</span><span class="c">  | some p =&gt; <span class="kw">if</span> p.author = user <span class="kw">then</span> …</span></div></div>
-      <div class="code" id="ed-thm"><div class="cl" id="tl0"><span class="n">79</span><span class="c"><span class="kw">theorem</span> authorized (a : Principal) (s : Snapshot) (c : Command) ws r</span></div><div class="cl" id="tl1"><span class="n">80</span><span class="c">    (hinv : Inv (Snapshot.toSt s))</span></div><div class="cl" id="tl2"><span class="n">80</span><span class="c">    (h : transition a s c = .ok (.Ok (ws, r))) :</span></div><div class="cl" id="tl3"><span class="n">81</span><span class="c">    ∀ w ∈ ws.val, allowed (Snapshot.toSt s) a.user.val w := by</span></div><div class="cl" id="tl4"><span class="n">82</span><span class="c">  rcases writes_of a s c ws r h with</span></div><div class="cl" id="tl5"><span class="n">83</span><span class="c">    hws | ⟨t, cnt, ht, hc, hws⟩ | …</span></div><div class="cl" id="tl6"><span class="n">98</span><span class="c">  · <span class="dim">-- Delete: by the author or a moderator.</span></span></div><div class="cl" id="tl7"><span class="n">102</span><span class="c">    <span class="kw">exact</span> ⟨q, hq, ha.imp (fun e =&gt; by rw [e]) id⟩</span></div></div>
+      <div class="code" id="ed-lean"><div class="cl" id="le0"><span class="n">465</span><span class="c"><span class="kw">def</span> delete</span></div><div class="cl" id="le1"><span class="n">466</span><span class="c">  (user : Std.U64) (s : Snapshot) (id : Std.U64) :</span></div><div class="cl" id="le2"><span class="n">467</span><span class="c">  Result (core.result.Result ((alloc.vec.Vec Write) × Reply) Error)</span></div><div class="cl" id="le3"><span class="n">468</span><span class="c">  := <span class="kw">do</span></span></div><div class="cl" id="le4"><span class="n">469</span><span class="c">  <span class="kw">let</span> o ← find_post s.posts id</span></div><div class="cl" id="le5"><span class="n">470</span><span class="c">  <span class="kw">match</span> o <span class="kw">with</span></span></div><div class="cl" id="le6"><span class="n">471</span><span class="c">  | none =&gt; ok (core.result.Result.Err Error.NotFound)</span></div><div class="cl" id="le7"><span class="n">472</span><span class="c">  | some p =&gt;</span></div><div class="cl" id="le8"><span class="n">473</span><span class="c">    <span class="kw">if</span> p.author = user</span></div><div class="cl" id="le9"><span class="n">474</span><span class="c">    <span class="kw">then</span></span></div><div class="cl" id="le10"><span class="n">475</span><span class="c">      <span class="kw">let</span> v ← one (Write.DelPost id)</span></div><div class="cl" id="le11"><span class="n">476</span><span class="c">      ok (core.result.Result.Ok (v, Reply.Done))</span></div><div class="cl" id="le12"><span class="n">477</span><span class="c">    <span class="kw">else</span></span></div><div class="cl" id="le13"><span class="n">478</span><span class="c">      <span class="kw">let</span> b ← is_moderator s.moderators user</span></div><div class="cl" id="le14"><span class="n">479</span><span class="c">      <span class="kw">if</span> b</span></div><div class="cl" id="le15"><span class="n">480</span><span class="c">      <span class="kw">then</span></span></div><div class="cl" id="le16"><span class="n">483</span><span class="c">      <span class="kw">else</span> ok (core.result.Result.Err Error.Forbidden)</span></div></div>
+      <div class="code" id="ed-thm"><div class="cl" id="tl0"><span class="n">79</span><span class="c"><span class="kw">theorem</span> authorized (a : Principal) (s : Snapshot) (c : Command) ws r</span></div><div class="cl" id="tl1"><span class="n">80</span><span class="c">    (hinv : Inv (Snapshot.toSt s)) (h : transition a s c = .ok (.Ok (ws, r))) :</span></div><div class="cl" id="tl2"><span class="n">81</span><span class="c">    ∀ w ∈ ws.val, allowed (Snapshot.toSt s) a.user.val w := by</span></div><div class="cl" id="tl3"><span class="n">82</span><span class="c">  rcases writes_of a s c ws r h with</span></div><div class="cl" id="tl4"><span class="n">83</span><span class="c">    hws | ⟨t, cnt, ht, hc, hws⟩ | …</span></div><div class="cl" id="tl5"><span class="n">98</span><span class="c">  · <span class="dim">-- Delete: by the author or a moderator.</span></span></div><div class="cl" id="tl6"><span class="n">102</span><span class="c">    <span class="kw">exact</span> ⟨q, hq, ha.imp (fun e =&gt; by rw [e]) id⟩</span></div><div class="cl" id="tl7"><span class="n">112</span><span class="c">    <span class="kw">exact</span> ⟨hu, other_mod _ hinv.mod_keys hl tg⟩</span></div></div>
+      <div id="extract-view" aria-label="Rust to Lean 4 automatic extraction">
+        <div class="extract-heading"><span><b>AUTOMATIC EXTRACTION</b> · h5i app extract examples/app/board</span><span>Rust source → generated Lean 4</span></div>
+        <div class="extract-columns">
+          <div class="extract-pane"><div class="extract-label">Source · <strong>kernel/src/lib.rs</strong></div><pre>if <span class="mark">p.author == user</span> ||
+   <span class="mark">is_moderator(&amp;s.moderators, user)</span> {
+    Ok((one(Write::DelPost(id)),
+        Reply::Done))
+} else {
+    Err(Error::Forbidden)
+}</pre></div>
+          <div class="extract-flow"><span>Charon</span><span class="arrow" id="extract-arrow">→</span><span>Aeneas</span></div>
+          <div class="extract-pane generated"><div class="extract-label">Generated · <strong>BoardKernel.lean</strong></div><pre><span class="extract-line">if <span class="mark">p.author = user</span></span><span class="extract-line">then</span><span class="extract-line">  let v ← one (Write.DelPost id)</span><span class="extract-line">  …</span><span class="extract-line">else</span><span class="extract-line">  let b ← <span class="mark">is_moderator s.moderators user</span></span><span class="extract-line">  if b</span><span class="extract-line">  …</span><span class="extract-line">  else ok (core.result.Result.Err Error.Forbidden)</span></pre></div>
+        </div>
+        <div class="extract-progress"><span>extracting kernel</span><div class="extract-track"><div id="extract-fill"></div></div><span id="extract-done">generating…</span></div>
+      </div>
+      <div id="proof-status">✓ Lean 4 check passed · authorized<small>successful kernel writes · 0 sorry</small></div>
+    </div>
+
+    <div class="wnd" id="win-graph" aria-label="Theorem dependency graph">
+      <div class="wbar"><span class="d"></span><span class="d"></span><span class="d"></span><span class="tt">h5i ui · Apps / board / Guarantee map</span><span class="r">Focus dependencies</span></div>
+      <div class="graph-head"><h3>Theorem Dependency Graph</h3><p>Selected: <span class="ref">authorized</span> · arrows run from a Lean dependency to the theorem that uses it</p></div>
+      <div class="graph-body">
+        <svg viewBox="0 0 1420 418" aria-hidden="true"><defs><marker id="dep-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 L10 5 L0 10Z" fill="#51d0d2"/></marker></defs><path class="graph-edge" d="M460 115 C570 115 665 140 780 140" marker-end="url(#dep-arrow)"/><path class="graph-edge" d="M1035 140 C1110 140 1130 218 1170 218" marker-end="url(#dep-arrow)"/><path class="graph-edge" d="M1035 315 C1110 315 1130 218 1170 218" marker-end="url(#dep-arrow)"/></svg>
+        <div class="graph-node source" style="left:205px;top:65px"><b>delete_spec</b><small>command lemma · Commands.lean</small></div>
+        <div class="graph-node source" style="left:780px;top:265px"><b>other_mod</b><small>supporting theorem · Theorems.lean</small></div>
+        <div class="graph-node source" style="left:780px;top:90px"><b>writes_of</b><small>six successful command cases</small></div>
+        <div class="graph-node selected" id="g-authorized" style="left:1155px;top:168px"><b>authorized</b><small>every accepted write is allowed</small></div>
+      </div>
+      <div class="graph-foot"><b>Proof boundary:</b> successful kernel writes · HTTP adapter reads are outside this theorem.</div>
     </div>
 
     <div id="ptr"><div class="arr"></div><div class="ring"></div></div>
@@ -497,9 +564,9 @@ const T = {
   c1: 1.1, c1b: 2.2, qmark: 3.1, black1: 4.5,
   two: 4.9, cut: 7.6,
   ws: 7.6,
-  tApps: 7.6, write: 8.2, extract: 13.2, prove: 16.2, verify: 20.2, tEvidence: 25.2,
-  hack: 29.0, tFindings: 40.0, tBoxes: 49.0, deny: 46.0,
-  close: 56.0, logo: 56.5, end: 60,
+  tApps: 7.6, write: 8.2, extract: 19.0, prove: 28.0, verify: 37.0, graph: 42.0, tEvidence: 49.0,
+  hack: 52.0, tFindings: 63.0, tBoxes: 71.0, deny: 69.0,
+  close: 76.0, logo: 76.5, end: 80,
 };
 const TOTAL = T.end * 1000;
 const F = T.hack;
@@ -507,7 +574,8 @@ const F = T.hack;
 /* the camera: a framing per beat, hard cuts between. The desk is drawn at stage size, so 1 is "see everything";
    a zoom pushes toward the console and leaves most of the shell in frame. */
 const shots = [
-  {a:T.ws,        b:T.tEvidence, from:{x:0,y:0,s:1},        to:{x:0,y:0,s:1}},
+  {a:T.ws,        b:T.graph,     from:{x:0,y:0,s:1},        to:{x:0,y:0,s:1}},
+  {a:T.graph,     b:T.tEvidence, from:{x:0,y:0,s:1},        to:{x:0,y:0,s:1}},
   {a:T.tEvidence, b:T.hack,      from:{x:-70,y:40,s:1.1},   to:{x:-70,y:40,s:1.1}},
   {a:T.hack,      b:T.tFindings, from:{x:0,y:0,s:1},        to:{x:0,y:0,s:1}},
   {a:T.tFindings, b:T.tBoxes,    from:{x:-70,y:40,s:1.1},   to:{x:-70,y:40,s:1.1}},
@@ -545,15 +613,14 @@ function flash(t) {
 /* the agent's shell. Outputs are scripted, not a live scan or build. */
 const term = [
   {at:T.write+.2, out:[`<span class="pen">✎</span> writing <span class="ref">examples/app/board/kernel/src/lib.rs</span>`]},
-  {at:T.write+2.6, out:[`<span class="pen">✎</span> delete: only author or moderator may remove a post`]},
+  {at:T.write+4.0, out:[`<span class="pen">✎</span> delete: only author or moderator may remove a post`]},
   {at:T.extract+.2, cmd:'h5i app extract examples/app/board', cps:70},
   {at:T.extract+1.3, out:[`Charon + Aeneas · Rust kernel → generated Lean 4`]},
   {at:T.prove+.2, out:[`<span class="pen">✎</span> theorem authorized: successful writes follow the policy`]},
-  {at:T.prove+2.0, out:[`<span class="pen">✎</span> proofs/Theorems.lean checks the extracted kernel`]},
+  {at:T.prove+2.0, out:[`<span class="pen">✎</span> writes_of splits six command cases; authorized checks each write`]},
   {at:T.verify+.2, cmd:'h5i app prove examples/app/board', cps:70},
   {at:T.verify+1.4, out:[`Lean 4 <span class="ok">passed</span> · authorized · inv_preserved · transition_total`]},
-  {at:T.verify+2.1, cmd:'h5i app mutate examples/app/board', cps:70},
-  {at:T.verify+3.5, out:[`<span class="ok">1/1</span> configured kernel mutation caught by proofs`]},
+  {at:T.graph+.4, out:[`<span class="ref">authorized</span> uses <span class="ref">writes_of</span> and <span class="ref">other_mod</span>`]},
   {at:T.hack+.3, clear:true},
   {at:F+.5, cmd:'h5i browser open http://board.local/posts', cps:74},
   {at:F+1.7, out:[`<span class="ok">✔</span> session <span class="ref">audit-42</span> · signed in as Alice`]},
@@ -589,6 +656,7 @@ function renderTerm(el, ev, t) {
 /* the pointer: moves to a tab, clicks it */
 const clicks = [
   {at:T.tApps,     target:'ri-apps'},
+  {at:T.graph,     target:'g-authorized'},
   {at:T.tEvidence, target:'tab-evidence'},
   {at:T.hack,      target:'ri-sessions'},
   {at:T.tFindings, target:'tab-findings'},
@@ -601,8 +669,8 @@ function centerOf(id) {
 }
 function drawPointer(t) {
   const p = $('ptr');
-  if (t < T.tEvidence - 1.2 || t >= T.close) { p.style.opacity = 0; return; }
-  let from = {x: 1500, y: 470}, to = from, moveAt = T.tEvidence - 1.2, clickAt = Infinity;
+  if (t < T.graph - 1.2 || t >= T.close) { p.style.opacity = 0; return; }
+  let from = {x: 1500, y: 470}, to = from, moveAt = T.graph - 1.2, clickAt = Infinity;
   for (let i = 0; i < clicks.length; i++) {
     const c = clicks[i]; const start = c.at - .9;
     if (t >= start) { from = i ? centerOf(clicks[i-1].target) : from; to = centerOf(c.target); moveAt = start; clickAt = c.at; }
@@ -653,16 +721,32 @@ function drawConsole(t) {
   $('tab-theorems').classList.toggle('cur', atab === 'theorems'); $('tab-evidence').classList.toggle('cur', atab === 'evidence');
   on('p-theorems', atab === 'theorems'); on('p-evidence', atab === 'evidence');
   [T.verify+1.4, T.verify+1.8, T.verify+2.2].forEach((at, i) => { const r = $('th'+(i+1)); r.classList.toggle('proven', t >= at); });
-  const rcpt = t >= T.verify + 3.5;
+  const rcpt = t >= T.verify + 1.4;
   vis('pl-norcpt', !rcpt); vis('pl-rcpt', rcpt); $('n-rcpt').textContent = rcpt ? 1 : 0;
-  [1,2,3,4,5].forEach(i => on('ev'+i, t >= T.tEvidence + .3 + i*.22));
+  [1,2,3,4].forEach(i => on('ev'+i, t >= T.tEvidence + .3 + i*.22));
   // the editor: the agent writes Rust, Aeneas writes Lean, the agent writes the proof
-  const etab = t >= T.prove ? 'thm' : t >= T.extract + 1.2 ? 'lean' : 'rs';
+  const etab = t >= T.prove ? 'thm' : t >= T.extract + 4.2 ? 'lean' : 'rs';
   $('et-rs').classList.toggle('cur', etab === 'rs'); $('et-lean').classList.toggle('cur', etab === 'lean'); $('et-thm').classList.toggle('cur', etab === 'thm');
   on('ed-rs', etab === 'rs'); on('ed-lean', etab === 'lean'); on('ed-thm', etab === 'thm');
-  for (let i = 0; i < 14; i++) on('rs'+i, t >= T.write + .4 + i*.22);
-  for (let i = 0; i < 5; i++) on('le'+i, t >= T.extract + 1.5 + i*.25);
-  for (let i = 0; i < 8; i++) on('tl'+i, t >= T.prove + .4 + i*.6);
+  for (let i = 0; i < 14; i++) on('rs'+i, t >= T.write + .4 + i*.35);
+  for (let i = 0; i < 17; i++) on('le'+i, t >= T.extract + 1.5 + i*.26);
+  for (let i = 0; i < 8; i++) on('tl'+i, t >= T.prove + .4 + i*.7);
+  // Charon and Aeneas turn the visible Rust branch into Lean, frame by frame.
+  const ex = $('extract-view'), progress = ramp(t, T.extract+.3, 3.3);
+  ex.style.opacity = t < T.extract || t >= T.extract+4.7 ? 0 :
+    eo(ramp(t,T.extract,.4)) * (1-ramp(t,T.extract+4.1,.6));
+  $('extract-fill').style.width = `${progress*100}%`;
+  $('extract-done').textContent = progress >= 1 ? 'BoardKernel.lean generated' : 'generating…';
+  $('extract-arrow').style.transform = `translateX(${Math.sin(t*9)*5}px)`;
+  ex.querySelectorAll('.extract-line').forEach((line,i) => {
+    const q = eo(ramp(t,T.extract+.75+i*.27,.45));
+    line.style.opacity = q;
+    line.style.transform = `translateX(${(1-q)*-12}px)`;
+  });
+  $('proof-status').style.opacity = t >= T.verify+1.4 && t < T.graph ? eo(ramp(t,T.verify+1.4,.5)) : 0;
+  for (const id of ['rs5','rs6']) $(id).classList.toggle('focus', t >= T.write+5 && t < T.extract);
+  for (const id of ['le8','le13','le14']) $(id).classList.toggle('focus', t >= T.extract+5 && t < T.prove);
+  $('tl2').classList.toggle('focus', t >= T.prove+5 && t < T.graph);
 }
 
 /* dust: a seeded field of motes drifting upward, parallaxed against the camera */
@@ -698,16 +782,17 @@ function card(id, t, a, b, opts={}) {
 
 /* the one line of narration, as a lower third */
 const caps = [
-  {at:T.write+.6, html:`<b>Build</b> the board's Rust kernel and HTTP app.`},
-  {at:T.extract+.6, html:`<b>Verify</b> the extracted kernel with Lean 4.`},
-  {at:T.prove+.6, html:`Theorem <b>authorized</b> covers successful kernel writes.`},
-  {at:T.verify+.6, html:`Lean checks the proof; mutations test whether it detects changed logic.`},
-  {at:T.tEvidence+.6, html:`<b>Verified kernel:</b> Lean 4 proves authorization of kernel writes.`},
-  {at:T.hack+.6, html:`<b>Unverified HTTP adapter:</b> red-team the same app's read route.`},
-  {at:F+5.8, html:`Replay Alice's request with Bob's post ID.`},
-  {at:T.tFindings+.6, html:`<em>Finding:</em> red-teaming exposes a read route that bypasses kernel policy.`},
-  {at:T.deny+.3, html:`Fix the adapter's visibility check, then replay the request.`},
-  {at:T.tBoxes+.6, html:`<b>Regression:</b> Alice gets 200; Bob's private post returns 403.`},
+  {at:T.write+.6, html:`Only authors or moderators can delete posts.`},
+  {at:T.extract+.6, html:`Rust is extracted into <b>Lean 4</b>.`},
+  {at:T.prove+.6, html:`<b>authorized</b> covers successful kernel writes.`},
+  {at:T.verify+.6, html:`Lean checks the proof.`},
+  {at:T.graph+.6, html:`Follow the lemmas behind <b>authorized</b>.`},
+  {at:T.tEvidence+.6, html:`The proof covers kernel writes.`},
+  {at:T.hack+.6, html:`<b>Development Infrastructure</b> tests the app end to end.`},
+  {at:F+5.8, html:`Its <b>red-teaming</b> tool replays Alice's read for Bob's post.`},
+  {at:T.tFindings+.6, html:`The HTTP read route exposes Bob's private post.`},
+  {at:T.deny+.3, html:`Fix the route and save the replay as a test.`},
+  {at:T.tBoxes+.6, html:`The regression passes. Alice gets 200; Bob gets 403.`},
 ];
 function renderCap(t) {
   let i = -1; for (let k = 0; k < caps.length; k++) if (t >= caps[k].at) i = k;
@@ -756,12 +841,15 @@ function draw(ms) {
   {
     const away = eio(ramp(t, T.close, 1.0));
     const onDesk = t >= T.ws && t < T.close + 1.0 ? 1 - away : 0;
+    $('desk').classList.toggle('code-focus', t >= T.write && t < T.graph);
     $('win-shell').style.opacity = onDesk; $('win-con').style.opacity = onDesk;
     const appIn = eo(ramp(t, F+1.2, .5)), appOut = eio(ramp(t, T.tBoxes - .6, .6));
     const app = $('win-app'); app.style.opacity = onDesk * appIn * (1 - appOut);
     app.style.transform = `translateY(${(1-appIn)*24 + appOut*40}px)`;
-    const edIn = eo(ramp(t, T.write + .2, .5)), edOut = eio(ramp(t, T.tEvidence - .5, .5)); const ed = $('win-ed');
+    const edIn = eo(ramp(t, T.write + .2, .5)), edOut = eio(ramp(t, T.graph - .5, .5)); const ed = $('win-ed');
     ed.style.opacity = onDesk * edIn * (1 - edOut); ed.style.transform = `translateY(${(1-edIn)*24 + edOut*40}px)`;
+    const graphIn = eo(ramp(t, T.graph, .5)), graphOut = eio(ramp(t, T.hack-.5, .5));
+    $('win-graph').style.opacity = onDesk * graphIn * (1-graphOut);
   }
   renderTerm($('term'), term, t);
   drawConsole(t);

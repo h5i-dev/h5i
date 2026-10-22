@@ -1,22 +1,28 @@
-# h5i demo: Build → Verify → Red-team → Regression
+# h5i demo: Build → Verify → Test the running app → Regression
 
-The 60-second film is a deterministic HTML timeline, rendered to MP4. It keeps
+The 80-second film is a deterministic HTML timeline, rendered to MP4. It keeps
 the opening question and the shell, console, editor, and browser windows. The
 agent follows one board application through four stages.
 
 | Time | Beat |
 | --- | --- |
 | 0:00–0:07 | Opening question and the Build and Verify Your Web Apps title card. |
-| 0:07–0:13 | Build: the agent writes the board's Rust kernel. |
-| 0:13–0:29 | Verify: extract to Lean 4, show `authorized`, run proof and the configured mutation, then reveal the kernel proof boundary. |
-| 0:29–0:49 | Red-team: open the same board in a browser, replay Alice's request with Bob's post ID, and record the adapter finding. |
-| 0:49–0:56 | Regression: fix the adapter's visibility check and replay a YAML test; Alice gets 200 and Bob's private post returns 403. |
-| 0:56–1:00 | Close: Build and Verify Your Web Apps. with h5i. The Verifiable Web Framework for Rust. |
+| 0:07–0:19 | Build: a large editor shows the board's Rust delete permission check. |
+| 0:19–0:28 | Extract: Charon and Aeneas visibly generate the Lean 4 author and moderator branches from Rust, then the full generated definition appears. |
+| 0:28–0:42 | Verify: read the `authorized` theorem, its `writes_of` case split, and the scripted Lean check result. |
+| 0:42–0:52 | Explore: the theorem dependency graph follows the real Lean lemmas, then states the kernel write proof boundary. |
+| 0:52–1:09 | Test the running board end to end with Development Infrastructure. Its red-teaming tool reveals the HTTP read flaw. |
+| 1:09–1:16 | Regression: fix the adapter's visibility check and replay a YAML test; Alice gets 200 and Bob's private post returns 403. |
+| 1:16–1:20 | Close: Build and Verify Your Web Apps. with h5i. The Verifiable Web Framework for Rust. |
 
 The Rust kernel and Lean theorem names shown are drawn from
 `examples/app/board`. Its `authorized` theorem concerns successful **kernel
-writes**. The private-post `GET /api/posts/{id}` route, its IDOR, and the
-adapter fix are an **illustrative scenario** for this film; that route is not
+writes**. The dependency graph shows only dependencies present in the board's
+Lean proof. `h5i app check examples/app/board` records `delete_spec → writes_of`,
+`writes_of → authorized`, and `other_mod → authorized` in its declaration
+catalog; the film renders that small, fixed subset. The private-post
+`GET /api/posts/{id}` route, its IDOR, and the adapter fix are an
+**illustrative scenario** for this film; that route is not
 present in the checked-in board server, and no live finding or regression run
 is claimed. The UI labels the scenario. This distinction matters: a proof of
 kernel writes cannot establish the behavior of a separate HTTP read route.
@@ -39,7 +45,7 @@ Rendering needs ffmpeg, Playwright, and Chromium:
 
 ```bash
 node render.mjs --scale 1 --out-height 1080 --fps 24 --crf 20 --preset veryfast
-node render.mjs --stills 10,26,37,43,52 --scale 1
+node render.mjs --stills 14,20,22,25,34,45,50,64,73 --scale 1
 ```
 
 The page is fingerprinted by `docs/build-content.py`; changes require an
