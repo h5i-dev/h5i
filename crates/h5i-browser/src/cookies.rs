@@ -1713,7 +1713,7 @@ mod persistence_tests {
         Url::parse(text).expect("test url")
     }
 
-    // --- persistence (roadmap-history.md §B19.6, item 8) -----------------------------
+    // --- persistence: restored sessions must retain login cookies ---
 
     #[test]
     fn a_login_survives_into_the_next_session() {

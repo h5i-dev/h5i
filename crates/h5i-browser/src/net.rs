@@ -5435,10 +5435,8 @@ mod cookie_wire_tests {
         );
     }
 
-    /// The consequence of roadmap-history.md §B16's cookie work, and the reason this
-    /// module was written before any further capability: with `Domain` cookies
-    /// and no same-origin policy, a cross-origin read is an *authenticated*
-    /// one. The default credentials mode is what stops it.
+    /// With `Domain` cookies and no same-origin policy, a cross-origin read
+    /// can be authenticated. The default credentials mode is what stops it.
     #[test]
     fn a_cross_origin_request_does_not_carry_the_session_by_default() {
         let (port, seen) = cors_server(Some("*"), false, 1);

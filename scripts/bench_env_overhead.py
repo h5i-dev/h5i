@@ -4,8 +4,8 @@
 The number this exists to produce is **fixed cost**: the part of a run that is
 paid before the workload starts and again on the next command. For the kernel
 tiers it is process setup; for `microvm` it is a guest boot, and it is the
-number that decides whether keeping one guest warm across a box's commands is
-worth building (roadmap-history.md M13).
+number that helps assess whether keeping one guest warm across a box's commands
+is worthwhile.
 
 Method, and why each part is here:
 

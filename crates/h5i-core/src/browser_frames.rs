@@ -1,4 +1,4 @@
-//! Pixels, from the box to the console (roadmap-history.md M11a).
+//! Browser frames relayed from a box to the console.
 
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};

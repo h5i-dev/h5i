@@ -255,8 +255,8 @@ impl Policy {
     /// Whether this policy is in the instrument mode, so a caller can say so.
     ///
     /// Read by the doctor line and by `open`'s placement reporting. A mode this
-    /// wide that does not announce itself is the kind of quiet difference
-    /// between a measurement and the thing measured that §B19 is about.
+    /// wide must announce itself so a measurement is not mistaken for a
+    /// restricted session.
     pub fn allows_any_remote(&self) -> bool {
         self.any_remote
     }
@@ -961,7 +961,7 @@ mod tests {
         );
     }
 
-    // --- the instrument mode (roadmap-history.md §B19.5, item 5) ---------------------
+    // --- instrument mode: open-web access must be explicit and reportable ---
 
     #[test]
     fn any_remote_grants_the_open_web_and_nothing_else_changes() {

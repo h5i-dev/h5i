@@ -1,277 +1,59 @@
 # Security policy
 
-h5i is an agent-native web security workspace. Agents red-team a running app
-with a browser and direct HTTP control, and h5i-app lets you prove the
-application logic in Lean 4.
-
-On the red-teaming side the engine is the HTTP client, so every request is
-policy-checked and written to the session log before the bytes move, and a
-fetch that cannot be recorded is refused. A box is the second boundary, taken
-on request: the code, the toolchain and the session itself run inside it, and
-work leaves through an export a human reviewed. On the verification side the
-product is a claim about what was proven, and `docs/app/TRUST.md` says exactly
-what is proven and what is assumed.
-
-That makes most of h5i security-relevant, because the product is a boundary, a
-proof, and an honest account of where each one stops. The Limits section of
-`docs/MANUAL.md` is the user-facing companion to this file and is specific per
-tier and per platform. Read both.
+h5i is an Axum-based Rust web framework for building and verifying web apps
+with Lean 4, featuring optional GPU acceleration and integrated development
+infrastructure for red-teaming and CI/CD. Security reports may concern the
+framework, its proof claims, or the tools used to test and run applications.
 
 ## Supported versions
 
-Fixes land on `main` first, and ship as a patch release when the backport is
-clean. Older releases get nothing automatically. Track `main` or the newest
-release if you package h5i downstream.
+Security fixes land on `main` first and may ship in a patch release. Older
+releases are not maintained automatically. Use `main` or the latest release.
 
-## Reporting a vulnerability
+## Report a vulnerability
 
-Report privately first. Use GitHub's private vulnerability reporting for this
-repository. If that is unavailable, open a minimal public issue asking for a
-private contact path, with no exploit details, secrets, logs or reproduction
-archives in it.
+Use [GitHub's private vulnerability reporting](https://github.com/h5i-dev/h5i/security/advisories/new).
+If that is unavailable, open a public issue requesting a private contact path
+without including exploit details.
 
-Include what you have:
+Please include the affected version or commit, build features, platform, steps
+to reproduce with fake credentials, the expected security boundary, and the
+observed behavior. For sandbox issues, include the isolation tier, profile,
+command, and `h5i box probe` output. Do not attach real secrets, private source,
+or full session logs.
 
-- h5i version or commit, and whether the build used default features.
-- OS, architecture and kernel. For sandbox issues this outweighs everything
-  else, so paste `h5i box probe`.
-- The isolation tier and profile, the exact command line, and the
-  `.h5i/env.toml` in play.
-- The boundary you expected, and how it was crossed.
-- Reproduction against a throwaway repository and fake credentials.
-- What the attack needs: a hostile page in the session, a hostile repository, a
-  prompt-injected agent, local shell access on the host, or a compromised
-  dependency.
+Maintainers will triage the report, prepare a fix, and disclose it once users
+have an upgrade path. A regression test may follow the release if publishing it
+earlier would expose a working exploit.
 
-Do not send real credentials, private prompts, proprietary source or full agent
-logs unless a maintainer asks for a redacted sample.
+## Security boundaries
 
-## What counts as security-sensitive
+- **Verified applications:** A Lean proof applies to extracted Rust code
+  and its stated assumptions. Changes to extraction, proof checks, generated
+  code, database access, or tenant scoping can invalidate a security claim. See
+  [the trust model](docs/app/TRUST.md) for what is proven, enforced, tested, and
+  assumed.
+- **GPU execution:** The optional GPU adapters are checked through shared
+  semantics and differential tests; GPU execution is not formally proved.
+  Keep validation and state changes on the verified application path. See
+  [GPU design](docs/app/GPU.md).
+- **Red-teaming and CI/CD:** Browser capture, request replay, reconnaissance,
+  and security regression tests can handle hostile content and credentials.
+  Requests must obey their configured scope and recording policy. Treat page
+  content, captured traffic, and test artifacts as untrusted input.
+- **Sandboxing and credentials:** Isolation guarantees depend on the selected
+  tier and host capabilities. An unenforceable explicit policy must fail rather
+  than silently weaken. Keep secret values out of receipts, routine logs, and
+  examples; inspect captures and exports before sharing them. See the
+  [manual's Limits section](docs/MANUAL.md).
 
-- The fetch path: policy resolution per request, the record-before-wire
-  invariant, cookie and origin scoping, per-navigation budgets, and the redirect
-  and CORS rules.
-- Everything a session relays. Page text is attacker-composed, so escape
-  sequences, control characters and unbounded structures are stripped or capped
-  before any of it reaches a terminal, a model or the console.
-- Evidence labeling. `engine-claimed`, `host-observed` and `box-claimed` are
-  separate lanes and must never be merged or averaged into a score.
-- Isolation enforcement and tier resolution: Landlock, seccomp, namespaces, the
-  seccomp-notify supervisor, cgroups, Seatbelt, the Podman and microVM backends,
-  and the code that decides what this host can actually run.
-- Downgrade behavior. Anything that can turn a requested claim into a weaker one
-  still reported as satisfied.
-- Egress: the nftables allowlist and pinned DNS at `supervised`, the CONNECT
-  proxy at `container`, the netstack rules at `microvm`, and the host allowlist
-  under `~/.config/h5i/`, which merges only into a profile that already sets
-  `net.egress` and never widens a deny-all one.
-- Credentials: the auth proxy (`crates/h5i-sandbox/src/auth_proxy.rs`), the
-  secrets broker (`secrets_broker.rs`), the websec capture store, and the
-  scanner and redaction that run before anything is written down.
-- The output gate (`h5i box export` / `apply`): the canonicalized `$WORK`
-  allowlist, nested `.git` rejection, symlink escape rejection, gitlink round
-  trip.
-- Browser control mediation (`crates/h5i-core/src/browser_proxy.rs`), the
-  control lock, and the viewer socket.
-- Plugin resolution and installation, console request handling and its
-  per-session token, shell quoting and generated in-box configuration, and
-  release packaging and install scripts.
-- Parsing of anything a box or a page produced: receipts, manifests, command
-  output, page content, file paths.
+Changes to these boundaries should test both allowed behavior and rejection of
+malformed or unauthorized input. Document any change to a proof assumption or
+user-visible guarantee in the same pull request.
 
-Treat every byte out of a box or off a page as untrusted input, including a
-box's own manifest and resolved policy read back from disk.
+## Authorized testing
 
-## h5i-app and proof claims
-
-- The proof gate. `h5i app check` fails on a `sorry` or `native_decide`
-  outside generated Lean, and on a hand-written theorem that uses any axiom
-  beyond `propext`, `Classical.choice` and `Quot.sound`. `h5i app extract
-  --check` fails when `proofs/generated/` is not what the kernel extracts to.
-  Anything that lets either pass when it should not is a false proof claim.
-  Charon and Aeneas are pinned in `crates/h5i-app-cli/src/pins.rs`; a change
-  there changes what is proven.
-- The structural guarantees in `docs/app/TRUST.md`: handlers reach the database
-  only through the kernel, every compiled statement is scoped to its tenant, and
-  `h5i_app_pg::lockdown` leaves the engine's role as the only one with row
-  access. A path around any of them is a security bug even when every proof
-  still checks.
-- The extracted, proven crates (`h5i-app-sql`, `h5i-app-pgsql`, `h5i-app-json`,
-  `h5i-app-token`, `h5i-app-std`) and the trusted code beside them: token
-  signing and expiry, the JSON codec, and the engine contract in
-  `crates/h5i-app-pg`.
-
-## The claims
-
-- h5i never claims isolation it did not enforce. Everything else is subordinate
-  to this. Tier guarantees are reported per host and per platform.
-- Explicit claims fail closed. An `--isolation` or profile tier the host cannot
-  satisfy is a refusal, never a quiet downgrade. `auto` picks the strongest tier
-  available and names it.
-- A session with no `--in` is not contained, and every status line says so.
-- What was enforced is recorded. The resolved policy is serialized and digested
-  at box creation, and every receipt names the digest in force.
-- The provider token stays in the host proxy's memory. The box sees a base URL
-  and a dummy, and a Claude box never gets Codex's credentials or egress.
-- h5i-app never calls a property proven that Lean did not check, and what a
-  proof rests on is listed under Assumed in `docs/app/TRUST.md`.
-
-## Where it stops
-
-The Limits section of `docs/MANUAL.md` enumerates the residual risk per tier and
-per platform, including terminal sharing, Chrome's own sandbox being off inside
-a box, macOS loopback, and the resource caps macOS cannot hold. Four points
-belong here rather than there:
-
-- Containment does not stop an agent from sending your source to an allowed
-  model API. That is a different control: a self-hosted model, or no model
-  egress.
-- The kernel and container tiers share the host kernel. They hold against a
-  runaway agent and careless dependency code, not against a targeted kernel
-  exploit. `isolation=microvm` is where the boundary is a hypervisor.
-- Mediation is not containment against an evasive agent. The browser daemon runs
-  inside the box, and a box has no internal privilege boundary, so a socket the
-  daemon can bind the agent can reach directly. `h5i browser proxy` has the same
-  shape on the host: it records what Chromium sends through the loopback proxy,
-  and agent-browser and Chromium run as ordinary host processes. On Linux that
-  Chromium trusts only the session CA. On macOS the printed command passes
-  `--ignore-https-errors`, so Chromium accepts every certificate error for the
-  launch.
-- A user-writable install directory is a user-writable h5i. `install.sh`
-  installs into `~/.local/bin` without sudo, as Homebrew on macOS does into
-  `/usr/local/bin`. An `isolation=workspace` box shares your uid unconfined, so
-  it can rewrite that binary, and a later `sudo h5i` runs it as root; it could
-  as easily edit your shell profile, so a root-owned binary alone does not close
-  this. The confining tiers keep the install directory out of reach.
-  `H5I_INSTALL_DIR=/opt/h5i/bin` gives a root-owned install where root is
-  available.
-
-Secret detection and redaction are guards, not guarantees, and h5i does not
-claim a hostile repository cannot exploit your editor, build tools or OS on the
-host side of the boundary.
-
-## Authorized use
-
-`h5i websec` and `h5i recon` send traffic a target did not ask for. Use them
-only against systems you own or have written permission to test. The tooling
-keeps that boundary visible rather than policing it: capture is opt-in because
-the store holds bodies and credentials in full, an experiment caps at 1000 sends
-with a `--rate` ceiling on what the target sees, recon ships no wordlist and
-generates no payloads, and a refusal is recorded as a fact about the scope
-instead of retried. Do not add a verb that widens scope by default, and do not
-make a policy refusal recoverable from inside a box.
-
-## Isolation boundaries
-
-The tiers are `workspace`, `process`, `supervised`, `container` and `microvm`.
-They are not one ladder: `container` buys portability and an L7 egress proxy
-while `supervised` enforces at L3/L4, so neither dominates. What review looks
-for:
-
-- The check against what the host can enforce must be functional. Landlock, user
-  namespaces and seccomp being present does not mean a confined exec succeeds,
-  since AppArmor or a hardened container can still refuse it. Capability bits are
-  not evidence; the exec self-test is.
-- A domain-scoped egress rule requires a tier that can inspect or mediate the
-  traffic. One that cannot must fail closed rather than accept the rule and
-  ignore it.
-- Caps a platform cannot hold are reported as unenforced, not listed as applied.
-- Linux and macOS are two mechanisms, not one abstraction. A guarantee proven on
-  one says nothing about the other, and Seatbelt denials surface only in
-  `log show`.
-
-Changes to sandbox behavior need tests for the allowed path and the refusal
-path. A bypass that turns a denied policy into a permitted operation is a
-security bug.
-
-## Credentials and secrets
-
-Four mechanisms, with different properties.
-
-The auth proxy lets a box authenticate upstream without holding the token. It
-terminates the box's request on host loopback and re-originates it with the real
-credential. Each guarantee holds something up: the upstream origin is pinned at
-spawn and re-checked after assembly, since a request target not beginning with
-`/` would extend the authority rather than the path; DNS is pinned once against
-rebinding; the listener is loopback-bound behind a shared secret. Changes here
-need adversarial tests.
-
-The secrets broker resolves declared grants at run time, never at policy load,
-and injects them scoped and audited. A profile is part of the repository, so two
-sources need something the repository cannot write: a `command:` extractor also
-needs `H5I_ALLOW_COMMAND_EXTRACTORS=1` on the host, and a `file:` source may not
-point inside the profile's own `fs.deny`. An `[[auth]]` destination must be a
-bare hostname and is announced every run. The record keeps the grant id, source,
-injection method, TTL and a value fingerprint, never a value, and never in the
-policy, the manifest or a git ref. File-injected secrets are written `0600`
-outside `$WORK` and unlinked at the end. An unresolvable grant aborts the run.
-
-The capture store holds whole requests and responses, credentials included. It
-exists only under `--capture`, and enters an export only when named.
-
-The scanner covers common credential formats and high-entropy assignments near
-credential-like keywords, and feeds redaction of captured output. Do not weaken
-its rules to quiet local noise without replacement coverage or a precise
-allowlist.
-
-Contributors: fake tokens everywhere (`sk-example-not-real`), no real
-environment values in captured output, redact before sharing a receipt outside
-the boundary it was made in, and rotate anything that lands in a commit, issue,
-pull request, log archive or screenshot.
-
-## Plugins, console, supply chain
-
-A plugin is a separate executable, installed deliberately, under a name h5i
-already knows, into h5i's own state directory rather than `$PATH`. It holds no
-privilege of its own: it reaches a session through the verbs a person types, so
-its requests are the engine's, checked by the engine's policy and written into
-the engine's receipts. Keep it that way. A plugin that talks to the network or
-the session store directly is a hole.
-
-`h5i ui` binds loopback, serves GET only, and keeps lifecycle verbs in the CLI,
-so the console can watch boxes but never drive them. Access needs a per-session
-token held in memory; `--open` hands the browser a separate single-use token,
-because a URL on a command line is readable by every uid on the machine. Badges
-are arithmetic over receipts and never a score. Binding elsewhere, adding a
-mutating route, serving files from a worktree, or rendering box output are all
-security-sensitive.
-
-Dependency updates reach TLS, HTTP, Git, parsing, sandboxing, release artifacts
-and the embedded console. Keep them focused, run the checks with `--locked`, and
-review transitive changes in those areas. `web/package-lock.json` is a
-supply-chain artifact: CI verifies it covers every release platform and the
-build uses `npm ci`. `install.sh` is published at `h5i.dev/install.sh` and from
-`raw.githubusercontent.com`. CI fails if the bytes diverge, but the trust chains
-differ, and the repository URL is the one that depends only on GitHub.
-
-## Before merging
-
-- The change fails closed on unsupported or ambiguous states.
-- A guarantee that holds at some tiers or on one platform says so, in code and
-  in docs.
-- Enforcement is verified functionally, not inferred from capability bits.
-- Box- and page-controlled text is sanitized before display.
-- Paths are canonicalized before filesystem access; refs, object ids, branch and
-  profile names are validated before use.
-- Commands are spawned with structured argv, not assembled strings.
-- Tests cover malformed and malicious input, and receipts leak no avoidable
-  secrets.
-- The Limits section of `docs/MANUAL.md` still describes the boundary.
-
-Run what CI runs:
-
-```bash
-cargo clippy --locked --workspace --all-targets -- -D warnings
-cargo build  --locked --workspace --all-targets
-cargo test   --locked --workspace
-```
-
-Console or release-path changes also need the Node build path.
-
-## Disclosure
-
-Maintainers acknowledge private reports as soon as practical, triage affected
-versions, prepare the fix on a private or minimal branch where that matters, and
-publish once users have an upgrade path. Fixes ship with regression tests, unless
-the test would publish a working exploit before users can update. In that case
-the test follows the release.
+Use `h5i websec` and `h5i recon` only against systems you own or have written
+permission to test. Capture may store complete requests and responses, including
+credentials; enable and share it with care. Use fake tokens in reports, tests,
+and examples.

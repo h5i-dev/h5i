@@ -1988,7 +1988,7 @@ pre.render {
     display: none;
   }
 }
-/* ── the browser terminal (ROADMAP M11a) ─────────────────────────────────────
+/* ── the browser terminal ────────────────────────────────────────────────────
    Peer panes at a trading terminal's density: no pane is the main one, because
    for an agent's overseer the rendered page is the least informative of them.
    Severity is carried by colour AND by a word, so a refusal survives a

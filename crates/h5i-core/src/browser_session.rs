@@ -59,7 +59,7 @@ pub const HELPERS_FILE: &str = "helpers.jsonl";
 /// only one h5i copies from a session to its successor. It is written `0600`,
 /// no verb returns what is in it, and it exists so a login a human performed
 /// once does not have to be performed again on every session, which is what
-/// `--restore` promised before there was anything to restore (roadmap-history.md §B19.6).
+/// `--restore` promised before the cookie jar was persisted.
 pub const COOKIES_FILE: &str = "cookies.json";
 
 /// The handover journal: one line per `take` or `release`.

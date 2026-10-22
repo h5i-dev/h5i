@@ -36,8 +36,7 @@ where it stands, B2 architecture, B3 security, B4 what it is not, B5 the rule
 that produced it.
 
 Part of the h5i design set. The roadmap, and what is next, is
-[`ROADMAP.md`](../ROADMAP.md). The build log B1 to B22 and the superseded
-positioning are in [`roadmap-history.md`](../roadmap-history.md).
+[`ROADMAP.md`](../ROADMAP.md).
 
 ---
 
@@ -570,8 +569,8 @@ What is not there: `IntersectionObserver` and `ResizeObserver` report themselves
 missing; `fetch` is synchronous underneath, so two requests run in order rather
 than at once, and `AbortController` cannot cancel one in flight; no iframes,
 workers, WebGL or WebAssembly. Those are also what will stop React first: a
-production build is not yet verified (roadmap-history.md §12.4 sets that
-bar) and what runs today is a hand-written application of the shape above.
+production build was not verified for this engine, and the application used
+for testing was hand-written.
 
 Boa is a fork at 0.22.0, pinned by revision: `boa_engine` and `boa_gc` are
 patched to `h5i-dev/boa` in the workspace `Cargo.toml`, one commit ahead with
@@ -631,12 +630,11 @@ Assembled, not written from scratch:
 
 ## Status
 
-Tiers 1 and 2 of roadmap-history.md M10: static render, snapshot,
-screenshot, receipts, a live view h5i's viewers attach to, the resident session
-and its verbs (§12.1), and JavaScript behind `--script`. Tier 3, policy-gated
-script, is deliberately unbuilt; roadmap-history.md §12 is the plan and
-§12.5 is what it costs. File uploads are dropped rather than read. Interactive
-login is the Chromium proxy lane.
+Before removal, the engine had static rendering, snapshots, screenshots,
+receipts, a live view h5i's viewers could attach to, a resident session and
+its verbs, and JavaScript behind `--script`. Policy-gated scripting was not
+built. File uploads were dropped rather than read. Interactive login used the
+Chromium proxy lane.
 
 Pin a box to this engine with
 `h5i box create --profile browser --engine h5i-light`, or
@@ -650,15 +648,15 @@ reaches every attached viewer.
 
 ### What a reading of Lightpanda changed, 2026-08-26
 
-roadmap-history.md §B16 is the write-up. What landed here: the fourth wait
-outcome above; a snapshot that no longer lets a wrapper swallow the block
-beneath it; `--url` on the read verbs; `Domain` cookies; an address-level
+That comparison led to the fourth wait outcome above; a snapshot that no longer
+lets a wrapper swallow the block beneath it; `--url` on the read verbs;
+`Domain` cookies; an address-level
 rebinding check; record and replay over durable selectors; a real Canvas 2D;
 `wss://`; a `structured` verb; and a counter for verb names callers asked for
 and this engine does not have.
 
-The comparison was most useful for the three costs it found in *our* load path,
-which are §B16.10's queue and are not built yet.
+The comparison also exposed three costs in the engine's load path that were not
+addressed before its removal.
 
 ---
 
@@ -742,8 +740,8 @@ The `html/dom` figure is bimodal, 58,313 on a loaded machine against 62,183 on
 an idle one, because one idlharness file times out. Run the gate on an idle box
 before reading a regression into it.
 
-Not cleared: a production React build, which §12.4 of the history document sets
-as the bar. What runs is a hand-written application of the right shape.
+Not cleared: a production React build. What ran was a hand-written application
+of the right shape.
 
 Where the next ~5,000 subtests live, measured and ranked: the idlharness file
 itself (2,628 failing, mostly capability interfaces this engine refuses to
@@ -917,6 +915,5 @@ browser. What no one else can copy back is proving what the engine did, because
 that depends on the engine *being* the HTTP client rather than being watched by
 one.
 
-Sections B1 to B22 of [`roadmap-history.md`](../roadmap-history.md) carry the build
-log: the corpus runs, the WPT campaigns, the reference engines read, and the
-reversals.
+This document preserves the browser engine's design and measurements before
+its removal.

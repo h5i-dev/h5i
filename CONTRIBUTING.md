@@ -1,233 +1,54 @@
 # Contributing to h5i
 
-h5i unifies web development, formal verification with Lean 4, and red-teaming
-around a composable Rust framework. The red-teaming half gives an agent a
-Chromium (driven through agent-browser) and direct HTTP control over a running
-app, with every request going through a per-session capture proxy that checks
-it against policy and writes it to the session log before the bytes move; a
-request that cannot be recorded is refused, and a box is a second boundary,
-taken on request. The formal verification half is
-h5i-app, an Axum-based Rust framework whose application logic is proven in
-Lean 4. One finds the bugs nobody anticipated, the other proves the rules you
-can state.
+h5i is an Axum-based Rust web framework for building and verifying web apps
+with Lean 4, featuring optional GPU acceleration and integrated development
+infrastructure for red-teaming and CI/CD. Contributions to the framework, its
+proofs, GPU adapters, CLI, and testing tools are welcome.
 
-`docs/ROADMAP.md` is the scope authority. Read it before proposing a feature.
-
-## Layout
-
-A Cargo workspace. The `h5i` binary is at the root so `cargo install --path .`
-does the obvious thing, and the libraries are under `crates/`:
-
-| crate | what it holds |
-| --- | --- |
-| `h5i-error` | the shared error type. Depends on nothing else here |
-| `h5i-wire` | receipt rows and stored HTTP messages, without the proxy that produces them |
-| `h5i-sandbox` | policy and enforcement. `sandbox_policy.rs` resolves `.h5i/env.toml`; `seccomp_notify.rs`, `supervisor.rs`, `container.rs`, `microvm.rs`, `seatbelt.rs` are the per-tier backends; `secrets*.rs` and `auth_proxy.rs` the credential paths |
-| `h5i-core` | sessions, boxes and evidence: `browser_session.rs`, `env.rs`, `receipt.rs`, `redact.rs`, `export.rs`, `server.rs`, `ui.rs` |
-| `h5i-browser` | the network layer under the capture proxy: policy, receipts, cookies, budget, message store, resend, and the session control channel (`control.rs`) |
-| `h5i-websec`, `h5i-recon`, `h5i-test` | plugin binaries, installed with `h5i plugin install <name>` |
-| `h5i-app`, `h5i-app-*` | the verifiable application framework, published on its own; `h5i-app-cli` is `h5i app`, and `h5i-app-xtask` is `cargo app` and `cargo app-verify` |
-
-`src/cli/` is the clap tree, `web/` the console's React sources, `tests/` the
-integration suites.
-
-The `h5i-app` crates depend on nothing else in the workspace, and only the
-`h5i` binary depends on one of them: `h5i-app-cli`, which is `h5i app`. Their examples are the tutorials, a separate Cargo
-workspace in `examples/app`, each proof project is described by its `h5i-app.toml`, the
-few remaining scripts are in `scripts/app`, their design notes in
-`docs/app`, and `.github/workflows/app.yaml` is their CI.
-
-Dependencies run one way: `h5i-error` under `h5i-wire` and `h5i-sandbox`,
-those under `h5i-core`, and `h5i-core` under the network layer, the
-plugins and the binary. Prefer an existing module boundary over a new abstraction.
+Check the [roadmap](docs/ROADMAP.md) before proposing a new feature. The root
+Cargo workspace contains the CLI and libraries in `crates/`; application
+examples live in the separate `examples/app` workspace. See the
+[framework guide](crates/h5i-app/README.md), [GPU guide](docs/app/GPU.md), and
+[manual](docs/MANUAL.md) for details.
 
 ## Build and test
 
-Stable Rust with clippy, plus Git. Node 20 only if you touch `web/` or release
-packaging. Rootless [Podman](https://podman.io/) and
-[microsandbox](https://microsandbox.dev) (`msb`) are optional, and only to
-exercise `isolation=container` and `isolation=microvm`.
+Install stable Rust and Clippy. The default CLI build also needs Node for the
+web console. Lean 4, Charon, Aeneas, and PostgreSQL are needed for the relevant
+application proofs and integration tests; `h5i app doctor` checks the proof
+toolchain. GPU backend work has separate requirements in the GPU guide.
 
-Some tests do real Git work, and libgit2 needs an author and a committer:
-
-```bash
-git config --global user.name "Your Name"
-git config --global user.email "you@example.com"
-```
-
-What CI runs, all `--locked` because `Cargo.lock` is committed and the release
-build uses it:
+Run the checks relevant to your change:
 
 ```bash
 cargo clippy --locked --workspace --all-targets -- -D warnings
-cargo build  --locked --workspace --all-targets
-cargo test   --locked --workspace
-H5I_SKIP_WEB_BUILD=1 cargo clippy --locked --workspace --all-targets --no-default-features -- -D warnings
+cargo build --locked --workspace --all-targets
+cargo test --locked --workspace
 ```
 
-`--workspace` is not optional. Without it clippy lints the root package only and
-skips every crate under `crates/`, which is where most of the code lives.
+Use `--workspace` so the checks include the crates under `crates/`. For
+framework or proof changes, also run the relevant `cargo app` checks; CI checks
+the Lean proofs and extracted code. For console changes, build the `web/`
+package and verify the embedded UI. If your host cannot run a relevant check,
+say so in the pull request.
 
-Default features build the console, so `crates/h5i-core/build.rs` wants Node.
-`H5I_SKIP_WEB_BUILD=1` stubs the bundle; `--no-default-features` drops the
-console and the Node dependency with it.
+## Make a focused change
 
-Narrower suites while iterating:
-
-```bash
-cargo test --workspace --lib            # fast
-cargo test --test browser_session_cli   # the session verbs, through the binary (a stub agent-browser)
-cargo test --test env_integration       # box lifecycle on real repos, Linux only
-cargo test --test console_api           # spawns the binary, speaks HTTP to it
-./scripts/websec/smoke.sh target/release/h5i target/release/h5i-websec   # needs agent-browser and its Chromium
-```
-
-For h5i-app, which also needs PostgreSQL, Lean 4 (via elan), and Charon and
-Aeneas at the commit pinned in `crates/h5i-app-cli/src/pins.rs` (`h5i app
-doctor` checks them). Each proof project is driven by `h5i app` and its
-`h5i-app.toml`. In this repository, `cargo app <verb>` runs the same code
-without building the h5i binary; run it from the
-repository root, since `examples/app` is a workspace of its own.
-
-```bash
-H5I_APP_TEST_DATABASE_URL=postgres://… scripts/app/ci-rust-tests.sh --release
-cargo app prove examples/app/calculator    # = h5i app prove: extract, build and gate one project
-cargo app-verify            # CI's checks over every project; a missing tool is skipped
-cargo app-verify --full     # adds every project's mutants
-```
-
-Four more CI jobs sit behind that first one. `smoke` installs agent-browser and
-its Chromium and drives the plugin binaries against a real server, `macos` runs `--lib` and checks Seatbelt is present,
-`docs` diffs the generated manuals, and `cross-check` compile-checks the four
-release targets.
-
-There is no fmt gate, because the repository is not fmt-clean. Do not send
-formatting-only churn.
-
-A debug build of this workspace runs to several gigabytes, so build release if
-your disk is small (`scripts/no-debug-guard.sh` makes that stick). On a small-memory machine the
-test binaries are what blow up, not the library: build them single-job with
-debug info off.
-
-This repository dogfoods h5i. Do agent-assisted work in a box rather than in
-your checkout: `h5i box create <name> --profile agent-claude`, then `shell`,
-`diff` and `export`. The suite runs in there with caveats, since the cargo
-caches are mounted read-only, memory is capped, and the tests that create nested
-boxes have to be skipped.
-
-## Coding rules
-
-- Fail closed. For policy, isolation, credentials and the export gate,
-  ambiguity is a refusal. A tier that cannot enforce what was asked says so and
-  stops. It never downgrades quietly.
-- Never claim a boundary you did not enforce. When a guarantee holds only at
-  some tiers or on one platform, the code and the docs both name which.
-- Keep the evidence lanes apart. `proxy-observed`, `host-observed` and
-  `box-claimed` are never merged or averaged into a score.
-- Treat what comes out of a box or off a page as attacker-composed: command
-  output, receipts, paths, branch names, page text, and any policy read back
-  from a worktree.
-- Keep user-facing output stable where scripts depend on it. Migrate CLI
-  behavior on purpose or not at all.
-- Prefer typed data over string manipulation, `Path` over string paths, and
-  argument vectors over shell strings.
-- Comment where the reason is not recoverable from the code, in one to three
-  lines.
-
-For a CLI change, move the command definition, the implementation, the tests and
-the docs together.
-
-## Security-sensitive changes
-
-Read `SECURITY.md` first if you touch the fetch path, policy or tier resolution,
-downgrade behavior, egress and the credential proxies, secret scanning or
-receipt contents, the export gate, box execution and the supervisor, console
-binding and routing, or the install and release scripts.
-
-These need tests for the refusal and malformed-input paths, not only the happy
-one. A bypass that turns a denied policy into a permitted operation is a
-security bug.
-
-Kernel-tier results depend on the host. Landlock, user namespaces and seccomp
-being present does not mean a confined exec works, because a hardened container
-or an AppArmor policy can still refuse it. Check with `h5i box probe` rather
-than by reading capability bits.
-
-## Docs
-
-Update the docs in the change that moves the behavior.
-
-- `README.md`: the overview and the shortest path to a first session.
-- `docs/MANUAL.md`: the command, policy and receipt reference. Its Limits
-  section is a security document in prose.
-- `docs/ROADMAP.md`: scope. What is built, what was cut, and why.
-- `docs/design/*.md`: one file per part. Live code cites their section numbers,
-  so a section that moves takes its citations with it.
-- `docs/content-style-guide.md`: voice and structure for the website.
-
-`docs/man/man1/h5i.1` and `docs/manual/index.html` are generated, and the `docs`
-job diffs them. A CLI flag or a `docs/MANUAL.md` edit that lands without both
-regenerated fails it. Regenerate on Linux and commit the result:
-
-```bash
-./scripts/gen_man.sh
-python3 -m pip install -r scripts/requirements.txt && python3 scripts/gen_manual.py
-python3 docs/build-content.py
-```
-
-Each of those re-stamps the pages it writes, so the order does not matter. For a
-change to `docs/_static` alone, run `python3 scripts/stamp_assets.py` instead, or
-browsers keep serving the cached stylesheet. `docs/` is published verbatim,
-which is why the man page lives there and nowhere else (read it locally with
-`MANPATH=$PWD/docs/man man h5i`) and why `install.sh` is copied to
-`docs/install.sh`, with CI failing when the two differ.
-
-Keep real tokens, private logs, private prompts and private repository names out
-of docs, fixtures, screenshots and examples.
-
-## The console (`web/`)
-
-`web/` is the box console that `h5i ui` serves. Use Node 20, verify the Rust
-path that embeds the bundle, and check narrow widths for visible changes.
-
-The console counts over receipts. Its badges are arithmetic rather than a score,
-and the gap between host-observed and box-claimed is shown, not averaged away. A
-number that looks like a verdict but is not one is worse than no number.
-
-It binds loopback, every route is a GET, and access needs a per-session token
-that is never written to disk. See the module docs in
-`crates/h5i-core/src/server.rs` before changing any of that.
-
-Regenerating `package-lock.json` needs npm 10 or newer. Rollup ships its native
-code as per-platform optional packages and npm 9 records only the one matching
-the machine it ran on, so a lockfile rebuilt on an arm64 laptop fails on an x64
-runner with a `Cannot find module @rollup/rollup-linux-x64-gnu` trace that names
-nothing useful. `scripts/check-lockfile-platforms.mjs` catches that in CI. To
-rebuild:
-
-```bash
-cd web && rm -rf node_modules package-lock.json && npx npm@10 install
-```
+- Keep the Rust implementation, Lean proofs, tests, and docs in sync when an
+  application guarantee changes. State clearly which properties are proved,
+  tested, or assumed; use [the trust model](docs/app/TRUST.md) as the reference.
+- Keep GPU execution optional. Compare its results with the CPU path and keep
+  application state changes on the established kernel path.
+- For security-sensitive code, follow [SECURITY.md](SECURITY.md). Refuse
+  policies the host cannot enforce, test rejection paths, and treat browser,
+  box, and network data as untrusted.
+- Update the manual when CLI behavior changes. Regenerate its published forms
+  with `./scripts/gen_man.sh` and `python3 scripts/gen_manual.py`.
+- Use fake credentials and redacted artifacts in tests, docs, and pull requests.
 
 ## Pull requests
 
-Keep commits narrow, with a one-line subject that says what changed, and keep
-unrelated cleanup out of them.
-
-Before opening a PR, run the relevant tests and name them in the description,
-regenerate the manuals if the CLI or `docs/MANUAL.md` moved, say which platforms
-and tiers you covered and which you did not, and call out anything security
-sensitive along with the residual risk. Add screenshots for visible console
+Keep the change narrow. Describe what changed, the checks you ran, and any
+platform or toolchain you could not test. Call out changes to proof assumptions,
+security boundaries, or user-visible behavior. Add screenshots for visible UI
 changes.
-
-Reviewers will ask what happens when the host cannot enforce what the policy
-asked for, whether manifests and receipts stay compatible, whether box-provided
-data is sanitized before display or execution, whether the docs match the
-enforcement, and whether a test proves the refusal path. A limitation you leave
-in on purpose belongs in `docs/MANUAL.md`'s Limits section if a user would hit
-it.
-
-Release artifacts are built for `x86_64-unknown-linux-musl`,
-`aarch64-unknown-linux-musl`, `aarch64-apple-darwin` and
-`x86_64-pc-windows-msvc`. `cross-check` compile-checks that same matrix on every
-PR, so keep the two aligned when the supported targets change.

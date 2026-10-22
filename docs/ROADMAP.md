@@ -2,10 +2,7 @@
 
 Status: in progress, 2026-10-19. This file is the scope authority: what h5i is,
 what is built, and what is deliberately not. It is meant to be read in one
-sitting. The design behind each part lives in `docs/`, one file per part, and
-the two superseded positionings are kept in
-[`docs/roadmap-history.md`](roadmap-history.md) because both describe
-machinery that is still shipped and tested.
+sitting. The design behind each part lives in `docs/`, one file per part.
 
 > h5i unifies web development, formal verification with Lean 4, and
 > red-teaming around a composable Rust framework. Build. Verify. Hack.
@@ -91,7 +88,5 @@ of it whether you need the rest.
 | C1 to C8 | `docs/design/design-console.md` | what `h5i ui` shows, what it refuses to, and how it says which session wants you |
 | T1 | `docs/design/design-test.md` | portable attack flows, external oracles, CI results and coverage |
 
-Live code cites these section numbers. The prefixes do not collide with
-[`docs/roadmap-history.md`](roadmap-history.md), which holds the superseded
-environment positioning (sections 1 to 12) and the engine's build log (B1 to
-B22); a `roadmap-history.md` citation always names that file.
+Live code cites these section numbers. The superseded browser engine design
+remains in `docs/design/design-browser.md` for historical context.

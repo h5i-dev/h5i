@@ -20,7 +20,7 @@ this is the measurement that decides a design.
 port forward wants, and it is **create-time only** — `msb modify` has no `--port`.
 
 That collides with how warm guests are named. A guest's name is a SHA-256 of
-its create argv (M13 step 2), so adding a forward changes the name, which
+its create argv, so adding a forward changes the name, which
 creates a *new* guest and reaps the old one — killing the dev server that was
 to be reached. Forwarding would destroy its own subject. The alternative, opening a
 port on every box at creation against the possibility of a later forward, costs
@@ -97,7 +97,7 @@ netstack.
 
 Started with `setsid`, a dev server in the guest answered `200` immediately and
 again after unrelated `msb exec` calls in between. This is a consequence of
-M13 step 2 rather than of anything here: before warm guests, the VM died with
+warm-guest reuse rather than of anything here: before reuse, the VM died with
 the command that started it, so there was never a dev server to share.
 
 ## What this does not settle
@@ -150,4 +150,3 @@ the isolation result.
 
 - `docs/benchmarks/microvm-boot.md` — the boot tax, and the warm-guest work
   that made a persistent dev server possible at all.
-- `docs/roadmap-history.md` M14 — the `box service` design this measurement feeds.

@@ -455,9 +455,8 @@ function PagePane({
             session: each <code>open</code> renders its own page and exits. Any
             frame above is therefore the page the <em>serving</em> process was
             started on, not necessarily the one the agent is driving. Watching
-            the agent's own browsing needs the engine to grow a session mode
-            (ROADMAP M10); the panes below are the record of what it actually
-            did.
+            the agent&apos;s own browsing needs a resident session; the panes
+            below record what this process actually did.
           </p>
         ) : null}
       </div>

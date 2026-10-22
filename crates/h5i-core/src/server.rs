@@ -1266,8 +1266,7 @@ pub struct BrowserStream {
 /// grow without limit.
 const STREAM_CAP: usize = 4000;
 
-/// `GET /api/box/:agent/:slug/browser?since=N`: the browser terminal's stream
-/// (roadmap-history.md M11a).
+/// `GET /api/box/:agent/:slug/browser?since=N`: the browser terminal's stream.
 ///
 /// A `GET` like every other route here, and for the same reason: the console
 /// watches and never drives. Taking the control lock and typing into a page go

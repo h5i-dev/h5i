@@ -1,4 +1,4 @@
-//! The browser terminal's event stream (roadmap-history.md M11a).
+//! Events relayed from a box's browser to the terminal and console.
 
 use serde::{Deserialize, Serialize};
 
@@ -87,7 +87,7 @@ impl Initiator {
 
 /// What happened. One variant per pane the browser terminal draws, because a
 /// pane with no event kind behind it is a layout waiting for a source. The
-/// mistake M11 recorded when it did not build a network pane.
+/// earlier network pane had no source for its contents.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum EventKind {
@@ -414,7 +414,7 @@ impl EventLog {
 /// control and bidi characters that would otherwise repaint the viewer's own
 /// chrome. The web console renders text nodes rather than markup, so this is
 /// defence in depth there, and the *only* defence for the terminal viewer
-/// reading the same stream (M11b), which is why it happens here at ingest and
+/// reading the same stream, which is why it happens here at ingest and
 /// not in either renderer.
 fn clean(s: &str) -> String {
     let mut out = sanitize_display(s);
@@ -973,7 +973,7 @@ mod tests {
 
     #[test]
     fn box_text_cannot_repaint_the_viewer() {
-        // The terminal viewer (M11b) reads this same stream and writes straight
+        // The terminal viewer reads this same stream and writes straight
         // to a PTY, so an escape sequence surviving ingest is a real escape.
         let log = log_with(ingest_request_log(
             "{\"seq\":1,\"phase\":\"request\",\"method\":\"GET\",\"url\":\"https://a.example/\\u001b[2Jgone\",\"allowed\":true}",

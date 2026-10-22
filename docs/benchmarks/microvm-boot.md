@@ -5,8 +5,8 @@ so. It costs **461 ms per command** on this host, of which essentially all is
 guest boot: the VM adds no measurable per-syscall tax once it is running. A
 warm guest answers the same command in **8.9 ms**, so the tier is carrying a
 **~50×** overhead that is structural rather than inherent, and two independent
-changes remove most of it. This is the number `docs/roadmap-history.md` M13 asked for before any
-optimisation was designed.
+changes remove most of it. This measurement established the fixed cost of
+starting a guest before warm-guest optimisations were designed.
 
 One finding runs against the obvious ordering: on macOS the `microvm` tier is
 **3.4× faster than `process` and `supervised`** for a realistic short command,
@@ -154,7 +154,7 @@ and today's tier boots a VM, runs one command inside it, and destroys it —
 there is no moment between "guest exists" and "command runs" in which h5i
 could issue the modify. So this 141 ms is **not** available to the current
 one-shot design at any price short of lowering the ceiling. It composes with
-M13 step 2 instead, where the sequence becomes `msb create --memory 512M
+warm-guest reuse instead, where the sequence becomes `msb create --memory 512M
 --max-memory <ceiling>` once, one `msb modify` at ~9 ms, and then execs — and
 where it is worth having anyway, because it also cuts the one boot per box
 that reuse cannot amortise.
@@ -229,7 +229,7 @@ One reassurance from the same run: guest state survives the cycle. The `/opt`
 write made before a `stop` was still readable after `start`, so stopping a
 guest is a latency decision rather than a data-loss one.
 
-## What reuse actually delivered (M13 step 2, built 2026-08-13)
+## What reuse actually delivered (built 2026-08-13)
 
 The warm-guest path is implemented, and re-running the same harness against it
 turns the projection above into a measurement. **Fixed cost per command fell
@@ -290,7 +290,7 @@ though everything was tried and everything mattered.
   230.4 ms, inside the spread.
 - **The preload script is not a boot cost.** `--script-path` plus the guest's
   extra `sh` exec added ~9 ms, so the credential-safety mechanism documented
-  in `microvm.rs` is not paid for in latency. That matters for M13 step 2,
+  in `microvm.rs` is not paid for in latency. That matters for warm-guest reuse,
   where the same mechanism has to carry over to `msb exec`.
 
 ## One anomaly, unexplained — seen twice
@@ -317,8 +317,8 @@ So: intermittent, roughly 2 in 100, not tied to any variable tested, and not
 diagnosed. It is recorded rather than filed because a warm-guest design makes
 `exec` the hot path, and a rare unbounded hang there is exactly the kind of
 thing that is cheap to know about now and expensive to discover once it is
-load-bearing. **M13 step 2 should treat an exec as something that can hang and
-needs its own deadline**, which is the same lesson `wait_vm`'s existing
+load-bearing. **The warm-guest path must treat an exec as something that can
+hang and needs its own deadline**, which is the same lesson `wait_vm`'s existing
 host-side backstop already encodes for `msb run`.
 
 ## Host
@@ -338,15 +338,14 @@ was not measured: rootless Podman is not installed on this host.
 
 ## Interpretation
 
-**The tier works.** Before this run the adapter had never booted a real guest
-anywhere — it was unit-tested against its argv and its rule translation, and
-`docs/roadmap-history.md` §9 said so. A microvm box now creates, runs a command, enforces its
-allowlist in the guest netstack, and exits 0.
+**The tier works.** Before this run the adapter had only been unit-tested
+against its argv and rule translation. A microvm box now creates, runs a
+command, enforces its allowlist in the guest netstack, and exits 0.
 
 **Its cost is boot, not isolation.** The near-zero per-syscall and CPU deltas
 say the guest is not a slow place to work; it is an expensive place to
-*start*. That is precisely the cost profile that amortises, which is why M13
-sequences reuse ahead of anything more exotic, and why the fork-from-warm
+*start*. That is precisely the cost profile that amortises, which is why
+warm-guest reuse came before anything more exotic, and why the fork-from-warm
 machinery that motivated the comparison is not needed to capture most of the
 win here.
 
@@ -403,4 +402,3 @@ msb rm --force warm
 - `docs/benchmarks/env-overhead.md` — the earlier `workspace`/`process`
   measurement on a Linux guest, which this does not supersede: different
   host, different date, different tiers.
-- `docs/roadmap-history.md` M13 — the plan this measurement was taken to size.
