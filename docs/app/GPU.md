@@ -14,7 +14,7 @@ The documented prebuilt route (`USE_PREBUILT_LLVM=1`) downloaded LLVM 7.1.0
 from upstream's rustc_codegen_nvvm-llvm release. No root or Docker was needed.
 
 Reproduction scripts: `crates/h5i-app-gpu/backend-nvvm/setup.sh` and
-`build-device.sh`. Everything builds into `/var/tmp/h5i-gpu-target`; sources,
+`examples/app/parallel/gpu/build-device.sh`. Everything builds into `/var/tmp/h5i-gpu-target`; sources,
 Cargo/Rustup homes, downloaded packages and temporary files stay in `/var/tmp`.
 Ubuntu packages libssl-dev/libssl3t64, libncurses-dev/libtinfo6 and
 libxml2-dev/libxml2 were unpacked with dpkg-deb into
@@ -53,7 +53,9 @@ embedded separators and rejected trailing zero. No KeyHash implementation is
 replaced or sorted by the GPU; output indices preserve input order.
 These are empirical tests, not a GPU theorem or exhaustive absence-of-panic proof.
 
-Commands: run setup.sh, build-device.sh, then measure.sh in backend-nvvm.
+Commands: run `crates/h5i-app-gpu/backend-nvvm/setup.sh`, then
+`examples/app/parallel/gpu/build-device.sh` and
+`examples/app/parallel/gpu/measure.sh` from the repository root.
 Detach long runs and poll logs. `measure PTX --check-only` runs just conformance.
 All builds/tests/measurements used nice 19 and CPUs 64–127; only GPU 0 was used.
 CPU baseline and GPU measurements were sequential, with our proofs/builds paused.
@@ -282,8 +284,8 @@ There is no scheduler or persistent-state abstraction in this change.
 The search/push `Batch`, `Decision`, `Output::validate`, CPU oracle, fixed SoA
 layouts, Rust-CUDA device wrappers and conformance fixtures now live together in
 [`examples/app/parallel/gpu`](../../examples/app/parallel/gpu). The runtime and
-NVVM adapter no longer depend on `parallel-kernel`. Existing build/measure script
-paths forward to this application workspace. The archived cuda-oxide compiler
+NVVM adapter no longer depend on `parallel-kernel`. Application build/measure
+scripts live only in this application workspace. The archived cuda-oxide compiler
 probes retain their own application dependencies and separate workspace.
 
 A second independent workload is
