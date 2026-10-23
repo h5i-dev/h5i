@@ -101,9 +101,9 @@ BUILD_VERIFY = {
     "section": "guides", "slug": "build-and-verify-a-web-app",
     "published": "2026-10-21", "eyebrow": "Guide 01 / Framework",
     "time": "10 min", "tags": "Rust &middot; Axum &middot; Lean 4",
-    "title": "Build and verify a Rust web app with Lean 4 | h5i",
+    "title": "Rust Formal Verification with Lean 4 | h5i",
     "h1": "Build and Verify a Web App",
-    "description": "Create an h5i-app project, keep decisions in a Rust kernel, prove a property in Lean 4, and use mutation testing to check the specification.",
+    "description": "Learn how to verify a Rust web app with Lean 4: extract a Rust decision kernel with Charon and Aeneas, prove a property, then test the proof with mutations.",
     "deck": "Build the application in Rust, then make the rule you care about explicit enough for Lean 4 to check it. The small kernel is where implementation and proof meet.",
     "body": f"""<div class="callout"><strong>Outcome.</strong> Create an h5i-app project, identify the Rust logic that needs a proof, run extraction and proof checks, and use an intentional mutation to test whether the specification notices a bug.</div>
 <figure class="feature-figure"><img src="/_static/calculator-rust-lean-proof.svg" alt="A Rust calculator kernel is extracted into Lean definitions, checked against a handwritten specification, and tested with mutations"><figcaption>The Rust kernel is the implementation; the Lean specification states the intended rule.</figcaption></figure>
@@ -117,6 +117,10 @@ BUILD_VERIFY = {
 <h2 id="scaffold">2. Scaffold a project</h2>
 {code_block('h5i app new counter\ncd counter\nh5i app doctor')}
 <p>The new project has a Rust kernel, a <code>proofs/</code> directory, and <code>h5i-app.toml</code> to describe extraction and proof targets. <code>doctor</code> checks the pinned Charon, Aeneas, and Lean toolchain. If you already have a Rust project, <code>cargo add h5i-app</code> adds the framework, but you still need a kernel and proof project; the <a href="/manual/#h5i-app">app manual</a> describes that layout.</p>
+<h3 id="existing-rust-project">Starting with an existing Rust web app</h3>
+<p>Choose one decision that can be expressed without HTTP or database I/O, such as whether an authenticated actor may update a row. Put that function and its input types in a kernel crate, then call it from the existing Axum handler. Keep authentication and persistence in the handler: a Lean theorem about the kernel cannot establish that the handler supplied the correct actor or applied only the returned writes.</p>
+<p>Give the project a <code>proofs/</code> Lake workspace and an <code>h5i-app.toml</code>. The manifest names Charon start points and the Lean theorems that must pass; the <a href="https://github.com/h5i-dev/h5i/blob/main/examples/app/calculator/h5i-app.toml">calculator manifest</a> is a concrete example. Scaffold a small project first if you need a working proof layout to copy, then replace its kernel with the decision from your app. Run <code>h5i app doctor</code> before extraction so missing or mismatched toolchain versions are visible.</p>
+<p>The translation path is Rust kernel → Charon intermediate representation → Aeneas-generated Lean definitions → your handwritten Lean specification and proof. Extraction is not itself a proof. If a dependency or Rust feature is unsupported, narrow the kernel boundary or model that dependency explicitly; do not treat an incomplete translation as a verified app.</p>
 <h2 id="specification">3. State the property before proving it</h2>
 <p>Decide which rule must hold. In the calculator, a useful property is that a successful command writes only the caller's memory. Another is that an arithmetic operation either returns its mathematical result or the specified refusal. Write the rule in the Lean specification, then prove it about the extracted kernel. A proof of the wrong rule is still a valid proof, so review the specification as carefully as the Rust code.</p>
 <p>For example, the Rust kernel refuses subtraction that would underflow:</p>

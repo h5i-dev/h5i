@@ -39,13 +39,13 @@ PUBLISHED = "2026-08-21"
 # without its date. Changing a page's content and forgetting the date is a
 # build error, not a silent regression.
 PAGE_HISTORY = {
-    "": ("2026-10-21", "7b94f1b8006697c5"),
-    "features/": ("2026-10-21", "21f5c8dddb47df96"),
+    "": ("2026-10-23", "f94508fae7179efa"),
+    "features/": ("2026-10-23", "6aa05fb9e51b2e6e"),
     "manual/": ("2026-10-21", "0f7e605dc087544d"),
     "pitch/": ("2026-10-21", "7cfe9803d7d11df5"),
     "demo/": ("2026-10-22", "9dae5fe7a3dbf01b"),
-    "guides/": ("2026-10-21", "888b965163695896"),
-    "guides/build-and-verify-a-web-app/": ("2026-10-21", "0b0d7ae775899b60"),
+    "guides/": ("2026-10-23", "7c6c8d7fc6200fbc"),
+    "guides/build-and-verify-a-web-app/": ("2026-10-23", "43f4cde959997b02"),
     "guides/red-team-a-web-app/": ("2026-10-21", "3af532e9ff5592f3"),
     "guides/advanced-web-security-testing/": ("2026-10-21", "ee29cf39a56e07d5"),
     "guides/security-regression-testing/": ("2026-10-21", "b7a8f9ea68eea371"),
@@ -399,7 +399,7 @@ def build():
       <description>{item['description']}</description></item>""" for item in posts)
     (ROOT / "feed.xml").write_text(f"""<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel>
 <title>The h5i Blog</title><link>https://h5i.dev/blog/</link>
-<description>Design essays on giving an AI agent a browser you can audit: boundaries, evidence, and what a request log has to prove.</description>
+<description>Engineering essays on verifiable Rust web applications, Lean 4 proofs, web security testing, and agent isolation.</description>
 <language>en-us</language><lastBuildDate>{rfc822(max(modified(f"blog/{item['slug']}/") for item in posts))}</lastBuildDate>
 <atom:link xmlns:atom="http://www.w3.org/2005/Atom" href="https://h5i.dev/feed.xml" rel="self" type="application/rss+xml"/>
 {items}</channel></rss>""")
