@@ -1,6 +1,6 @@
 ---
 name: h5i
-description: Build and formally verify Rust web applications with h5i-app and Lean 4, or use the h5i CLI for browser automation, authorized web security testing, regression tests, and isolated agent workflows.
+description: h5i is an Axum-based Rust web framework for building and formally verifying web applications with Lean 4, featuring optional GPU acceleration and integrated development infrastructure for red-teaming, CI/CD, and browser automation.
 ---
 
 # h5i
