@@ -1172,6 +1172,10 @@ name = "h5i-app-core"
 version = "0.1.3"
 
 [[package]]
+name = "h5i-app-gpu"
+version = "0.1.3"
+
+[[package]]
 name = "h5i-app-http"
 version = "0.1.3"
 dependencies = [

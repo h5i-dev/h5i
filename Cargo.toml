@@ -1,8 +1,13 @@
 [workspace]
 members = ["crates/*"]
 # The h5i-app examples are their own workspace, depending on the h5i-app
-# crates by path as an application would.
-exclude = ["examples/app", "crates/h5i-app-gpu"]
+# crates by path as an application would. The GPU backends need CUDA and git
+# dependencies, so they build separately too.
+exclude = [
+    "examples/app",
+    "crates/h5i-app-gpu/backend-nvvm",
+    "crates/h5i-app-gpu/backend-oxide",
+]
 resolver = "3"
 
 # Shared dependency versions for every workspace crate — a single source of

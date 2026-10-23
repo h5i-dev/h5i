@@ -135,7 +135,7 @@ device compilation probe without the failing host runtime.
 
 ## Earlier calculator / Result failures
 
-`crates/h5i-app-gpu` is a separate workspace/toolchain invocation, excluded from
+`crates/h5i-app-gpu/backend-oxide` is a separate workspace/toolchain invocation, excluded from
 normal extraction and builds. Its default CPU test calls the existing
 calculator kernel's `compute`, including checked arithmetic errors. The
 `calculator-probe` feature adds a thin `#[kernel]` batch wrapper with separate
