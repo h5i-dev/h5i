@@ -26,7 +26,7 @@
 <meta name="twitter:description" content="Build and verify Rust web apps with h5i. Explore the framework, Lean 4 proofs, development tools, and open-source evidence.">
 <meta name="twitter:image" content="https://h5i.dev/_static/social-card.png">
 <meta name="twitter:image:alt" content="h5i — Agent-Native Web Security">
-<script type="application/ld+json">{"@context": "https://schema.org", "@type": "PresentationDigitalDocument", "name": "h5i OSS Pitch Deck", "description": "A verifiable Rust web framework with Lean 4 proofs and integrated development infrastructure.", "url": "https://h5i.dev/pitch/", "dateModified": "2026-10-21", "inLanguage": "en", "author": {"@type": "Organization", "name": "h5i-dev", "url": "https://github.com/h5i-dev/h5i"}, "about": {"@id": "https://h5i.dev/#app"}}</script>
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "PresentationDigitalDocument", "name": "h5i OSS Pitch Deck", "description": "A verifiable Rust web framework with Lean 4 proofs and integrated development infrastructure.", "url": "https://h5i.dev/pitch/", "dateModified": "2026-10-23", "inLanguage": "en", "author": {"@type": "Organization", "name": "h5i-dev", "url": "https://github.com/h5i-dev/h5i"}, "about": {"@id": "https://h5i.dev/#app"}}</script>
 <link rel="stylesheet" href="deck.css">
 </head>
 <body>
@@ -38,16 +38,17 @@
 
 <section class="slide " id="slide-2" aria-labelledby="title-2">
 <div class="content">
-  <div class="eyebrow">02 / The founding insight</div>
-  <h2 id="title-2">Software security has two sides</h2>
-  <p class="lead">AI can ship an app quickly. Security still needs both kinds of evidence.</p>
+  <div class="eyebrow">02 / The insight</div>
+  <h2 id="title-2">Finding Bugs Doesn't Prove Correctness.</h2>
+  <p class="lead">Testing and red-teaming can uncover vulnerabilities, but cannot establish that critical properties always hold.</p>
   <div class="security-pair">
-    <article><span class="index">RED-TEAMING</span><h3 class="quantified-heading">Find Bugs <span class="quantifier" role="img" aria-label="Exists">∃</span></h3><p>Find a counterexample in the running application.</p></article>
-    <article><span class="index">FORMAL VERIFICATION</span><h3 class="quantified-heading">Prove Properties <span class="quantifier" role="img" aria-label="For all">∀</span></h3><p>Prove a stated rule for the modeled logic under explicit assumptions.</p></article>
+    <article><span class="index">TESTING &amp; RED-TEAMING</span><h3 class="quantified-heading">Find Bugs <span class="quantifier" role="img" aria-label="Exists">∃</span></h3><p>Find vulnerabilities in tested executions; their absence is not a guarantee.</p></article>
+    <article><span class="index">FORMAL VERIFICATION</span><h3 class="quantified-heading">Prove Properties <span class="quantifier" role="img" aria-label="For all">∀</span></h3><p>Establish stated properties for all modeled inputs, under explicit assumptions.</p></article>
   </div>
+  <p class="takeaway">Critical rules need stronger evidence: formal verification.</p>
 </div>
 
-<footer class="folio"><span>From the founder's PhD / a counterexample and a proof answer different questions</span><span>02</span></footer>
+<footer class="folio"><span>Proofs cover stated properties and modeled inputs under explicit assumptions</span><span>02</span></footer>
 </section>
 
 <section class="slide " id="slide-3" aria-labelledby="title-3">
@@ -140,7 +141,7 @@
 <div class="content">
   <div class="eyebrow">06 / The tooling</div>
   <h2 id="title-6">Development Infrastructure</h2>
-  <p class="slide-intro">Red-teaming, CI/CD testing, and sandboxed workflows for h5i-app or any existing web application.</p>
+  <p class="slide-intro">Red-teaming tests the running system, including HTTP adapters and external services beyond the proof boundary. Findings can become CI/CD regression tests.</p>
   <div class="shell-dashboard">
     <div class="agent-shell"><div class="editor-bar">AI agent / shell</div><pre><span class="prompt">$</span> h5i browser snapshot
 <span class="terminal-result">  @e7 Order 1041</span>

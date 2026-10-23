@@ -42,7 +42,7 @@ PAGE_HISTORY = {
     "": ("2026-10-23", "f94508fae7179efa"),
     "features/": ("2026-10-23", "6aa05fb9e51b2e6e"),
     "manual/": ("2026-10-21", "0f7e605dc087544d"),
-    "pitch/": ("2026-10-21", "7cfe9803d7d11df5"),
+    "pitch/": ("2026-10-23", "e226e08efc54cc1a"),
     "demo/": ("2026-10-22", "9dae5fe7a3dbf01b"),
     "guides/": ("2026-10-23", "7c6c8d7fc6200fbc"),
     "guides/build-and-verify-a-web-app/": ("2026-10-23", "43f4cde959997b02"),

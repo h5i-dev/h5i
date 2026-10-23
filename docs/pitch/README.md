@@ -6,20 +6,20 @@ and red accents. `index.html` is the content source; `deck.css` and `deck.js`
 provide presentation, mobile reading, keyboard navigation and print layouts.
 Without JavaScript, every slide remains readable in order.
 
-Keep the opening question and the founding insight about finding bugs and
-proving properties. Present h5i as a verifiable Rust web framework, supported
+Keep the opening question, then explain why finding bugs cannot establish that
+critical properties always hold. Present h5i as a verifiable Rust web framework, supported
 by development infrastructure that also works with existing web apps. Slides
 4 and 5 distinguish the kernel architecture from the properties proved with
 it; slide 6 demonstrates red-teaming tools. Customer development belongs
 briefly at the end; there are no customers to claim yet. Downloads and stars
 are interest signals, not active-user, retention or revenue metrics.
 
-The founding insight comes from the founder's PhD: finding bugs and proving
-correctness are two sides of the same coin, and secure software needs both.
-This is the thesis of the deck; AI/human collaboration explains how the
-red-teaming side works. Do not substitute that workflow for the founding thesis.
-Do not imply that the PhD credential establishes universal product guarantees;
-proof scope and assumptions remain explicit.
+Slide 2 makes the case for formal verification: testing and red-teaming can
+uncover vulnerabilities, while proofs establish stated properties for all
+modeled inputs under explicit assumptions. Neither slide nor speaker notes
+should imply universal product guarantees. Slide 6 shows how red-teaming
+complements proofs by testing HTTP adapters, external services and other
+behavior outside the proof boundary.
 
 Slide 3 has two levels: the framework is the core product, and the CLI,
 dashboard and sandbox are development infrastructure. Kernel extraction to
