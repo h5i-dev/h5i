@@ -75,13 +75,14 @@ written once; an app adds a policy and no Lean.
 | Piece | Rust | Lean |
 |---|---|---|
 | `h5i_app_std::authz` (guard, checks, traits) | 113 | none |
-| `AuthzSpecs.lean` (theorems, `h5i_authz`) | none | 400 |
+| `AuthzSpecs.lean` (theorems, `h5i_authz`) | none | 412 |
 | forum: handlers | 77 | 0 |
 | forum: `Policy`, `Disclose`, `View`, wiring | 107 | 0 |
-| forum: `generated/Authz.lean` | none | 4, written by `h5i app extract` |
+| forum: `generated/Authz.lean` | none | 79, written by `h5i app extract` (4 for authorization, the rest the storage proof) |
 
-`h5i app check` on the forum gates 39 theorems, among them
-`guarded_transition.authorized`, `.kernel_apply_eq` and `.read_only_sound`. For comparison, board
+`h5i app check` on the forum gates 63 theorems, among them
+`guarded_transition.authorized`, `.kernel_apply_eq`, `.read_only_sound` and
+the storage proof's `Committed.sql_fits`, `apply_enc` and `pg_stored`. For comparison, board
 (tutorial 2) states its authorization and invariants in 319 hand-written Lean
 lines (`Spec`, `Commands`, `Theorems`) over a 177-line kernel; its
 authorization theorem alone is a six-way case split over the commands.

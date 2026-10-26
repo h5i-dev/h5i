@@ -1160,6 +1160,7 @@ dependencies = [
  "h5i-app-report",
  "proc-macro2",
  "quote",
+ "regex",
  "serde",
  "serde_json",
  "syn 2.0.117",

@@ -463,7 +463,17 @@ elab_rules : command
     let some ci := (← getEnv).find? gName | throwError "h5i_authz: {gName} not found"
     let some val := ci.value? | throwError "h5i_authz: {gName} has no definition to read"
     liftTermElabM do
-      let some (_, nImpl, args) ← lambdaTelescope val fun _ body => pure (guardCall? body)
+      -- `g` must be `fun a s c => guard … a s c`: the guard applied to the
+      -- app's instances (closed terms) and to `g`'s own arguments, unchanged.
+      let some (nImpl, args) ← lambdaTelescope val fun xs body => do
+          let some (_, nImpl, args) := guardCall? body | return none
+          let nInst := if nImpl == 10 then 5 else 4
+          let rest := args.extract (nImpl + nInst) args.size
+          unless xs.size == 3 && rest.size == 3 && (List.range 3).all (fun i => rest[i]! == xs[i]!) do
+            throwError "h5i_authz: {gName} must pass its own actor, state and command to the guard, unchanged"
+          if (args.extract 0 (nImpl + nInst)).any (·.hasFVar) then
+            throwError "h5i_authz: the guard's instances in {gName} must not depend on its arguments"
+          return some (nImpl, args)
         | throwError "h5i_authz: {gName} is not defined as `h5i_app_std::authz::guard` or `guard_viewed` of its instances"
       let gE := mkConst gName (ci.levelParams.map mkLevelParam)
       let viewed := nImpl == 10
@@ -471,6 +481,25 @@ elab_rules : command
       let dinst := args[nImpl + 1]!
       let tinst := args[nImpl + 2]!
       let pinst := args[nImpl + 3]!
+      -- The states writes are checked in come from `kernel_apply`: it must be
+      -- the kernel's own `apply`, the commit semantics the store follows
+      -- (`Committed.apply_enc`, A4). Checked before anything is added.
+      let applyName := gName.getRoot ++ `apply
+      unless (← getEnv).contains applyName do
+        throwError "h5i_authz: {applyName} not found: `Transition::kernel_apply` must be the kernel's `apply` (from `schema!` with `writes`)"
+      let some structName := (← whnf (← inferType tinst)).getAppFn.constName?
+        | throwError "h5i_authz: cannot read the `Transition` instance of {gName}"
+      let kApply ← mkAppM (structName ++ `kernel_apply) #[tinst]
+      let applyE := mkConst applyName
+      unless ← isDefEq kApply applyE do
+        throwError "h5i_authz: the `Transition` instance of {gName} does not define `kernel_apply` as {applyName}; make `kernel_apply` call `apply(s, ws)` and nothing else"
+      -- The guard clones writes to build prefixes; its theorem needs the
+      -- extracted `Clone` of the write type to be the identity.
+      let cloneLaw ← mkAppM ``H5iAppLib.CloneLaw #[cinst]
+      if (← trySynthInstance cloneLaw) matches .none then
+        throwError "h5i_authz: no `CloneLaw` for the write type's `Clone` ({cinst}). Derive `Clone` on the \
+          write type and every field type, and run `h5i_derive_all` before `h5i_authz` (the generated \
+          Authz.lean does); a field type it cannot derive needs `h5i_derive_clone` by hand"
       let lem := if viewed then ``authorized_viewed_of_eq else ``authorized_of_eq
       let insts := if viewed then #[some dinst, some tinst, some pinst, some args[nImpl + 4]!]
         else #[some dinst, some tinst, some pinst]
@@ -485,25 +514,12 @@ elab_rules : command
       let pf ← instantiateMVars (mkApp part hg)
       let ty ← instantiateMVars (← inferType pf)
       let thm := gName ++ `authorized
-      let tv := TheoremVal.mk (ConstantVal.mk thm ci.levelParams ty) pf [thm]
-      addDecl (Declaration.thmDecl tv)
-      logInfo m!"{thm} : {ty}"
-      -- The states writes are checked in come from `kernel_apply`: it must be
-      -- the kernel's own `apply`, the commit semantics the store is proven to
-      -- follow (A4), not a function written for the policy.
-      let applyName := gName.getRoot ++ `apply
-      unless (← getEnv).contains applyName do
-        throwError "h5i_authz: {applyName} not found: `Transition::kernel_apply` must be the kernel's `apply` (from `schema!` with `writes`)"
-      let some structName := (← whnf (← inferType tinst)).getAppFn.constName?
-        | throwError "h5i_authz: cannot read the `Transition` instance of {gName}"
-      let kApply ← mkAppM (structName ++ `kernel_apply) #[tinst]
-      let applyE := mkConst applyName
-      unless ← isDefEq kApply applyE do
-        throwError "h5i_authz: the `Transition` instance of {gName} does not define `kernel_apply` as {applyName}; make `kernel_apply` call `apply(s, ws)` and nothing else"
       let eqTy ← mkEq kApply applyE
       let eqThm := gName ++ `kernel_apply_eq
       addDecl (Declaration.thmDecl (TheoremVal.mk (ConstantVal.mk eqThm ci.levelParams eqTy) (← mkEqRefl kApply) [eqThm]))
       logInfo m!"{eqThm} : {eqTy}"
+      addDecl (Declaration.thmDecl (TheoremVal.mk (ConstantVal.mk thm ci.levelParams ty) pf [thm]))
+      logInfo m!"{thm} : {ty}"
       if viewed then
         let ro ← mkAppM ``read_only_sound_of_viewed #[gE, tinst, pinst, dinst, args[nImpl + 4]!,
           ← mkAppM ``And.left #[mkConst thm (ci.levelParams.map mkLevelParam)]]

@@ -125,7 +125,7 @@ tuple ("There should be no bottoms in the value").
   `h5i_app_std` already gets the crate's functions extracted with it and its
   specs copied next to its Lean (`std-specs = true`); a second crate would
   have needed a second copy of both mechanisms.
-- `proofs/AuthzSpecs.lean`, 377 lines, proven over arbitrary `Transition`,
+- `proofs/AuthzSpecs.lean`, 412 lines without comments, proven over arbitrary `Transition`,
   `Policy`, `Disclose` and `View` instances: `guard_authorized`,
   `guard_app_error`, `guard_only_denies`, `guard_viewed_authorized`,
   `guard_viewed_noninterference`, `read_only_sound_of_viewed`,
@@ -134,11 +134,13 @@ tuple ("There should be no bottoms in the value").
   the app's functions need no termination proofs. `Check.lean` prints every
   theorem's axioms.
 - `h5i_authz g` (in the same file) reads the instances off `g`'s extracted
-  body, adds `g.authorized` by `authorized_of_eq` or `authorized_viewed_of_eq`,
-  `g.kernel_apply_eq` (the instance's `kernel_apply` is the kernel's `apply`,
-  by `rfl`; it refuses to generate anything otherwise, so a policy cannot be
-  checked against a made-up commit semantics), and for `guard_viewed` also
-  `g.read_only_sound`. It prints the statements.
+  body. Before adding anything it checks that `g` passes its own arguments to
+  the guard unchanged (otherwise Lean would try, and run out of memory, to
+  unfold the guard in a definitional-equality check) and that the instance's
+  `kernel_apply` is the kernel's `apply` by `rfl`, so a policy cannot be
+  checked against a made-up commit semantics. Then it adds
+  `g.kernel_apply_eq`, `g.authorized` (by `authorized_of_eq` or
+  `authorized_viewed_of_eq`) and, for `guard_viewed`, `g.read_only_sound`.
 - The existing `H5iAppLib.Authz` definitions are unchanged. `WritesPermitted`
   is a new definition: it checks each write in the state after the earlier
   ones, where `WritesAuthorized` checks all against the pre-state.
@@ -154,7 +156,7 @@ impl Policy<Principal, Snapshot, Write, Row> for Forum {
     fn permits(actor: &Principal, s: &Snapshot, w: &Write) -> bool {
         match w {
             Write::PutPost(p) => match find_post(&s.posts, p.id) {
-                None => p.author == actor.user,
+                None => p.author == actor.user && p.id == s.counter.next_id,
                 Some(old) => (old.author == actor.user || is_admin(s, actor.user)) && p.author == old.author,
             },
             …
@@ -196,14 +198,39 @@ versus update is the policy's own `find_*` lookup, as in the forum.
   guard, and writes `generated/Authz.lean` (`import AuthzSpecs`,
   `h5i_derive_all`, one `h5i_authz` per function). It fails if `[authz]` names
   functions but the kernel never calls the guard, or `std-specs` is off.
-- `h5i app check` gates the generated module like a hand-written one and
-  requires `<kernel>.<fn>.authorized` and `.kernel_apply_eq` by name, plus
-  `.read_only_sound` when the server overrides `Kernel::read_only` without its
-  own proof.
-- `h5i app lint` fails an app unless some `Kernel` impl calls an `[authz]`
-  function from `transition` and the kernel's `apply` from `apply` (whole
-  identifiers); reports "framework-proven" in its coverage line; and accepts
-  the generated proof for `read_only` only for a `guard_viewed` kernel.
+- `extract` also writes a storage section into `Authz.lean` (A4 for the
+  app, below) when `sql_write` only pushes `schema!` table writes.
+- `h5i app check` runs `lake build Authz` itself, so a lakefile whose default
+  roots miss the module cannot pass on a stale `.olean`; gates the module
+  like a hand-written one; and requires `<kernel>.<fn>.authorized`,
+  `.kernel_apply_eq`, the storage theorems when generated, and
+  `.read_only_sound` when the server overrides `Kernel::read_only` without a
+  proof stated in code (a comment does not count).
+- `h5i app lint` requires *every* `impl Kernel` in the project's crates'
+  `src/` (test modules and `tests/` excluded) to call an `[authz]` function
+  from `transition` and the kernel's `apply` from `apply` (whole
+  identifiers), so a wired decoy cannot cover an unwired impl; reports
+  "framework-proven"; and accepts the generated proof for `read_only` only
+  for a `guard_viewed` kernel whose `Kernel::read_only` delegates to the
+  kernel's.
+- The check record gets the coverage line only once the gate has passed.
+
+### The storage proof (A4 for the app)
+
+`Kernel::apply` is not on the commit path: the PostgreSQL engine writes
+through `Store::write` (`schema_store`). So `kernel_apply_eq` ties the policy
+to the kernel's `apply`, and a separate proof must tie that `apply` to the
+store. Board does this by hand (`Storage.lean`, over its Lean model of the
+state). The generated section needs no model: its state is the table encoding
+itself (`trunc` keeps the schema's tables), so `enc_step` holds by
+construction and the generic `Schema.stored`/`pg_served` apply. The app's
+content is two lemmas checked against the extracted code: `sql_fits`
+(`sql_write` emits `sqlA`, which is read off the extracted `sql_write` with
+anchored regexes) and `apply_write_enc` (`apply_write` changes
+`Snapshot.enc` exactly as `sqlA` does). From them, `apply_enc` and
+`pg_stored`. A wrong reading of `sql_write`, or an `apply_write` that
+disagrees with it, fails the build. The same generated text proves storage
+for board and booking too, checked against their builds.
 - The check record carries the coverage line (`Run.authorization`), shown in
   the web view's check evidence.
 - CI needs no change: it runs `--all crates examples/app`, which finds the
@@ -254,8 +281,18 @@ disclosed row is stored as disclosed and visible, before or after. Through
 disclosed only rows stored and visible in the view, and its
 result depends on nothing outside the view.
 
-Does not state that the policy (its `stored` included), `Disclose` or `View`
-say what was meant (A11);
+The third review (an independent reviewer) found that `check` could pass
+on a stale `Authz.olean`, that the forum had no storage proof while the docs
+said otherwise, that lint accepted a wired decoy impl, and smaller gaps; all
+are fixed above. Does not state confidentiality for commands that write: their handlers read
+the full state and can copy hidden rows into permitted writes or derived reply
+values (the forum's `writes_can_carry_what_the_caller_cannot_see`); replayed
+idempotent replies skip the guard. Found in the second review; the fix that
+closes the first, running write commands on the view as well (noninterference
+up to the one bit of a denial), is not built: it needs the view to hold what
+writes depend on, which the forum's counter shows can itself disclose. Does
+not state that the policy (its `stored` included), `Disclose` or `View` say
+what was meant (A11);
 anything about values derived from rows by a command that writes; anything A4
 to A8 do not already cover.
 

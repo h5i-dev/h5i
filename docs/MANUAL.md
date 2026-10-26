@@ -1298,11 +1298,14 @@ mutants generated from the kernel's syntax: comparison boundaries, `==` and
 `h5i_app_std::authz::guard` or `guard_viewed` of the app's `Transition`,
 `Policy`, `Disclose` (and `View`) impls. `extract` then writes
 `proofs/generated/Authz.lean`, which proves `<kernel>.<fn>.authorized` by
-instantiating the framework's theorem, with no hand-written Lean, and
+instantiating the framework's theorem, with no hand-written Lean,
 `<fn>.kernel_apply_eq` (the policy is checked against the kernel's own
-`apply`). `check` gates both (and `<fn>.read_only_sound` when the server
-overrides `Kernel::read_only`), and `lint` fails unless a `Kernel` runs a
-listed function as `transition` and the kernel's `apply` as `apply`. An app without `[authz]` is unaffected.
+`apply`) and, when `sql_write` only pushes `schema!` table writes,
+`Committed.pg_stored` (the store commits what that `apply` computes). `check`
+builds `Authz` itself and gates these (and `<fn>.read_only_sound` when the
+server overrides `Kernel::read_only`); `lint` fails unless every `impl Kernel`
+outside tests runs a listed function as `transition` and the kernel's `apply`
+as `apply`. An app without `[authz]` is unaffected.
 
 `h5i app new` requires the h5i-app Lean library from git at this binary's
 release tag; `--h5i-path <checkout>` uses a local h5i checkout instead.

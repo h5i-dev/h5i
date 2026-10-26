@@ -17,6 +17,9 @@ serde = { workspace = true }
 serde_json = "1.0"
 toml = { workspace = true }
 tempfile = "3.8"
+# Reading table numbering off `Schema.lean` and table writes off the extracted
+# `sql_write` for the generated storage proof (anchored patterns).
+regex = "1"
 # Auto-generated mutants: operators and `if` conditions found in the kernel's
 # syntax tree, located by span. `span-locations` gives spans line and column
 # outside a proc macro.

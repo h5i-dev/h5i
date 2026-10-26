@@ -143,6 +143,18 @@ pub fn find_user(us: &Vec<User>, user: u64) -> Option<User> {
     None
 }
 
+/// Some admin other than `user` is registered.
+pub fn other_admin(s: &Snapshot, user: u64) -> bool {
+    let mut i = 0;
+    while i < s.users.len() {
+        if s.users[i].admin && s.users[i].user != user {
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
+
 pub fn is_admin(s: &Snapshot, user: u64) -> bool {
     match find_user(&s.users, user) {
         Some(u) => u.admin,
@@ -287,8 +299,9 @@ impl Policy<Principal, Snapshot, Write, Row> for Forum {
             Write::PutUser(u) => match find_user(&s.users, u.user) {
                 // Register oneself, not as admin unless nobody is registered yet.
                 None => u.user == actor.user && (!u.admin || s.users.len() == 0),
-                // Grant or revoke admin rights: admins only.
-                Some(_) => is_admin(s, actor.user),
+                // Grant or revoke admin rights: admins only, and the last
+                // admin stays one (otherwise nobody could grant it again).
+                Some(old) => is_admin(s, actor.user) && (u.admin || !old.admin || other_admin(s, u.user)),
             },
             Write::PutPost(p) => match find_post(&s.posts, p.id) {
                 // Create a post as oneself, under the next id.
@@ -553,6 +566,51 @@ mod tests {
         let unpublish = Command::SetPublished { id: 1, published: false };
         assert_eq!(with::<Forge>(&s, 3, unpublish.clone()).err(), Some(Guarded::Denied));
         assert!(with::<Forge>(&s, 1, unpublish).is_err(), "even an admin gets no forged row");
+    }
+
+    #[test]
+    fn the_last_admin_stays() {
+        let (s, _) = run(&Snapshot::default(), 1, Command::Register { admin: true });
+        assert_eq!(run(&s, 1, Command::SetAdmin { user: 1, admin: false }).1, Err(Guarded::Denied));
+        let (s, _) = run(&s, 2, Command::Register { admin: false });
+        let (s, r) = run(&s, 1, Command::SetAdmin { user: 2, admin: true });
+        assert_eq!(r, Ok(Reply::Done));
+        let (_, r) = run(&s, 2, Command::SetAdmin { user: 1, admin: false });
+        assert_eq!(r, Ok(Reply::Done), "with another admin, one may go");
+    }
+
+    /// Not a guarantee, pinned so it stays visible: a command that writes runs
+    /// on the full state, so its handler can copy a row the caller cannot see
+    /// into a write the caller may make. Here a user's edit of their own post
+    /// carries another user's draft. The guard sees a permitted write and no
+    /// disclosed row; only read-only commands are confined to the view
+    /// (`docs/app/AUTHZ.md`, "What is not covered").
+    #[test]
+    fn writes_can_carry_what_the_caller_cannot_see() {
+        struct CopyDraft;
+        impl Transition<Principal, Snapshot, Command, Write, Reply, Error> for CopyDraft {
+            fn kernel_transition(actor: &Principal, s: &Snapshot, cmd: &Command) -> Outcome {
+                match cmd {
+                    Command::EditPost { id, title, .. } => {
+                        let mine = find_post(&s.posts, *id).ok_or(Error::NotFound)?;
+                        let draft = find_post(&s.posts, 0).ok_or(Error::NotFound)?;
+                        Ok((one(Write::PutPost(Post { title: title.clone(), body: draft.body, ..mine })), Reply::Done))
+                    }
+                    _ => transition(actor, s, cmd),
+                }
+            }
+            fn kernel_apply(s: &Snapshot, ws: &Vec<Write>) -> Snapshot {
+                apply(s, ws)
+            }
+        }
+        let (s, _) = run(&Snapshot::default(), 2, Command::Register { admin: false });
+        let (s, _) = run(&s, 3, Command::Register { admin: false });
+        let (s, _) = run(&s, 2, post("secret draft", false));
+        let (s, _) = run(&s, 3, post("mine", false));
+        let edit = Command::EditPost { id: 1, title: b"mine".to_vec(), body: b"b".to_vec() };
+        let (ws, _) = with::<CopyDraft>(&s, 3, edit).expect("committed: the guard does not see the copy");
+        let after = apply(&s, &ws);
+        assert_eq!(find_post(&after.posts, 1).unwrap().body, find_post(&s.posts, 0).unwrap().body);
     }
 
     #[test]

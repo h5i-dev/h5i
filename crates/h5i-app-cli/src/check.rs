@@ -48,8 +48,14 @@ fn check_recorded(
         .current_dir(&proofs);
     crate::report::step(record, "lean_build", out, |log| util::run(&mut build, log))?;
 
-    if let Some(a) = crate::lint::authz_coverage(p) {
-        record.run.authorization = a;
+    // `[authz]`: build the generated module itself, so the gate below never
+    // reads an `Authz.olean` left from an earlier build (a lakefile whose
+    // default roots miss it would otherwise pass on a stale one).
+    let authz = authz_theorems(p)?;
+    if !authz.is_empty() {
+        let mut build = Command::new("lake");
+        build.args(["build", crate::extract::AUTHZ_MODULE]).current_dir(&proofs);
+        crate::report::step(record, "authz_build", out, |log| util::run(&mut build, log))?;
     }
     let mut problems = scan(&proofs)?;
     let (mut built, unbuilt) = hand_written_modules(&proofs, &p.manifest.check.targets)?;
@@ -62,7 +68,6 @@ fn check_recorded(
     let mut theorems = p.manifest.check.theorems.clone();
     // `[authz]`: the generated module is gated like a hand-written one, and
     // each guarded function's theorem must exist.
-    let authz = authz_theorems(p)?;
     if !authz.is_empty() {
         built.push(crate::extract::AUTHZ_MODULE.to_string());
         theorems.extend(authz);
@@ -83,6 +88,10 @@ fn check_recorded(
             p.display(),
             problems.join("\n  ")
         );
+    }
+    // Only a passed gate establishes what the coverage line claims.
+    if let Some(a) = crate::lint::authz_coverage(p) {
+        record.run.authorization = a;
     }
     Ok(())
 }
@@ -109,15 +118,33 @@ pub fn authz_theorems(p: &Project) -> Result<Vec<String>> {
     if crate::lint::overrides_read_only(p) && !has_read_only_proof(p) {
         out.extend(guarded.iter().map(|g| format!("{ns}.{g}.read_only_sound")));
     }
+    // The storage theorems, when `extract` could generate them.
+    let generated = std::fs::read_to_string(p.generated().join(format!("{}.lean", crate::extract::AUTHZ_MODULE)))
+        .unwrap_or_default();
+    if generated.contains(&format!("namespace {ns}.Committed")) {
+        out.extend(crate::extract::STORAGE_THEOREMS.iter().map(|t| format!("{ns}.{t}")));
+    }
     Ok(out)
 }
 
-/// A hand-written proof states `ReadOnly.Sound`.
-fn has_read_only_proof(p: &Project) -> bool {
+/// A hand-written proof states `ReadOnly.Sound` in code, not in a comment.
+pub fn has_read_only_proof(p: &Project) -> bool {
     std::fs::read_dir(p.proofs()).into_iter().flatten().flatten().any(|e| {
         e.path().extension().is_some_and(|x| x == "lean")
-            && std::fs::read_to_string(e.path()).unwrap_or_default().contains("ReadOnly.Sound")
+            && lean_code(&std::fs::read_to_string(e.path()).unwrap_or_default()).contains("ReadOnly.Sound")
     })
+}
+
+/// Lean source without its comments (`--` to the end of a line, `/- … -/`).
+pub fn lean_code(text: &str) -> String {
+    static BLOCK: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"(?s)/-.*?-/").unwrap());
+    BLOCK
+        .replace_all(text, "")
+        .lines()
+        .map(|l| l.split("--").next().unwrap_or(""))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn lean_files(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -617,6 +644,13 @@ mod tests {
             "a.Sound.«select_sound'»"
         );
         assert_eq!(lean_name("a.b"), "a.b");
+    }
+
+    #[test]
+    fn comments_are_not_proofs() {
+        let t = "-- ReadOnly.Sound later\n/- ReadOnly.Sound\n  here -/\ntheorem x : True := trivial\n";
+        assert!(!lean_code(t).contains("ReadOnly.Sound"));
+        assert!(lean_code("theorem ro : H5iAppLib.ReadOnly.Sound r t w := h -- done").contains("ReadOnly.Sound"));
     }
 
     #[test]

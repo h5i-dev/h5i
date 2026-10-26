@@ -23,8 +23,9 @@ authorization is still proven, for every request sequence.
   `forum_kernel.guarded_transition.authorized` (every committed command makes
   only permitted writes and discloses only stored rows it may see; read-only commands
   depend on nothing outside the caller's view), `.kernel_apply_eq` (writes are
-  checked in the states the store commits) and `.read_only_sound` (the engine
-  may run reads without locks).
+  checked in the kernel's own `apply`), `.read_only_sound` (the engine may run
+  reads without locks), and `Committed.pg_stored` (PostgreSQL holds and loads
+  back what that `apply` computes).
 
 What is proven and what stays trusted: [`docs/app/AUTHZ.md`](../../../docs/app/AUTHZ.md).
 
@@ -59,6 +60,11 @@ cd ../server && H5I_APP_TEST_DATABASE_URL=$DATABASE_URL cargo test --release
 post taken over on edit, others' drafts disclosed on publish, admin rights on
 registration, a hidden draft relabelled as published in a reply) behind the
 same policy: each is a denial, not a commit.
+
+What the guard does not confine: a command that writes runs on the full
+state, so a buggy handler can copy a draft into a post the caller may edit
+(`writes_can_carry_what_the_caller_cannot_see` pins this down). Reads are
+confined to the caller's view.
 
 One thing the policy does not hide: on a command that writes, `not_found`
 (the handler found no such post) and `forbidden` (the policy refused) differ,

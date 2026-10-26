@@ -808,8 +808,49 @@ def find_user
   (us : alloc.vec.Vec User) (user : Std.U64) : Result (Option User) := do
   find_user_loop us user 0#usize
 
+/-- [forum_kernel::other_admin]: loop body 0:
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 1:0-156:1
+    Visibility: public -/
+@[rust_loop_body]
+def other_admin_loop.body
+  (s : Snapshot) (user : Std.U64) (i : Std.Usize) :
+  Result (ControlFlow Std.Usize Bool)
+  := do
+  let i1 := alloc.vec.Vec.len s.users
+  if i < i1
+  then
+    let u ←
+      alloc.vec.Vec.index (core.slice.index.SliceIndexUsizeSlice User) 
+        s.users i
+    if u.admin
+    then
+      if u.user != user
+      then ok (done true)
+      else let i2 ← i + 1#usize
+           ok (cont i2)
+    else let i2 ← i + 1#usize
+         ok (cont i2)
+  else ok (done false)
+
+/-- [forum_kernel::other_admin]: loop 0:
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 1:0-156:1
+    Visibility: public -/
+@[rust_loop]
+def other_admin_loop
+  (s : Snapshot) (user : Std.U64) (i : Std.Usize) : Result Bool := do
+  loop
+    (fun i1 => other_admin_loop.body s user i1)
+    i
+
+/-- [forum_kernel::other_admin]:
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 147:0-156:1
+    Visibility: public -/
+@[reducible]
+def other_admin (s : Snapshot) (user : Std.U64) : Result Bool := do
+  other_admin_loop s user 0#usize
+
 /-- [forum_kernel::is_admin]:
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 146:0-151:1
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 158:0-163:1
     Visibility: public -/
 def is_admin (s : Snapshot) (user : Std.U64) : Result Bool := do
   let o ← find_user s.users user
@@ -818,7 +859,7 @@ def is_admin (s : Snapshot) (user : Std.U64) : Result Bool := do
   | some u => ok u.admin
 
 /-- [forum_kernel::register]:
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 157:0-162:1 -/
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 169:0-174:1 -/
 def register
   (user : Std.U64) (s : Snapshot) (admin : Bool) :
   Result (core.result.Result ((alloc.vec.Vec Write) × Reply) Error)
@@ -831,7 +872,7 @@ def register
   | some _ => ok (core.result.Result.Err Error.Exists)
 
 /-- [forum_kernel::create_post]:
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 164:0-176:1 -/
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 176:0-188:1 -/
 def create_post
   (user : Std.U64) (s : Snapshot) (title : alloc.vec.Vec Std.U8)
   (body : alloc.vec.Vec Std.U8) (published : Bool) :
@@ -864,7 +905,7 @@ def create_post
   else ok (core.result.Result.Err Error.BadText)
 
 /-- [forum_kernel::edit_post]:
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 178:0-189:1 -/
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 190:0-201:1 -/
 def edit_post
   (s : Snapshot) (id : Std.U64) (title : alloc.vec.Vec Std.U8)
   (body : alloc.vec.Vec Std.U8) :
@@ -888,7 +929,7 @@ def edit_post
   else ok (core.result.Result.Err Error.BadText)
 
 /-- [forum_kernel::set_published]:
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 191:0-199:1 -/
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 203:0-211:1 -/
 def set_published
   (s : Snapshot) (id : Std.U64) (published : Bool) :
   Result (core.result.Result ((alloc.vec.Vec Write) × Reply) Error)
@@ -901,7 +942,7 @@ def set_published
     ok (core.result.Result.Ok (v, Reply.Done))
 
 /-- [forum_kernel::delete_post]:
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 201:0-206:1 -/
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 213:0-218:1 -/
 def delete_post
   (s : Snapshot) (id : Std.U64) :
   Result (core.result.Result ((alloc.vec.Vec Write) × Reply) Error)
@@ -914,7 +955,7 @@ def delete_post
     ok (core.result.Result.Ok (v, Reply.Done))
 
 /-- [forum_kernel::set_admin]:
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 208:0-213:1 -/
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 220:0-225:1 -/
 def set_admin
   (s : Snapshot) (user : Std.U64) (admin : Bool) :
   Result (core.result.Result ((alloc.vec.Vec Write) × Reply) Error)
@@ -927,7 +968,7 @@ def set_admin
     ok (core.result.Result.Ok (v, Reply.Done))
 
 /-- [forum_kernel::read_post]:
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 215:0-220:1 -/
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 227:0-232:1 -/
 def read_post
   (s : Snapshot) (id : Std.U64) :
   Result (core.result.Result ((alloc.vec.Vec Write) × Reply) Error)
@@ -939,7 +980,7 @@ def read_post
     ok (core.result.Result.Ok (alloc.vec.Vec.new Write, Reply.Found p))
 
 /-- [forum_kernel::read_user]:
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 222:0-227:1 -/
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 234:0-239:1 -/
 def read_user
   (s : Snapshot) (user : Std.U64) :
   Result (core.result.Result ((alloc.vec.Vec Write) × Reply) Error)
@@ -951,7 +992,7 @@ def read_user
     ok (core.result.Result.Ok (alloc.vec.Vec.new Write, Reply.Account u))
 
 /-- [forum_kernel::transition]:
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 231:0-243:1
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 243:0-255:1
     Visibility: public -/
 def transition
   (actor : Principal) (s : Snapshot) (cmd : Command) :
@@ -1108,7 +1149,7 @@ def User.put
   User.put_loop v x 0#usize
 
 /-- [forum_kernel::apply_write]:
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 246:0-253:1 -/
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 258:0-265:1 -/
 def apply_write (s : Snapshot) (w : Write) : Result Snapshot := do
   match w with
   | Write.PutUser u => let v ← User.put s.users u
@@ -1211,7 +1252,7 @@ def User.sql_put (self : User) : Result h5i_app_sql.Write := do
   ok (h5i_app_sql.Write.Put User.TABLE User.KEY_LEN v)
 
 /-- [forum_kernel::sql_write]:
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 256:0-263:1 -/
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 268:0-275:1 -/
 def sql_write
   (w : Write) (out : alloc.vec.Vec h5i_app_sql.Write) :
   Result (alloc.vec.Vec h5i_app_sql.Write)
@@ -1228,13 +1269,13 @@ def sql_write
     alloc.vec.Vec.push out w1
 
 /-- [forum_kernel::Forum]
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 271:0-271:17
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 283:0-283:17
     Visibility: public -/
 @[reducible]
 def Forum := Unit
 
 /-- [forum_kernel::post_visible]:
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 275:0-277:1
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 287:0-289:1
     Visibility: public -/
 def post_visible (s : Snapshot) (user : Std.U64) (p : Post) : Result Bool := do
   if p.published
@@ -1244,7 +1285,7 @@ def post_visible (s : Snapshot) (user : Std.U64) (p : Post) : Result Bool := do
        else is_admin s user
 
 /-- [forum_kernel::user_visible]:
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 280:0-282:1
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 292:0-294:1
     Visibility: public -/
 def user_visible (s : Snapshot) (user : Std.U64) (u : User) : Result Bool := do
   if u.user = user
@@ -1252,7 +1293,7 @@ def user_visible (s : Snapshot) (user : Std.U64) (u : User) : Result Bool := do
   else is_admin s user
 
 /-- [forum_kernel::{impl h5i_app_std::authz::Policy<forum_kernel::Principal, forum_kernel::Snapshot, forum_kernel::Write, forum_kernel::Row> for forum_kernel::Forum}::stored]:
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 318:4-329:5
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 331:4-342:5
     Visibility: public -/
 def Forum.Insts.H5i_app_stdAuthzPolicyPrincipalSnapshotWriteRow.stored
   (s : Snapshot) (d : Row) : Result Bool := do
@@ -1269,7 +1310,7 @@ def Forum.Insts.H5i_app_stdAuthzPolicyPrincipalSnapshotWriteRow.stored
     | some stored => Post.Insts.CoreCmpPartialEqPost.eq stored p
 
 /-- [forum_kernel::{impl h5i_app_std::authz::Policy<forum_kernel::Principal, forum_kernel::Snapshot, forum_kernel::Write, forum_kernel::Row> for forum_kernel::Forum}::visible]:
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 309:4-314:5
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 322:4-327:5
     Visibility: public -/
 def Forum.Insts.H5i_app_stdAuthzPolicyPrincipalSnapshotWriteRow.visible
   (actor : Principal) (s : Snapshot) (d : Row) : Result Bool := do
@@ -1278,7 +1319,7 @@ def Forum.Insts.H5i_app_stdAuthzPolicyPrincipalSnapshotWriteRow.visible
   | Row.OfPost p => post_visible s actor.user p
 
 /-- [forum_kernel::{impl h5i_app_std::authz::Policy<forum_kernel::Principal, forum_kernel::Snapshot, forum_kernel::Write, forum_kernel::Row> for forum_kernel::Forum}::permits]:
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 285:4-307:5
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 297:4-320:5
     Visibility: public -/
 def Forum.Insts.H5i_app_stdAuthzPolicyPrincipalSnapshotWriteRow.permits
   (actor : Principal) (s : Snapshot) (w : Write) : Result Bool := do
@@ -1294,7 +1335,16 @@ def Forum.Insts.H5i_app_stdAuthzPolicyPrincipalSnapshotWriteRow.permits
              ok (i = 0#usize)
         else ok true
       else ok false
-    | some _ => is_admin s actor.user
+    | some old =>
+      let b ← is_admin s actor.user
+      if b
+      then
+        if u.admin
+        then ok true
+        else if old.admin
+             then other_admin s u.user
+             else ok true
+      else ok false
   | Write.PutPost p =>
     let o ← find_post s.posts p.id
     match o with
@@ -1325,7 +1375,7 @@ def Forum.Insts.H5i_app_stdAuthzPolicyPrincipalSnapshotWriteRow.permits
     else ok false
 
 /-- Trait implementation: [forum_kernel::{impl h5i_app_std::authz::Policy<forum_kernel::Principal, forum_kernel::Snapshot, forum_kernel::Write, forum_kernel::Row> for forum_kernel::Forum}]
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 284:0-330:1 -/
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 296:0-343:1 -/
 @[reducible]
 def Forum.Insts.H5i_app_stdAuthzPolicyPrincipalSnapshotWriteRow :
   h5i_app_std.authz.Policy Forum Principal Snapshot Write Row := {
@@ -1337,7 +1387,7 @@ def Forum.Insts.H5i_app_stdAuthzPolicyPrincipalSnapshotWriteRow :
 }
 
 /-- [forum_kernel::{impl h5i_app_std::authz::Disclose<forum_kernel::Row> for forum_kernel::Reply}::disclosed]: loop body 0:
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 342:16-345:17
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 355:16-358:17
     Visibility: public -/
 @[rust_loop_body]
 def Reply.Insts.H5i_app_stdAuthzDiscloseRow.disclosed_loop.body
@@ -1356,7 +1406,7 @@ def Reply.Insts.H5i_app_stdAuthzDiscloseRow.disclosed_loop.body
   else ok (done out)
 
 /-- [forum_kernel::{impl h5i_app_std::authz::Disclose<forum_kernel::Row> for forum_kernel::Reply}::disclosed]: loop 0:
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 342:16-345:17
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 355:16-358:17
     Visibility: public -/
 @[rust_loop]
 def Reply.Insts.H5i_app_stdAuthzDiscloseRow.disclosed_loop
@@ -1369,7 +1419,7 @@ def Reply.Insts.H5i_app_stdAuthzDiscloseRow.disclosed_loop
     (out, i)
 
 /-- [forum_kernel::{impl h5i_app_std::authz::Disclose<forum_kernel::Row> for forum_kernel::Reply}::disclosed]:
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 334:4-349:5
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 347:4-362:5
     Visibility: public -/
 def Reply.Insts.H5i_app_stdAuthzDiscloseRow.disclosed
   (self : Reply) : Result (alloc.vec.Vec Row) := do
@@ -1386,7 +1436,7 @@ def Reply.Insts.H5i_app_stdAuthzDiscloseRow.disclosed
     alloc.vec.Vec.push (alloc.vec.Vec.new Row) (Row.OfUser u)
 
 /-- Trait implementation: [forum_kernel::{impl h5i_app_std::authz::Disclose<forum_kernel::Row> for forum_kernel::Reply}]
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 332:0-350:1 -/
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 345:0-363:1 -/
 @[reducible]
 def Reply.Insts.H5i_app_stdAuthzDiscloseRow : h5i_app_std.authz.Disclose Reply
   Row := {
@@ -1394,7 +1444,7 @@ def Reply.Insts.H5i_app_stdAuthzDiscloseRow : h5i_app_std.authz.Disclose Reply
 }
 
 /-- [forum_kernel::{impl h5i_app_std::authz::View<forum_kernel::Principal, forum_kernel::Snapshot, forum_kernel::Command> for forum_kernel::Forum}::view]: loop body 0:
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 365:8-370:9
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 378:8-383:9
     Visibility: public -/
 @[rust_loop_body]
 def Forum.Insts.H5i_app_stdAuthzViewPrincipalSnapshotCommand.view_loop0.body
@@ -1418,7 +1468,7 @@ def Forum.Insts.H5i_app_stdAuthzViewPrincipalSnapshotCommand.view_loop0.body
   else ok (done (actor, s.counter, s.users, s.posts, users))
 
 /-- [forum_kernel::{impl h5i_app_std::authz::View<forum_kernel::Principal, forum_kernel::Snapshot, forum_kernel::Command> for forum_kernel::Forum}::view]: loop 0:
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 365:8-370:9
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 378:8-383:9
     Visibility: public -/
 @[rust_loop]
 def Forum.Insts.H5i_app_stdAuthzViewPrincipalSnapshotCommand.view_loop0
@@ -1434,7 +1484,7 @@ def Forum.Insts.H5i_app_stdAuthzViewPrincipalSnapshotCommand.view_loop0
     (users, i)
 
 /-- [forum_kernel::{impl h5i_app_std::authz::View<forum_kernel::Principal, forum_kernel::Snapshot, forum_kernel::Command> for forum_kernel::Forum}::view]: loop body 1:
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 373:8-378:9
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 386:8-391:9
     Visibility: public -/
 @[rust_loop_body]
 def Forum.Insts.H5i_app_stdAuthzViewPrincipalSnapshotCommand.view_loop1.body
@@ -1461,7 +1511,7 @@ def Forum.Insts.H5i_app_stdAuthzViewPrincipalSnapshotCommand.view_loop1.body
   else ok (done posts)
 
 /-- [forum_kernel::{impl h5i_app_std::authz::View<forum_kernel::Principal, forum_kernel::Snapshot, forum_kernel::Command> for forum_kernel::Forum}::view]: loop 1:
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 373:8-378:9
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 386:8-391:9
     Visibility: public -/
 @[rust_loop]
 def Forum.Insts.H5i_app_stdAuthzViewPrincipalSnapshotCommand.view_loop1
@@ -1476,7 +1526,7 @@ def Forum.Insts.H5i_app_stdAuthzViewPrincipalSnapshotCommand.view_loop1
     (posts, j)
 
 /-- [forum_kernel::{impl h5i_app_std::authz::View<forum_kernel::Principal, forum_kernel::Snapshot, forum_kernel::Command> for forum_kernel::Forum}::view]:
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 362:4-380:5
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 375:4-393:5
     Visibility: public -/
 def Forum.Insts.H5i_app_stdAuthzViewPrincipalSnapshotCommand.view
   (actor : Principal) (s : Snapshot) : Result Snapshot := do
@@ -1490,7 +1540,7 @@ def Forum.Insts.H5i_app_stdAuthzViewPrincipalSnapshotCommand.view
   ok { counter := c1, users, posts }
 
 /-- [forum_kernel::{impl h5i_app_std::authz::View<forum_kernel::Principal, forum_kernel::Snapshot, forum_kernel::Command> for forum_kernel::Forum}::read_only]:
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 353:4-358:5
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 366:4-371:5
     Visibility: public -/
 def Forum.Insts.H5i_app_stdAuthzViewPrincipalSnapshotCommand.read_only
   (cmd : Command) : Result Bool := do
@@ -1506,7 +1556,7 @@ def Forum.Insts.H5i_app_stdAuthzViewPrincipalSnapshotCommand.read_only
   | Command.ReadUser _ => ok true
 
 /-- Trait implementation: [forum_kernel::{impl h5i_app_std::authz::View<forum_kernel::Principal, forum_kernel::Snapshot, forum_kernel::Command> for forum_kernel::Forum}]
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 352:0-381:1 -/
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 365:0-394:1 -/
 @[reducible]
 def Forum.Insts.H5i_app_stdAuthzViewPrincipalSnapshotCommand :
   h5i_app_std.authz.View Forum Principal Snapshot Command := {
@@ -1554,7 +1604,7 @@ def apply (snap : Snapshot) (ws : alloc.vec.Vec Write) : Result Snapshot := do
   apply_loop ws s 0#usize
 
 /-- [forum_kernel::{impl h5i_app_std::authz::Transition<forum_kernel::Principal, forum_kernel::Snapshot, forum_kernel::Command, forum_kernel::Write, forum_kernel::Reply, forum_kernel::Error> for forum_kernel::Forum}::kernel_apply]:
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 388:4-390:5
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 401:4-403:5
     Visibility: public -/
 def
   Forum.Insts.H5i_app_stdAuthzTransitionPrincipalSnapshotCommandWriteReplyError.kernel_apply
@@ -1562,7 +1612,7 @@ def
   apply s ws
 
 /-- [forum_kernel::{impl h5i_app_std::authz::Transition<forum_kernel::Principal, forum_kernel::Snapshot, forum_kernel::Command, forum_kernel::Write, forum_kernel::Reply, forum_kernel::Error> for forum_kernel::Forum}::kernel_transition]:
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 384:4-386:5
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 397:4-399:5
     Visibility: public -/
 def
   Forum.Insts.H5i_app_stdAuthzTransitionPrincipalSnapshotCommandWriteReplyError.kernel_transition
@@ -1572,7 +1622,7 @@ def
   transition actor s cmd
 
 /-- Trait implementation: [forum_kernel::{impl h5i_app_std::authz::Transition<forum_kernel::Principal, forum_kernel::Snapshot, forum_kernel::Command, forum_kernel::Write, forum_kernel::Reply, forum_kernel::Error> for forum_kernel::Forum}]
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 383:0-391:1 -/
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 396:0-404:1 -/
 @[reducible]
 def
   Forum.Insts.H5i_app_stdAuthzTransitionPrincipalSnapshotCommandWriteReplyError
@@ -1585,7 +1635,7 @@ def
 }
 
 /-- [forum_kernel::guarded_transition]:
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 394:0-400:1
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 407:0-413:1
     Visibility: public -/
 def guarded_transition
   (actor : Principal) (s : Snapshot) (cmd : Command) :
@@ -1599,7 +1649,7 @@ def guarded_transition
     Forum.Insts.H5i_app_stdAuthzViewPrincipalSnapshotCommand actor s cmd
 
 /-- [forum_kernel::read_only]:
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 403:0-405:1
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 416:0-418:1
     Visibility: public -/
 def read_only (cmd : Command) : Result Bool := do
   Forum.Insts.H5i_app_stdAuthzViewPrincipalSnapshotCommand.read_only cmd

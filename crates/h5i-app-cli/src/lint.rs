@@ -174,19 +174,30 @@ fn route_coverage(p: &Project) -> Vec<String> {
     bad
 }
 
-/// Each `impl Kernel` body, with its file and line.
+/// Each `impl Kernel` body in the project's crates' `src/`, with its file and
+/// line. Every impl in a file counts; a `#[cfg(test)]` module and a crate's
+/// `tests/` do not, so a test's impl can neither satisfy nor fail a check
+/// about what the server runs.
 fn kernel_impls(p: &Project) -> Vec<(PathBuf, usize, String)> {
     let mut files = Vec::new();
     rs_files(&p.root, &mut files);
     files.sort();
     let mut out = Vec::new();
     for f in files {
+        let Some(krate) = crate_of(&f) else { continue };
+        if !f.starts_with(krate.join("src")) {
+            continue;
+        }
         let text = std::fs::read_to_string(&f).unwrap_or_default();
-        let Some(at) = text.find("impl Kernel for").or_else(|| text.find("impl h5i_app_core::Kernel for")) else { continue };
-        let Some(brace) = text[at..].find('{') else { continue };
-        let body = balanced_braces(&text[at + brace + 1..]).to_string();
-        let line = text[..at].lines().count() + 1;
-        out.push((f, line, body));
+        let code = &text[..text.find("#[cfg(test)]").unwrap_or(text.len())];
+        for marker in ["impl Kernel for", "impl h5i_app_core::Kernel for"] {
+            for (at, _) in code.match_indices(marker) {
+                let Some(brace) = code[at..].find('{') else { continue };
+                let body = balanced_braces(&code[at + brace + 1..]).to_string();
+                let line = code[..at].lines().count() + 1;
+                out.push((f.clone(), line, body));
+            }
+        }
     }
     out
 }
@@ -211,7 +222,12 @@ fn uses_guard_viewed(p: &Project) -> bool {
     let Some(krate) = p.krate() else { return false };
     let mut files = Vec::new();
     rs_files(&krate.join("src"), &mut files);
-    files.iter().any(|f| std::fs::read_to_string(f).unwrap_or_default().contains("guard_viewed"))
+    files.iter().any(|f| {
+        std::fs::read_to_string(f)
+            .unwrap_or_default()
+            .lines()
+            .any(|l| l.split("//").next().unwrap_or("").contains("guard_viewed"))
+    })
 }
 
 /// The body of `fn name(` inside an impl body.
@@ -225,15 +241,16 @@ fn fn_body<'a>(body: &'a str, name: &str) -> Option<&'a str> {
 /// proof: a hand-written one, or the framework's for a kernel guarded with
 /// `guard_viewed` (`h5i app check` then requires `<fn>.read_only_sound`).
 fn read_only_proof(p: &Project) -> Vec<String> {
-    let proven = std::fs::read_dir(p.proofs()).into_iter().flatten().flatten().any(|e| {
-        e.path().extension().is_some_and(|x| x == "lean")
-            && std::fs::read_to_string(e.path()).unwrap_or_default().contains("ReadOnly.Sound")
-    }) || (!p.manifest.authz.guarded.is_empty()
+    let proven = crate::check::has_read_only_proof(p);
+    // The framework's proof is about the view's `read_only`, so it counts only
+    // for an impl that delegates to the kernel's.
+    let generated = !p.manifest.authz.guarded.is_empty()
         && uses_guard_viewed(p)
-        && p.generated().join(format!("{}.lean", crate::extract::AUTHZ_MODULE)).is_file());
+        && p.generated().join(format!("{}.lean", crate::extract::AUTHZ_MODULE)).is_file();
     let mut bad = Vec::new();
     for (f, line, body) in kernel_impls(p) {
-        if body.contains("fn read_only(") && !proven {
+        let delegates = fn_body(&body, "read_only").is_some_and(|b| calls(b, "read_only"));
+        if body.contains("fn read_only(") && !proven && !(generated && delegates) {
             bad.push(format!(
                 "{}:{line}: Kernel::read_only is overridden, but no proof in {} states `H5iAppLib.ReadOnly.Sound`",
                 rel(p, &f),
@@ -253,19 +270,29 @@ fn guarded_wiring(p: &Project) -> Vec<String> {
         return Vec::new();
     }
     let impls = kernel_impls(p);
-    let wired = impls.iter().any(|(_, _, body)| {
+    let wired = |body: &str| {
         fn_body(body, "transition").is_some_and(|t| guarded.iter().any(|g| calls(t, g)))
             && fn_body(body, "apply").is_some_and(|a| calls(a, "apply"))
-    });
-    if wired {
-        return Vec::new();
+    };
+    if impls.is_empty() {
+        return vec![format!(
+            "`[authz] guarded` names {}, but no crate's `src/` has an `impl Kernel`",
+            guarded.join(", ")
+        )];
     }
-    let at = impls.first().map(|(f, line, _)| format!("{}:{line}: ", rel(p, f))).unwrap_or_default();
-    vec![format!(
-        "{at}`[authz] guarded` names {}, but no `Kernel` impl both calls it from `transition` and the \
-         kernel's `apply` from `apply`: the framework's theorem would be about code the server does not run",
-        guarded.join(", ")
-    )]
+    impls
+        .iter()
+        .filter(|(_, _, body)| !wired(body))
+        .map(|(f, line, _)| {
+            format!(
+                "{}:{line}: this `Kernel` impl does not call {} from `transition` and the kernel's `apply` \
+                 from `apply`: with `[authz]`, every impl must, or the framework's theorem is about \
+                 code the server does not run",
+                rel(p, f),
+                guarded.join(" or ")
+            )
+        })
+        .collect()
 }
 
 /// The kernel's `Command` carries no client-set identity or privilege field.
@@ -406,10 +433,12 @@ mod tests {
         let server = d.path().join("server");
         std::fs::create_dir_all(server.join("src")).unwrap();
         std::fs::create_dir_all(d.path().join("proofs")).unwrap();
-        std::fs::write(server.join("Cargo.toml"), "[package]\nname = \"s\"\n").unwrap();
+        std::fs::write(server.join("Cargo.toml"), "[package]\nname = \"s\"\n[dependencies]\naxum = \"0.8\"\n").unwrap();
         std::fs::write(server.join("src/lib.rs"), "impl Kernel for K {\n    fn read_only(c: &C) -> bool { k::read_only(c) }\n}\n").unwrap();
         let p = Project::load(&d.path().join("h5i-app.toml")).unwrap();
         assert_eq!(read_only_proof(&p).len(), 1);
+        std::fs::write(d.path().join("proofs/ReadOnly.lean"), "-- ReadOnly.Sound, some day\n").unwrap();
+        assert_eq!(read_only_proof(&p).len(), 1, "a comment is not a proof");
         std::fs::write(d.path().join("proofs/ReadOnly.lean"), "theorem ro : H5iAppLib.ReadOnly.Sound k t w := k_sound\n").unwrap();
         assert!(read_only_proof(&p).is_empty());
     }
@@ -420,7 +449,8 @@ mod tests {
         std::fs::write(d.path().join("h5i-app.toml"), "[authz]\nguarded = [\"guarded_transition\"]\n").unwrap();
         let server = d.path().join("server");
         std::fs::create_dir_all(server.join("src")).unwrap();
-        std::fs::write(server.join("Cargo.toml"), "[package]\nname = \"s\"\n").unwrap();
+        std::fs::create_dir_all(server.join("tests")).unwrap();
+        std::fs::write(server.join("Cargo.toml"), "[package]\nname = \"s\"\n[dependencies]\naxum = \"0.8\"\n").unwrap();
         let lib = server.join("src/lib.rs");
         let kernel = |t: &str, a: &str| {
             format!("impl Kernel for K {{\n    fn transition(a: &P, s: &S, c: &C) -> R {{\n        {t}(a, s, c)\n    }}\n    fn apply(s: &S, ws: &W) -> S {{\n        {a}(s, ws)\n    }}\n}}\n")
@@ -434,6 +464,16 @@ mod tests {
         assert_eq!(guarded_wiring(&p).len(), 1, "commits with something else than apply");
         std::fs::write(&lib, kernel("k::guarded_transition", "k::apply")).unwrap();
         assert!(guarded_wiring(&p).is_empty());
+        // A wired impl elsewhere does not excuse an unwired one, in any order.
+        let two = format!("{}{}", kernel("k::guarded_transition", "k::apply"), kernel("k::transition", "k::apply"));
+        std::fs::write(&lib, two).unwrap();
+        assert_eq!(guarded_wiring(&p).len(), 1, "second impl unwired");
+        std::fs::write(&lib, kernel("k::transition", "k::apply")).unwrap();
+        std::fs::write(server.join("tests/decoy.rs"), kernel("k::guarded_transition", "k::apply")).unwrap();
+        assert_eq!(guarded_wiring(&p).len(), 1, "a wired impl in tests/ is not the server's");
+        let with_test = format!("{}#[cfg(test)]\nmod t {{\n{}}}\n", kernel("k::guarded_transition", "k::apply"), kernel("k::transition", "k::apply"));
+        std::fs::write(&lib, with_test).unwrap();
+        assert!(guarded_wiring(&p).is_empty(), "an impl in a test module is not the server's");
     }
 
     #[test]

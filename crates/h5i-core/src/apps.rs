@@ -193,6 +193,83 @@ fn read_runs(root: &Path, p: &Path) -> (Vec<RunView>, usize, Vec<String>) {
     (runs, total, issues)
 }
 
+/// The theorems `h5i app check` requires for `[authz] guarded`:
+/// `<kernel>.<fn>.authorized` and `.kernel_apply_eq`, with the kernel's Lean
+/// namespace read from its `Cargo.toml` (`[extract] crate`, default `kernel`).
+fn authz_theorems(project: &Path, manifest: &toml::Value) -> Vec<String> {
+    let guarded: Vec<&str> = manifest
+        .get("authz")
+        .and_then(|v| v.get("guarded"))
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
+    if guarded.is_empty() {
+        return Vec::new();
+    }
+    let krate = manifest
+        .get("extract")
+        .and_then(|v| v.get("crate"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("kernel");
+    let Some(name) = report::read_text(&project.join(krate).join("Cargo.toml"))
+        .ok()
+        .and_then(|t| t.parse::<toml::Value>().ok())
+        .and_then(|c| c.get("package")?.get("name")?.as_str().map(str::to_string))
+    else {
+        return Vec::new();
+    };
+    let ns = name.replace('-', "_");
+    let mut out: Vec<String> = guarded
+        .iter()
+        .flat_map(|g| [format!("{ns}.{g}.authorized"), format!("{ns}.{g}.kernel_apply_eq")])
+        .collect();
+    // What `h5i app check` adds: the storage theorems when `extract` generated
+    // them, and `read_only_sound` when the server runs reads lock-free on the
+    // framework's proof (a `guard_viewed` kernel, `Kernel::read_only`
+    // overridden, no hand-written proof).
+    let proofs = manifest
+        .get("proofs")
+        .and_then(|v| v.get("dir"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("proofs");
+    let generated = report::read_text(&project.join(proofs).join("generated/Authz.lean")).unwrap_or_default();
+    if generated.contains(&format!("namespace {ns}.Committed")) {
+        out.extend(["Committed.sql_fits", "Committed.apply_enc", "Committed.pg_stored"].map(|t| format!("{ns}.{t}")));
+    }
+    let sources = rust_sources(project);
+    let viewed = sources.iter().any(|t| t.lines().any(|l| l.split("//").next().unwrap_or("").contains("guard_viewed(")
+        || l.split("//").next().unwrap_or("").contains("guard_viewed::<")));
+    let overrides = sources.iter().any(|t| t.contains("Kernel for") && t.contains("fn read_only("));
+    if viewed && overrides {
+        out.extend(guarded.iter().map(|g| format!("{ns}.{g}.read_only_sound")));
+    }
+    out
+}
+
+/// The `.rs` files under a project's crates' `src/` directories.
+fn rust_sources(project: &Path) -> Vec<String> {
+    fn walk(dir: &Path, out: &mut Vec<String>) {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        for e in entries.flatten() {
+            let p = e.path();
+            let name = e.file_name();
+            if p.is_dir() {
+                if !matches!(name.to_string_lossy().as_ref(), "target" | ".lake" | ".git" | "proofs" | "tests") {
+                    walk(&p, out);
+                }
+            } else if p.extension().is_some_and(|x| x == "rs")
+                && p.components().any(|c| c.as_os_str() == "src")
+                && let Ok(t) = report::read_text(&p)
+            {
+                out.push(t);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(project, &mut out);
+    out
+}
+
 pub fn detail(root: &Path, id: &str) -> Result<Detail, String> {
     let root = root.canonicalize().map_err(|e| e.to_string())?;
     let p = project(&root, id)?;
@@ -201,7 +278,7 @@ pub fn detail(root: &Path, id: &str) -> Result<Detail, String> {
     let model = model(&root, &p).unwrap_or(None);
     let text = report::read_text(&p.join("h5i-app.toml")).map_err(|e| e.to_string())?;
     let manifest = text.parse::<toml::Value>().map_err(|e| e.to_string())?;
-    let required_theorems = manifest
+    let mut required_theorems: Vec<String> = manifest
         .get("check")
         .and_then(|v| v.get("theorems"))
         .and_then(|v| v.as_array())
@@ -211,6 +288,7 @@ pub fn detail(root: &Path, id: &str) -> Result<Detail, String> {
                 .collect()
         })
         .unwrap_or_default();
+    required_theorems.extend(authz_theorems(&p, &manifest));
     let files = source_files(&root, &p, model.as_ref())?;
     if let Some(m) = &model {
         for n in &m.nodes {
@@ -685,6 +763,25 @@ pub fn history(root: &Path, id: &str, baseline: &str) -> Result<History, String>
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn authz_theorems_are_required() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(d.path().join("k")).unwrap();
+        std::fs::write(d.path().join("k/Cargo.toml"), "[package]\nname = \"forum-kernel\"\n").unwrap();
+        let m: toml::Value = "[extract]\ncrate = \"k\"\n[authz]\nguarded = [\"g\"]\n".parse().unwrap();
+        assert_eq!(authz_theorems(d.path(), &m), ["forum_kernel.g.authorized", "forum_kernel.g.kernel_apply_eq"]);
+        std::fs::create_dir_all(d.path().join("proofs/generated")).unwrap();
+        std::fs::write(d.path().join("proofs/generated/Authz.lean"), "namespace forum_kernel.Committed\n").unwrap();
+        std::fs::create_dir_all(d.path().join("k/src")).unwrap();
+        std::fs::write(d.path().join("k/src/lib.rs"), "pub fn g() { guard_viewed::<A>(a) }\nimpl Kernel for K { fn read_only(c: &C) -> bool { k::read_only(c) } }\n").unwrap();
+        let all = authz_theorems(d.path(), &m);
+        assert!(all.contains(&"forum_kernel.Committed.pg_stored".to_string()), "{all:?}");
+        assert!(all.contains(&"forum_kernel.g.read_only_sound".to_string()), "{all:?}");
+        let none: toml::Value = "[extract]\ncrate = \"k\"\n".parse().unwrap();
+        assert!(authz_theorems(d.path(), &none).is_empty());
+    }
+
     use super::*;
     fn model_fixture() -> Model {
         serde_json::from_str(r#"{"version":1,"title":"Booking","description":"","author":"agent","nodes":[{"id":"g","kind":"guarantee","title":"No overlap","description":""},{"id":"t","kind":"theorem","title":"Invariant","description":""},{"id":"a","kind":"assumption","title":"Reachable","description":"","sources":[{"path":"Spec.lean"}]}],"edges":[{"from":"g","to":"t","kind":"proved by"},{"from":"t","to":"a","kind":"assumes"}]}"#).unwrap()

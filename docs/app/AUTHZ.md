@@ -37,11 +37,17 @@ std-specs = true
 guarded = ["guarded_transition"]
 ```
 
-Handlers need no authorization checks of their own. In the forum, they check
-input and existence only; who may do what is the `Policy` impl alone. A
-handler builds the reply, so the guard never trusts a row's own fields: a
+Handlers need no checks of *who may write what*: in the forum they check
+input and existence only, and the `Policy` impl alone decides. A handler
+builds the reply, so the guard never trusts a row's own fields either: a
 disclosed row counts only if `stored` finds it, exactly as disclosed, in the
 state before or after the command.
+
+What a handler of a command that *writes* is still trusted with is
+confidentiality: it runs on the full state, and the guard does not see where
+a write's content or a derived reply value came from
+([below](#what-is-not-covered)). Read-only commands under `guard_viewed` are
+confined to the caller's view and carry no such trust.
 
 ## What is proven
 
@@ -65,25 +71,53 @@ For each `[authz] guarded` function `g`, `h5i app extract` writes
 
 ```lean
 import AuthzSpecs
+import Schema
 open Aeneas Aeneas.Std Result H5iAppLib forum_kernel
 h5i_derive_all
 h5i_authz forum_kernel.guarded_transition
+-- then the storage section, below
 ```
 
-`h5i_authz` reads the instances off `g`'s extracted body and adds
-`g.authorized : AuthorizedViewed g … ∧ ViewNoninterference g …` (or
-`Authorized g …` for `guard`); `g.kernel_apply_eq`, that the instance's
-`kernel_apply` is the kernel's `apply` (it refuses an instance where it is
-not, so writes are checked in the states the store commits); and, for
-`guard_viewed`, `g.read_only_sound`. It prints the statements. `h5i app check`
-gates them by name, and `h5i app lint` checks that the server's `Kernel` runs
-`g` as `transition` and the kernel's `apply` as `apply`.
+`h5i_authz` reads the instances off `g`'s extracted body. It refuses a `g`
+that does not pass its own actor, state and command to the guard unchanged,
+and an instance whose `kernel_apply` is not the kernel's `apply`; then it adds
+`g.kernel_apply_eq`, `g.authorized : AuthorizedViewed g … ∧
+ViewNoninterference g …` (or `Authorized g …` for `guard`) and, for
+`guard_viewed`, `g.read_only_sound`. It prints the statements.
+
+The storage section proves, for this app, that the store commits what the
+kernel's `apply` computes (A4), with no hand-written model:
+
+| Theorem | States |
+|---|---|
+| `Committed.sql_fits` | `sql_write` emits the table writes `sqlA` lists (read off the extracted `sql_write`; a wrong reading fails here) |
+| `Committed.apply_write_enc` | `apply_write` changes `Snapshot.enc` exactly as those table writes do |
+| `Committed.apply_enc` | committing a write set leaves the encoding of the kernel's `apply` |
+| `Committed.pg_stored` | on PostgreSQL, interleaved with other tenants' statements, the tenant's tables hold that state and every load decodes to it, up to row order |
+
+With `kernel_apply_eq`, the states the policy judges writes in are the states
+the database holds. `extract` generates the section when the kernel uses
+`schema!` with `writes` and every arm of `sql_write` only pushes table
+writes (the forum, board and booking all do); otherwise it says so, and the
+app proves A4 by hand, as board's `Storage.lean` does.
+
+`h5i app check` builds the `Authz` module itself (so a lakefile whose default
+roots miss it cannot pass on a stale build) and gates `g.authorized`,
+`g.kernel_apply_eq`, the storage theorems when generated, and
+`g.read_only_sound` when the server overrides `Kernel::read_only`. Put
+`AuthzSpecs`, `Authz` and `Schema` in a `lean_lib`'s roots so `lake build`
+builds them too. `h5i app lint` checks that every `impl Kernel` in the
+project's crates' `src/` (tests excluded) runs a guarded `g` as `transition`
+and the kernel's `apply` as `apply`, and that an overridden
+`Kernel::read_only` delegates to the kernel's.
 
 ## What stays trusted
 
-Nothing new about the code path: the theorem rests on A4 to A9 of
-[`ROADMAP.md`](ROADMAP.md) like every other h5i-app theorem. The new trust is
-in what the app writes, and it is small enough to review:
+On the code path, the theorem rests on A5 to A9 of [`ROADMAP.md`](ROADMAP.md)
+like every other h5i-app theorem, and on A4's trusted half (PostgreSQL runs
+statements as `H5iAppLib.Pg` says); the app's half of A4 is the generated
+storage section above. The new trust is in what the app writes, and it is
+small enough to review:
 
 - **The policy means what was intended.** The Rust `Policy` impl *is* the
   specification, `stored` included: one that accepts a row without comparing
@@ -101,13 +135,43 @@ in what the app writes, and it is small enough to review:
   learns about it before users do.
 
 Not trusted any more: that `kernel_apply` is the kernel's `apply`
-(`g.kernel_apply_eq`), and that the server runs `g` and that `apply` (lint).
+(`g.kernel_apply_eq`); that the store commits what that `apply` computes
+(`Committed.pg_stored`, when generated); and that the server's `Kernel` runs
+`g` (lint, every impl). The store is written through `Store::write`, not
+`Kernel::apply`, which is why the storage theorem, not lint, carries that
+link.
 
-Three things the guard does not hide: whether a write command was refused by
-the kernel (`NotFound`) or by the policy (`Denied`) can tell an actor that a
-row exists; the guard checks after `transition`, so a kernel that panics
-or loops on some state does so behind the guard too; and an app that does not
-list a function in `[authz]` gets nothing from this page.
+## What is not covered
+
+The guarantee for a command that writes is integrity (only permitted writes
+commit) and the disclosure of stored rows. It is not confidentiality of what
+the handler read:
+
+- **Write content.** A handler sees the full state and can copy a row the
+  caller cannot see into a write the caller may make: an edit of one's own
+  post whose body is another user's draft. Each write is permitted, no row is
+  disclosed, and the guard commits it. The forum pins this down in
+  `writes_can_carry_what_the_caller_cannot_see`. Nyxis rules it out by
+  construction (its handlers only see rows the caller may read); here, review
+  a write command's handler for it, or keep the command read-only.
+- **Derived values in a write command's reply.** A count or flag computed
+  from hidden rows is not a row, so `Disclose` cannot list it. Under
+  `guard_viewed`, a read-only command's whole reply is covered by
+  noninterference; a write command's is not. In the forum, the view hides the
+  counter because the next id would count drafts, yet `CreatePost` replies
+  `Created(id)`, which tells its author that number.
+- **Replayed replies.** A request repeated with the same idempotency key
+  gets its stored reply back without running `transition` again
+  (`crates/h5i-app-pg`, `Attempt::Replayed`), so without the guard. Keys are
+  scoped per user (`ReplyCodec::scope`), so a user only gets back what was
+  shown to them, but after losing a right they can still replay a reply that
+  needed it: stale access, not escalation. Expire or purge stored replies
+  when rights change if that matters.
+- **Existence.** Whether a write command was refused by the kernel
+  (`NotFound`) or by the policy (`Denied`) can tell an actor that a row exists.
+- **Failures.** The guard checks after `transition`, so a kernel that panics
+  or loops on some state does so behind the guard too.
+- **Apps without `[authz]`** get nothing from this page.
 
 ## Cost
 
