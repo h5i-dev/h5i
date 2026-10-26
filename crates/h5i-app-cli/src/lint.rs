@@ -196,6 +196,24 @@ pub fn overrides_read_only(p: &Project) -> bool {
     kernel_impls(p).iter().any(|(_, _, body)| body.contains("fn read_only("))
 }
 
+/// `body` calls `name(` as a whole identifier (`k::name(` counts,
+/// `my_name(` does not).
+fn calls(body: &str, name: &str) -> bool {
+    let pat = format!("{name}(");
+    body.match_indices(&pat).any(|(i, _)| {
+        body[..i].chars().next_back().is_none_or(|c| !(c.is_alphanumeric() || c == '_'))
+    })
+}
+
+/// Whether the kernel crate runs read-only commands through `guard_viewed`,
+/// the guard that comes with a `ReadOnly.Sound` proof.
+fn uses_guard_viewed(p: &Project) -> bool {
+    let Some(krate) = p.krate() else { return false };
+    let mut files = Vec::new();
+    rs_files(&krate.join("src"), &mut files);
+    files.iter().any(|f| std::fs::read_to_string(f).unwrap_or_default().contains("guard_viewed"))
+}
+
 /// The body of `fn name(` inside an impl body.
 fn fn_body<'a>(body: &'a str, name: &str) -> Option<&'a str> {
     let at = body.find(&format!("fn {name}("))?;
@@ -211,6 +229,7 @@ fn read_only_proof(p: &Project) -> Vec<String> {
         e.path().extension().is_some_and(|x| x == "lean")
             && std::fs::read_to_string(e.path()).unwrap_or_default().contains("ReadOnly.Sound")
     }) || (!p.manifest.authz.guarded.is_empty()
+        && uses_guard_viewed(p)
         && p.generated().join(format!("{}.lean", crate::extract::AUTHZ_MODULE)).is_file());
     let mut bad = Vec::new();
     for (f, line, body) in kernel_impls(p) {
@@ -225,7 +244,9 @@ fn read_only_proof(p: &Project) -> Vec<String> {
     bad
 }
 
-/// With `[authz] guarded`, some `Kernel::transition` calls a guarded function.
+/// With `[authz] guarded`, some `Kernel` impl runs a guarded function as its
+/// `transition` and commits with the kernel's `apply`: the theorem is about
+/// that pair (`h5i_authz` proves the policy checks against that `apply`).
 fn guarded_wiring(p: &Project) -> Vec<String> {
     let guarded = &p.manifest.authz.guarded;
     if guarded.is_empty() {
@@ -233,15 +254,16 @@ fn guarded_wiring(p: &Project) -> Vec<String> {
     }
     let impls = kernel_impls(p);
     let wired = impls.iter().any(|(_, _, body)| {
-        fn_body(body, "transition").is_some_and(|t| guarded.iter().any(|g| t.contains(&format!("{g}("))))
+        fn_body(body, "transition").is_some_and(|t| guarded.iter().any(|g| calls(t, g)))
+            && fn_body(body, "apply").is_some_and(|a| calls(a, "apply"))
     });
     if wired {
         return Vec::new();
     }
     let at = impls.first().map(|(f, line, _)| format!("{}:{line}: ", rel(p, f))).unwrap_or_default();
     vec![format!(
-        "{at}`[authz] guarded` names {}, but no `Kernel::transition` calls it: the framework's theorem \
-         would be about code the server does not run",
+        "{at}`[authz] guarded` names {}, but no `Kernel` impl both calls it from `transition` and the \
+         kernel's `apply` from `apply`: the framework's theorem would be about code the server does not run",
         guarded.join(", ")
     )]
 }
@@ -295,9 +317,7 @@ pub fn authz_coverage(p: &Project) -> Option<String> {
     let krate = p.krate()?;
     let guarded = &p.manifest.authz.guarded;
     if !guarded.is_empty() {
-        let mut files = Vec::new();
-        rs_files(&krate.join("src"), &mut files);
-        let viewed = files.iter().any(|f| std::fs::read_to_string(f).unwrap_or_default().contains("guard_viewed"));
+        let viewed = uses_guard_viewed(p);
         let thms: Vec<String> = guarded.iter().map(|g| format!("{g}.authorized")).collect();
         return Some(format!(
             "authorization: framework-proven ({}; writes and disclosed rows{})",
@@ -402,11 +422,26 @@ mod tests {
         std::fs::create_dir_all(server.join("src")).unwrap();
         std::fs::write(server.join("Cargo.toml"), "[package]\nname = \"s\"\n").unwrap();
         let lib = server.join("src/lib.rs");
-        std::fs::write(&lib, "impl Kernel for K {\n    fn transition(a: &P, s: &S, c: &C) -> R {\n        k::transition(a, s, c)\n    }\n}\n").unwrap();
+        let kernel = |t: &str, a: &str| {
+            format!("impl Kernel for K {{\n    fn transition(a: &P, s: &S, c: &C) -> R {{\n        {t}(a, s, c)\n    }}\n    fn apply(s: &S, ws: &W) -> S {{\n        {a}(s, ws)\n    }}\n}}\n")
+        };
         let p = Project::load(&d.path().join("h5i-app.toml")).unwrap();
-        assert_eq!(guarded_wiring(&p).len(), 1);
-        std::fs::write(&lib, "impl Kernel for K {\n    fn transition(a: &P, s: &S, c: &C) -> R {\n        k::guarded_transition(a, s, c)\n    }\n}\n").unwrap();
+        std::fs::write(&lib, kernel("k::transition", "k::apply")).unwrap();
+        assert_eq!(guarded_wiring(&p).len(), 1, "unguarded transition");
+        std::fs::write(&lib, kernel("k::my_guarded_transition", "k::apply")).unwrap();
+        assert_eq!(guarded_wiring(&p).len(), 1, "a longer name is not the guarded function");
+        std::fs::write(&lib, kernel("k::guarded_transition", "k::snapshot_of")).unwrap();
+        assert_eq!(guarded_wiring(&p).len(), 1, "commits with something else than apply");
+        std::fs::write(&lib, kernel("k::guarded_transition", "k::apply")).unwrap();
         assert!(guarded_wiring(&p).is_empty());
+    }
+
+    #[test]
+    fn calls_matches_whole_identifiers() {
+        assert!(calls("k::apply(s, ws)", "apply"));
+        assert!(calls("apply(s, ws)", "apply"));
+        assert!(!calls("k::reapply(s, ws)", "apply"));
+        assert!(!calls("apply_one(s)", "apply"));
     }
 
     #[test]

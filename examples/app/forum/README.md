@@ -11,17 +11,20 @@ The point of the example: **it has no hand-written Lean**, and its
 authorization is still proven, for every request sequence.
 
 - `kernel/src/lib.rs` has handlers that check input and existence only, and
-  one `Policy` impl that says who may do what. `Disclose` lists the rows each
-  reply carries; `View` is the part of the state a caller may see.
+  one `Policy` impl that says who may do what, judging each disclosed row as
+  stored (`stored` compares it with the row under its key). `Disclose` lists
+  the rows each reply carries; `View` is the part of the state a caller may
+  see.
 - `guarded_transition` runs the handlers behind the policy
   (`h5i_app_std::authz::guard_viewed`), and the server runs it as
   `Kernel::transition`.
 - `h5i app extract` writes `proofs/generated/Authz.lean`, one line that
   instantiates the framework's theorem:
   `forum_kernel.guarded_transition.authorized` (every committed command makes
-  only permitted writes and discloses only visible rows; read-only commands
-  depend on nothing outside the caller's view) and `.read_only_sound` (the
-  engine may run reads without locks).
+  only permitted writes and discloses only stored rows it may see; read-only commands
+  depend on nothing outside the caller's view), `.kernel_apply_eq` (writes are
+  checked in the states the store commits) and `.read_only_sound` (the engine
+  may run reads without locks).
 
 What is proven and what stays trusted: [`docs/app/AUTHZ.md`](../../../docs/app/AUTHZ.md).
 
@@ -47,11 +50,17 @@ rpc $T2 '{"cmd":"set_admin","user":2,"admin":true}'   # 403 forbidden
 
 ```bash
 h5i app prove          # extract, build, gate: guarded_transition.authorized
-h5i app lint           # Kernel::transition runs a guarded function
+h5i app lint           # Kernel runs the guarded function and the kernel's apply
 cd kernel && cargo test --release                  # policy, view, handler bugs denied
 cd ../server && H5I_APP_TEST_DATABASE_URL=$DATABASE_URL cargo test --release
 ```
 
 `handler_bugs_are_denied` runs handlers with typical authorization bugs (a
 post taken over on edit, others' drafts disclosed on publish, admin rights on
-registration) behind the same policy: each is a denial, not a commit.
+registration, a hidden draft relabelled as published in a reply) behind the
+same policy: each is a denial, not a commit.
+
+One thing the policy does not hide: on a command that writes, `not_found`
+(the handler found no such post) and `forbidden` (the policy refused) differ,
+so editing a draft one cannot see tells that it exists. Reads do not leak
+this: a hidden draft is outside the view, so reading it is `not_found`.

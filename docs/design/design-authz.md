@@ -101,9 +101,13 @@ pub fn guard<A, S, C, W: Clone, R: Disclose<D>, E, D, T: Transition<…>, P: Pol
   semantics (the `apply` A4 links to the database), not in a `step` the author
   writes. A command may create a row and then act on it. A `DelWhere` is one
   write; the policy sees it as the kernel's `Write` value, before expansion.
-- A disclosed row must be visible before the command or after it: a deleted
-  row the actor could read is fine to return, and so is a row the command
-  legitimately created.
+- A disclosed row must be `Shown` before the command or after it: stored
+  there exactly as disclosed (`Policy::stored`), and visible. A deleted row the
+  actor could read is fine to return, and so is a row the command legitimately
+  created. `stored` was added after review: with `visible` alone, judged on
+  the reply's copy of a row, a handler could relabel a hidden draft as
+  published and have the copy accepted (the forum's `ForgeOnUnpublish`).
+  Making it a required trait method means an author cannot forget it.
 - Fail closed: one refused write or row refuses the command; nothing commits.
 - `NeverDenied` (optional, per app) turns the runtime check back into a
   static guarantee (`transition_authorized_of_never_denied`).
@@ -131,7 +135,10 @@ tuple ("There should be no bottoms in the value").
   theorem's axioms.
 - `h5i_authz g` (in the same file) reads the instances off `g`'s extracted
   body, adds `g.authorized` by `authorized_of_eq` or `authorized_viewed_of_eq`,
-  and for `guard_viewed` also `g.read_only_sound`. It prints both statements.
+  `g.kernel_apply_eq` (the instance's `kernel_apply` is the kernel's `apply`,
+  by `rfl`; it refuses to generate anything otherwise, so a policy cannot be
+  checked against a made-up commit semantics), and for `guard_viewed` also
+  `g.read_only_sound`. It prints the statements.
 - The existing `H5iAppLib.Authz` definitions are unchanged. `WritesPermitted`
   is a new definition: it checks each write in the state after the earlier
   ones, where `WritesAuthorized` checks all against the pre-state.
@@ -168,7 +175,7 @@ versus update is the policy's own `find_*` lookup, as in the forum.
 ## Z4. Reads
 
 - `Disclose` lists the rows a reply carries; `check_reads` denies the command
-  if any is not visible. The app writes it (there is no derive: no proc-macro
+  if any is not stored as disclosed and visible, before or after. The app writes it (there is no derive: no proc-macro
   crate), and its completeness is trusted (A11).
 - `guard_viewed` (opt-in): a command `View::read_only` declares runs on
   `View::view(actor, s)`, is denied if it returns writes, and has its rows
@@ -190,11 +197,13 @@ versus update is the policy's own `find_*` lookup, as in the forum.
   `h5i_derive_all`, one `h5i_authz` per function). It fails if `[authz]` names
   functions but the kernel never calls the guard, or `std-specs` is off.
 - `h5i app check` gates the generated module like a hand-written one and
-  requires `<kernel>.<fn>.authorized` by name, plus `.read_only_sound` when the
-  server overrides `Kernel::read_only` without its own proof.
-- `h5i app lint` fails an app whose `Kernel::transition` calls none of the
-  `[authz]` functions; reports "framework-proven" in its coverage line; and
-  accepts the generated proof for `read_only`.
+  requires `<kernel>.<fn>.authorized` and `.kernel_apply_eq` by name, plus
+  `.read_only_sound` when the server overrides `Kernel::read_only` without its
+  own proof.
+- `h5i app lint` fails an app unless some `Kernel` impl calls an `[authz]`
+  function from `transition` and the kernel's `apply` from `apply` (whole
+  identifiers); reports "framework-proven" in its coverage line; and accepts
+  the generated proof for `read_only` only for a `guard_viewed` kernel.
 - The check record carries the coverage line (`Run.authorization`), shown in
   the web view's check evidence.
 - CI needs no change: it runs `--all crates examples/app`, which finds the
@@ -208,9 +217,11 @@ Built on a new example rather than board, so tutorial 2 stays as written (Z0).
   self-registration, granting and revoking admin). Handlers check input and
   existence only. No hand-written Lean; `h5i app check` passes with
   `guarded_transition.authorized` and `.read_only_sound`.
-- `handler_bugs_are_denied`: three handlers with typical bugs (taking over a
-  post on edit, disclosing drafts on publish, admin on registration) run
-  behind the same policy and are denied.
+- `handler_bugs_are_denied`: four handlers with typical bugs (taking over a
+  post on edit, disclosing drafts on publish, admin on registration, a hidden
+  draft relabelled as published in a reply) run behind the same policy and are
+  denied. The forum's policy also gives each new post the counter's next id
+  and lets the counter move only by one.
 - `tests/postgres.rs`: 600 random commands from four users on PostgreSQL and
   `MemoryEngine` agree, denials included.
 - `guard_overhead`: measured in [`NUMBERS.md`](../app/NUMBERS.md#framework-proven-authorization).
@@ -237,12 +248,14 @@ does) is the stretch goal.
 
 States, for every actor, state and command of a kernel run through `guard`:
 a committed command is the kernel's own result, each write is permitted in
-the state the writes before it leave, and each disclosed row is visible
-before or after. Through `guard_viewed`, additionally: a committed read-only
-command made no writes and disclosed only rows visible in the view, and its
+the state the writes before it leave (by the kernel's own `apply`), and each
+disclosed row is stored as disclosed and visible, before or after. Through
+`guard_viewed`, additionally: a committed read-only command made no writes and
+disclosed only rows stored and visible in the view, and its
 result depends on nothing outside the view.
 
-Does not state that the policy, `Disclose` or `View` say what was meant (A11);
+Does not state that the policy (its `stored` included), `Disclose` or `View`
+say what was meant (A11);
 anything about values derived from rows by a command that writes; anything A4
 to A8 do not already cover.
 
@@ -253,6 +266,8 @@ to A8 do not already cover.
   file serves every kernel.
 - The guard copies the snapshot per write prefix, once after, and once for
   the view: linear in the tenant, about 20 µs at 100 posts and 2 to 3 ms at
-  10,000. The engine's full-tenant load is of the same order.
+  10,000. The engine's full-tenant load is of the same order. `stored` adds a
+  lookup per disclosed row, so on `Vec` snapshots a listing is quadratic:
+  18.6 ms for 10,000 posts. Keyed lookups would remove that.
 - Runtime denial changes the failure mode, as expected. `NeverDenied` and
   bug tests like the forum's are the answer.

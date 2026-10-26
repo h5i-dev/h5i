@@ -10,8 +10,11 @@
 //!
 //! Write `i` is checked in the state `apply(s, ws[..i])`, the kernel's own
 //! commit semantics, so a command may create a row and then act on it. A
-//! disclosed row must be visible before the command or after it. Fail closed:
-//! one refused write or row refuses the whole command, and nothing commits.
+//! disclosed row must be stored, exactly as disclosed, and visible, in the
+//! state before the command or in the state after it: the handler builds the
+//! reply, so a row's own fields (a `published` flag, an owner) prove nothing
+//! until they are the stored ones. Fail closed: one refused write or row
+//! refuses the whole command, and nothing commits.
 
 /// A command's refusal: the kernel's own, or the guard's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,8 +39,13 @@ pub trait Transition<A, S, C, W, R, E> {
 pub trait Policy<A, S, W, D> {
     /// May `actor` make write `w` in state `s`?
     fn permits(actor: &A, s: &S, w: &W) -> bool;
-    /// May `actor` see row `d` in state `s`?
+    /// May `actor` see row `d` in state `s`? The guard asks only about rows
+    /// `stored` accepts, so this may judge `d`'s own fields.
     fn visible(actor: &A, s: &S, d: &D) -> bool;
+    /// Is `d` a row of `s`, exactly as stored? Usually: look it up by key and
+    /// compare. Without it, a handler could relabel a hidden row (set its
+    /// `published` flag, say) and `visible` would accept the copy.
+    fn stored(s: &S, d: &D) -> bool;
 }
 
 /// The rows a reply contains. Every row the reply carries must be listed:
@@ -74,11 +82,19 @@ pub fn check_writes<A, S, C, W: Clone, R, E, D, T: Transition<A, S, C, W, R, E>,
     true
 }
 
-/// Every row is visible in `before` or in `after`.
+/// `d` is stored in `s`, exactly as given, and `actor` may see it there.
+pub fn shown<A, S, W, D, P: Policy<A, S, W, D>>(actor: &A, s: &S, d: &D) -> bool {
+    if !P::stored(s, d) {
+        return false;
+    }
+    P::visible(actor, s, d)
+}
+
+/// Every row is [`shown`] in `before` or in `after`.
 pub fn check_reads<A, S, W, D, P: Policy<A, S, W, D>>(actor: &A, before: &S, after: &S, ds: &Vec<D>) -> bool {
     let mut i = 0;
     while i < ds.len() {
-        if !P::visible(actor, before, &ds[i]) && !P::visible(actor, after, &ds[i]) {
+        if !shown::<A, S, W, D, P>(actor, before, &ds[i]) && !shown::<A, S, W, D, P>(actor, after, &ds[i]) {
             return false;
         }
         i += 1;
@@ -187,7 +203,10 @@ mod tests {
         fn permits(actor: &u64, s: &u64, w: &Set) -> bool {
             *actor == 1 && w.0 == *s + 1
         }
-        fn visible(_: &u64, s: &u64, d: &u64) -> bool {
+        fn visible(_: &u64, _: &u64, _: &u64) -> bool {
+            true
+        }
+        fn stored(s: &u64, d: &u64) -> bool {
             d == s
         }
     }

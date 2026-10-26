@@ -195,7 +195,7 @@ inductive h5i_app_sql.Write where
 | DelWhere : Std.U32 → Std.U32 → h5i_app_sql.Val → h5i_app_sql.Write
 
 /-- [h5i_app_std::authz::Guarded]
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 18:0-18:19
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 21:0-21:19
     Name pattern: [h5i_app_std::authz::Guarded]
     Visibility: public -/
 @[discriminant isize, rust_type "h5i_app_std::authz::Guarded"]
@@ -204,7 +204,7 @@ inductive h5i_app_std.authz.Guarded (E : Type) where
 | Denied : h5i_app_std.authz.Guarded E
 
 /-- Trait declaration: [h5i_app_std::authz::Transition]
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 28:0-28:38
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 31:0-31:38
     Name pattern: [h5i_app_std::authz::Transition]
     Visibility: public -/
 @[rust_trait "h5i_app_std::authz::Transition"]
@@ -215,7 +215,7 @@ structure h5i_app_std.authz.Transition (Self : Type) (A : Type) (S : Type) (C :
   kernel_apply : S → alloc.vec.Vec W → Result S
 
 /-- Trait declaration: [h5i_app_std::authz::Policy]
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 36:0-36:28
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 39:0-39:28
     Name pattern: [h5i_app_std::authz::Policy]
     Visibility: public -/
 @[rust_trait "h5i_app_std::authz::Policy"]
@@ -223,9 +223,10 @@ structure h5i_app_std.authz.Policy (Self : Type) (A : Type) (S : Type) (W :
   Type) (D : Type) where
   permits : A → S → W → Result Bool
   visible : A → S → D → Result Bool
+  stored : S → D → Result Bool
 
 /-- Trait declaration: [h5i_app_std::authz::Disclose]
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 45:0-45:21
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 53:0-53:21
     Name pattern: [h5i_app_std::authz::Disclose]
     Visibility: public -/
 @[rust_trait "h5i_app_std::authz::Disclose"]
@@ -233,7 +234,7 @@ structure h5i_app_std.authz.Disclose (Self : Type) (D : Type) where
   disclosed : Self → Result (alloc.vec.Vec D)
 
 /-- [h5i_app_std::authz::prefix]: loop body 0:
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 53:4-56:5
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 61:4-64:5
     Name pattern: [h5i_app_std::authz::prefix]
     Visibility: public -/
 @[rust_loop_body, rust_fun "h5i_app_std::authz::prefix"]
@@ -257,7 +258,7 @@ def h5i_app_std.authz.prefix_loop.body
   else ok (done out)
 
 /-- [h5i_app_std::authz::prefix]: loop 0:
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 53:4-56:5
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 61:4-64:5
     Name pattern: [h5i_app_std::authz::prefix]
     Visibility: public -/
 @[rust_loop, rust_fun "h5i_app_std::authz::prefix"]
@@ -272,7 +273,7 @@ def h5i_app_std.authz.prefix_loop
     (out, i)
 
 /-- [h5i_app_std::authz::prefix]:
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 50:0-50:56
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 58:0-58:56
     Name pattern: [h5i_app_std::authz::prefix]
     Visibility: public -/
 @[reducible, rust_fun "h5i_app_std::authz::prefix"]
@@ -285,7 +286,7 @@ def h5i_app_std.authz.prefix
     0#usize
 
 /-- [h5i_app_std::authz::check_writes]: loop body 0:
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 67:4-75:1
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 75:4-83:1
     Name pattern: [h5i_app_std::authz::check_writes]
     Visibility: public -/
 @[rust_loop_body, rust_fun "h5i_app_std::authz::check_writes"]
@@ -312,7 +313,7 @@ def h5i_app_std.authz.check_writes_loop.body
   else ok (done true)
 
 /-- [h5i_app_std::authz::check_writes]: loop 0:
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 67:4-75:1
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 75:4-83:1
     Name pattern: [h5i_app_std::authz::check_writes]
     Visibility: public -/
 @[rust_loop, rust_fun "h5i_app_std::authz::check_writes"]
@@ -330,7 +331,7 @@ def h5i_app_std.authz.check_writes_loop
     i
 
 /-- [h5i_app_std::authz::check_writes]:
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 61:0-65:9
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 69:0-73:9
     Name pattern: [h5i_app_std::authz::check_writes]
     Visibility: public -/
 @[reducible, rust_fun "h5i_app_std::authz::check_writes"]
@@ -345,8 +346,23 @@ def h5i_app_std.authz.check_writes
   h5i_app_std.authz.check_writes_loop corecloneCloneInst TransitionInst
     PolicyInst actor s ws 0#usize
 
+/-- [h5i_app_std::authz::shown]:
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 86:0-86:80
+    Name pattern: [h5i_app_std::authz::shown]
+    Visibility: public -/
+@[rust_fun "h5i_app_std::authz::shown"]
+def h5i_app_std.authz.shown
+  {A : Type} {S : Type} {W : Type} {D : Type} {P : Type} (PolicyInst :
+  h5i_app_std.authz.Policy P A S W D) (actor : A) (s : S) (d : D) :
+  Result Bool
+  := do
+  let b ← PolicyInst.stored s d
+  if b
+  then PolicyInst.visible actor s d
+  else ok false
+
 /-- [h5i_app_std::authz::check_reads]: loop body 0:
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 80:4-87:1
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 96:4-103:1
     Name pattern: [h5i_app_std::authz::check_reads]
     Visibility: public -/
 @[rust_loop_body, rust_fun "h5i_app_std::authz::check_reads"]
@@ -361,12 +377,12 @@ def h5i_app_std.authz.check_reads_loop.body
   then
     let t ←
       alloc.vec.Vec.index (core.slice.index.SliceIndexUsizeSlice D) ds i
-    let b ← PolicyInst.visible actor before t
+    let b ← h5i_app_std.authz.shown PolicyInst actor before t
     if b
     then let i2 ← i + 1#usize
          ok (cont i2)
     else
-      let b1 ← PolicyInst.visible actor after t
+      let b1 ← h5i_app_std.authz.shown PolicyInst actor after t
       if b1
       then let i2 ← i + 1#usize
            ok (cont i2)
@@ -374,7 +390,7 @@ def h5i_app_std.authz.check_reads_loop.body
   else ok (done true)
 
 /-- [h5i_app_std::authz::check_reads]: loop 0:
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 80:4-87:1
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 96:4-103:1
     Name pattern: [h5i_app_std::authz::check_reads]
     Visibility: public -/
 @[rust_loop, rust_fun "h5i_app_std::authz::check_reads"]
@@ -390,7 +406,7 @@ def h5i_app_std.authz.check_reads_loop
     i
 
 /-- [h5i_app_std::authz::check_reads]:
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 78:0-78:108
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 94:0-94:108
     Name pattern: [h5i_app_std::authz::check_reads]
     Visibility: public -/
 @[reducible, rust_fun "h5i_app_std::authz::check_reads"]
@@ -403,7 +419,7 @@ def h5i_app_std.authz.check_reads
   h5i_app_std.authz.check_reads_loop PolicyInst actor before after ds 0#usize
 
 /-- [h5i_app_std::authz::guard]:
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 91:0-95:36
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 107:0-111:36
     Name pattern: [h5i_app_std::authz::guard]
     Visibility: public -/
 @[rust_fun "h5i_app_std::authz::guard"]
@@ -436,7 +452,7 @@ def h5i_app_std.authz.guard
     ok (core.result.Result.Err (h5i_app_std.authz.Guarded.App e))
 
 /-- Trait declaration: [h5i_app_std::authz::View]
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 115:0-115:23
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 131:0-131:23
     Name pattern: [h5i_app_std::authz::View]
     Visibility: public -/
 @[rust_trait "h5i_app_std::authz::View"]
@@ -446,7 +462,7 @@ structure h5i_app_std.authz.View (Self : Type) (A : Type) (S : Type) (C : Type)
   view : A → S → Result S
 
 /-- [h5i_app_std::authz::guard_viewed]:
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 125:0-140:36
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 141:0-156:36
     Name pattern: [h5i_app_std::authz::guard_viewed]
     Visibility: public -/
 @[rust_fun "h5i_app_std::authz::guard_viewed"]
@@ -572,6 +588,38 @@ def Snapshot.Insts.CoreCloneClone.clone
   let v ← alloc.vec.CloneVec.clone User.Insts.CoreCloneClone self.users
   let v1 ← alloc.vec.CloneVec.clone Post.Insts.CoreCloneClone self.posts
   ok { counter := c, users := v, posts := v1 }
+
+/-- [forum_kernel::{impl core::cmp::PartialEq<forum_kernel::User> for forum_kernel::User}::eq]:
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 44:33-44:42
+    Visibility: public -/
+def User.Insts.CoreCmpPartialEqUser.eq
+  (self : User) (other : User) : Result Bool := do
+  if self.user = other.user
+  then ok (self.admin = other.admin)
+  else ok false
+
+/-- [forum_kernel::{impl core::cmp::PartialEq<forum_kernel::Post> for forum_kernel::Post}::eq]:
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 50:27-50:36
+    Visibility: public -/
+def Post.Insts.CoreCmpPartialEqPost.eq
+  (self : Post) (other : Post) : Result Bool := do
+  if self.id = other.id
+  then
+    if self.author = other.author
+    then
+      if self.published = other.published
+      then
+        let b ←
+          alloc.vec.partial_eq.PartialEqVec.eq core.cmp.PartialEqU8 self.title
+            other.title
+        if b
+        then
+          alloc.vec.partial_eq.PartialEqVec.eq core.cmp.PartialEqU8 self.body
+            other.body
+        else ok false
+      else ok false
+    else ok false
+  else ok false
 
 /-- [forum_kernel::{impl core::default::Default for forum_kernel::Counter}::default]:
     Source: 'examples/app/forum/kernel/src/lib.rs', lines 59:48-59:55
@@ -1203,6 +1251,23 @@ def user_visible (s : Snapshot) (user : Std.U64) (u : User) : Result Bool := do
   then ok true
   else is_admin s user
 
+/-- [forum_kernel::{impl h5i_app_std::authz::Policy<forum_kernel::Principal, forum_kernel::Snapshot, forum_kernel::Write, forum_kernel::Row> for forum_kernel::Forum}::stored]:
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 318:4-329:5
+    Visibility: public -/
+def Forum.Insts.H5i_app_stdAuthzPolicyPrincipalSnapshotWriteRow.stored
+  (s : Snapshot) (d : Row) : Result Bool := do
+  match d with
+  | Row.OfUser u =>
+    let o ← find_user s.users u.user
+    match o with
+    | none => ok false
+    | some stored => User.Insts.CoreCmpPartialEqUser.eq stored u
+  | Row.OfPost p =>
+    let o ← find_post s.posts p.id
+    match o with
+    | none => ok false
+    | some stored => Post.Insts.CoreCmpPartialEqPost.eq stored p
+
 /-- [forum_kernel::{impl h5i_app_std::authz::Policy<forum_kernel::Principal, forum_kernel::Snapshot, forum_kernel::Write, forum_kernel::Row> for forum_kernel::Forum}::visible]:
     Source: 'examples/app/forum/kernel/src/lib.rs', lines 309:4-314:5
     Visibility: public -/
@@ -1233,7 +1298,10 @@ def Forum.Insts.H5i_app_stdAuthzPolicyPrincipalSnapshotWriteRow.permits
   | Write.PutPost p =>
     let o ← find_post s.posts p.id
     match o with
-    | none => ok (p.author = actor.user)
+    | none =>
+      if p.author = actor.user
+      then ok (p.id = s.counter.next_id)
+      else ok false
     | some old =>
       if old.author = actor.user
       then ok (p.author = old.author)
@@ -1250,10 +1318,14 @@ def Forum.Insts.H5i_app_stdAuthzPolicyPrincipalSnapshotWriteRow.permits
       if old.author = actor.user
       then ok true
       else is_admin s actor.user
-  | Write.SetCounter c => ok (c.next_id > s.counter.next_id)
+  | Write.SetCounter c =>
+    if s.counter.next_id < core.num.U64.MAX
+    then let i ← s.counter.next_id + 1#u64
+         ok (c.next_id = i)
+    else ok false
 
 /-- Trait implementation: [forum_kernel::{impl h5i_app_std::authz::Policy<forum_kernel::Principal, forum_kernel::Snapshot, forum_kernel::Write, forum_kernel::Row> for forum_kernel::Forum}]
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 284:0-315:1 -/
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 284:0-330:1 -/
 @[reducible]
 def Forum.Insts.H5i_app_stdAuthzPolicyPrincipalSnapshotWriteRow :
   h5i_app_std.authz.Policy Forum Principal Snapshot Write Row := {
@@ -1261,10 +1333,11 @@ def Forum.Insts.H5i_app_stdAuthzPolicyPrincipalSnapshotWriteRow :
     Forum.Insts.H5i_app_stdAuthzPolicyPrincipalSnapshotWriteRow.permits
   visible :=
     Forum.Insts.H5i_app_stdAuthzPolicyPrincipalSnapshotWriteRow.visible
+  stored := Forum.Insts.H5i_app_stdAuthzPolicyPrincipalSnapshotWriteRow.stored
 }
 
 /-- [forum_kernel::{impl h5i_app_std::authz::Disclose<forum_kernel::Row> for forum_kernel::Reply}::disclosed]: loop body 0:
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 327:16-330:17
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 342:16-345:17
     Visibility: public -/
 @[rust_loop_body]
 def Reply.Insts.H5i_app_stdAuthzDiscloseRow.disclosed_loop.body
@@ -1283,7 +1356,7 @@ def Reply.Insts.H5i_app_stdAuthzDiscloseRow.disclosed_loop.body
   else ok (done out)
 
 /-- [forum_kernel::{impl h5i_app_std::authz::Disclose<forum_kernel::Row> for forum_kernel::Reply}::disclosed]: loop 0:
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 327:16-330:17
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 342:16-345:17
     Visibility: public -/
 @[rust_loop]
 def Reply.Insts.H5i_app_stdAuthzDiscloseRow.disclosed_loop
@@ -1296,7 +1369,7 @@ def Reply.Insts.H5i_app_stdAuthzDiscloseRow.disclosed_loop
     (out, i)
 
 /-- [forum_kernel::{impl h5i_app_std::authz::Disclose<forum_kernel::Row> for forum_kernel::Reply}::disclosed]:
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 319:4-334:5
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 334:4-349:5
     Visibility: public -/
 def Reply.Insts.H5i_app_stdAuthzDiscloseRow.disclosed
   (self : Reply) : Result (alloc.vec.Vec Row) := do
@@ -1313,7 +1386,7 @@ def Reply.Insts.H5i_app_stdAuthzDiscloseRow.disclosed
     alloc.vec.Vec.push (alloc.vec.Vec.new Row) (Row.OfUser u)
 
 /-- Trait implementation: [forum_kernel::{impl h5i_app_std::authz::Disclose<forum_kernel::Row> for forum_kernel::Reply}]
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 317:0-335:1 -/
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 332:0-350:1 -/
 @[reducible]
 def Reply.Insts.H5i_app_stdAuthzDiscloseRow : h5i_app_std.authz.Disclose Reply
   Row := {
@@ -1321,7 +1394,7 @@ def Reply.Insts.H5i_app_stdAuthzDiscloseRow : h5i_app_std.authz.Disclose Reply
 }
 
 /-- [forum_kernel::{impl h5i_app_std::authz::View<forum_kernel::Principal, forum_kernel::Snapshot, forum_kernel::Command> for forum_kernel::Forum}::view]: loop body 0:
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 350:8-355:9
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 365:8-370:9
     Visibility: public -/
 @[rust_loop_body]
 def Forum.Insts.H5i_app_stdAuthzViewPrincipalSnapshotCommand.view_loop0.body
@@ -1345,7 +1418,7 @@ def Forum.Insts.H5i_app_stdAuthzViewPrincipalSnapshotCommand.view_loop0.body
   else ok (done (actor, s.counter, s.users, s.posts, users))
 
 /-- [forum_kernel::{impl h5i_app_std::authz::View<forum_kernel::Principal, forum_kernel::Snapshot, forum_kernel::Command> for forum_kernel::Forum}::view]: loop 0:
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 350:8-355:9
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 365:8-370:9
     Visibility: public -/
 @[rust_loop]
 def Forum.Insts.H5i_app_stdAuthzViewPrincipalSnapshotCommand.view_loop0
@@ -1361,7 +1434,7 @@ def Forum.Insts.H5i_app_stdAuthzViewPrincipalSnapshotCommand.view_loop0
     (users, i)
 
 /-- [forum_kernel::{impl h5i_app_std::authz::View<forum_kernel::Principal, forum_kernel::Snapshot, forum_kernel::Command> for forum_kernel::Forum}::view]: loop body 1:
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 358:8-363:9
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 373:8-378:9
     Visibility: public -/
 @[rust_loop_body]
 def Forum.Insts.H5i_app_stdAuthzViewPrincipalSnapshotCommand.view_loop1.body
@@ -1388,7 +1461,7 @@ def Forum.Insts.H5i_app_stdAuthzViewPrincipalSnapshotCommand.view_loop1.body
   else ok (done posts)
 
 /-- [forum_kernel::{impl h5i_app_std::authz::View<forum_kernel::Principal, forum_kernel::Snapshot, forum_kernel::Command> for forum_kernel::Forum}::view]: loop 1:
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 358:8-363:9
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 373:8-378:9
     Visibility: public -/
 @[rust_loop]
 def Forum.Insts.H5i_app_stdAuthzViewPrincipalSnapshotCommand.view_loop1
@@ -1403,7 +1476,7 @@ def Forum.Insts.H5i_app_stdAuthzViewPrincipalSnapshotCommand.view_loop1
     (posts, j)
 
 /-- [forum_kernel::{impl h5i_app_std::authz::View<forum_kernel::Principal, forum_kernel::Snapshot, forum_kernel::Command> for forum_kernel::Forum}::view]:
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 347:4-365:5
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 362:4-380:5
     Visibility: public -/
 def Forum.Insts.H5i_app_stdAuthzViewPrincipalSnapshotCommand.view
   (actor : Principal) (s : Snapshot) : Result Snapshot := do
@@ -1417,7 +1490,7 @@ def Forum.Insts.H5i_app_stdAuthzViewPrincipalSnapshotCommand.view
   ok { counter := c1, users, posts }
 
 /-- [forum_kernel::{impl h5i_app_std::authz::View<forum_kernel::Principal, forum_kernel::Snapshot, forum_kernel::Command> for forum_kernel::Forum}::read_only]:
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 338:4-343:5
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 353:4-358:5
     Visibility: public -/
 def Forum.Insts.H5i_app_stdAuthzViewPrincipalSnapshotCommand.read_only
   (cmd : Command) : Result Bool := do
@@ -1433,7 +1506,7 @@ def Forum.Insts.H5i_app_stdAuthzViewPrincipalSnapshotCommand.read_only
   | Command.ReadUser _ => ok true
 
 /-- Trait implementation: [forum_kernel::{impl h5i_app_std::authz::View<forum_kernel::Principal, forum_kernel::Snapshot, forum_kernel::Command> for forum_kernel::Forum}]
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 337:0-366:1 -/
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 352:0-381:1 -/
 @[reducible]
 def Forum.Insts.H5i_app_stdAuthzViewPrincipalSnapshotCommand :
   h5i_app_std.authz.View Forum Principal Snapshot Command := {
@@ -1481,7 +1554,7 @@ def apply (snap : Snapshot) (ws : alloc.vec.Vec Write) : Result Snapshot := do
   apply_loop ws s 0#usize
 
 /-- [forum_kernel::{impl h5i_app_std::authz::Transition<forum_kernel::Principal, forum_kernel::Snapshot, forum_kernel::Command, forum_kernel::Write, forum_kernel::Reply, forum_kernel::Error> for forum_kernel::Forum}::kernel_apply]:
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 373:4-375:5
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 388:4-390:5
     Visibility: public -/
 def
   Forum.Insts.H5i_app_stdAuthzTransitionPrincipalSnapshotCommandWriteReplyError.kernel_apply
@@ -1489,7 +1562,7 @@ def
   apply s ws
 
 /-- [forum_kernel::{impl h5i_app_std::authz::Transition<forum_kernel::Principal, forum_kernel::Snapshot, forum_kernel::Command, forum_kernel::Write, forum_kernel::Reply, forum_kernel::Error> for forum_kernel::Forum}::kernel_transition]:
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 369:4-371:5
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 384:4-386:5
     Visibility: public -/
 def
   Forum.Insts.H5i_app_stdAuthzTransitionPrincipalSnapshotCommandWriteReplyError.kernel_transition
@@ -1499,7 +1572,7 @@ def
   transition actor s cmd
 
 /-- Trait implementation: [forum_kernel::{impl h5i_app_std::authz::Transition<forum_kernel::Principal, forum_kernel::Snapshot, forum_kernel::Command, forum_kernel::Write, forum_kernel::Reply, forum_kernel::Error> for forum_kernel::Forum}]
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 368:0-376:1 -/
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 383:0-391:1 -/
 @[reducible]
 def
   Forum.Insts.H5i_app_stdAuthzTransitionPrincipalSnapshotCommandWriteReplyError
@@ -1512,7 +1585,7 @@ def
 }
 
 /-- [forum_kernel::guarded_transition]:
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 379:0-385:1
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 394:0-400:1
     Visibility: public -/
 def guarded_transition
   (actor : Principal) (s : Snapshot) (cmd : Command) :
@@ -1526,7 +1599,7 @@ def guarded_transition
     Forum.Insts.H5i_app_stdAuthzViewPrincipalSnapshotCommand actor s cmd
 
 /-- [forum_kernel::read_only]:
-    Source: 'examples/app/forum/kernel/src/lib.rs', lines 388:0-390:1
+    Source: 'examples/app/forum/kernel/src/lib.rs', lines 403:0-405:1
     Visibility: public -/
 def read_only (cmd : Command) : Result Bool := do
   Forum.Insts.H5i_app_stdAuthzViewPrincipalSnapshotCommand.read_only cmd

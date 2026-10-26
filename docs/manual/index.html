@@ -1588,10 +1588,11 @@ mutants generated from the kernel's syntax: comparison boundaries, <code>==</cod
 <code>h5i_app_std::authz::guard</code> or <code>guard_viewed</code> of the app's <code>Transition</code>,
 <code>Policy</code>, <code>Disclose</code> (and <code>View</code>) impls. <code>extract</code> then writes
 <code>proofs/generated/Authz.lean</code>, which proves <code>&lt;kernel&gt;.&lt;fn&gt;.authorized</code> by
-instantiating the framework's theorem, with no hand-written Lean. <code>check</code> gates
-that theorem (and <code>&lt;fn&gt;.read_only_sound</code> when the server overrides
-<code>Kernel::read_only</code>), and <code>lint</code> fails unless a <code>Kernel::transition</code> calls a
-listed function. An app without <code>[authz]</code> is unaffected.</p>
+instantiating the framework's theorem, with no hand-written Lean, and
+<code>&lt;fn&gt;.kernel_apply_eq</code> (the policy is checked against the kernel's own
+<code>apply</code>). <code>check</code> gates both (and <code>&lt;fn&gt;.read_only_sound</code> when the server
+overrides <code>Kernel::read_only</code>), and <code>lint</code> fails unless a <code>Kernel</code> runs a
+listed function as <code>transition</code> and the kernel's <code>apply</code> as <code>apply</code>. An app without <code>[authz]</code> is unaffected.</p>
 <p><code>h5i app new</code> requires the h5i-app Lean library from git at this binary's
 release tag; <code>--h5i-path &lt;checkout&gt;</code> uses a local h5i checkout instead.</p>
 <div class="codeblock"><div class="codeblock-head"><span>toml</span><button class="copy-btn" type="button">Copy</button></div><pre><code class="language-toml"># h5i-app.toml

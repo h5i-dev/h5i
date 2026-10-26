@@ -87,7 +87,8 @@ fn check_recorded(
     Ok(())
 }
 
-/// `<kernel>.<fn>.authorized` for each `[authz] guarded` function.
+/// `<kernel>.<fn>.authorized` and `.kernel_apply_eq` for each `[authz]
+/// guarded` function (and `.read_only_sound` when the server needs it).
 pub fn authz_theorems(p: &Project) -> Result<Vec<String>> {
     let guarded = &p.manifest.authz.guarded;
     if guarded.is_empty() {
@@ -99,7 +100,10 @@ pub fn authz_theorems(p: &Project) -> Result<Vec<String>> {
     let krate = p.root.join(&ex.krate);
     let meta = util::metadata(&krate, false)?;
     let ns = util::ident(&meta.package_at(&krate)?.name);
-    let mut out: Vec<String> = guarded.iter().map(|g| format!("{ns}.{g}.authorized")).collect();
+    let mut out: Vec<String> = guarded
+        .iter()
+        .flat_map(|g| [format!("{ns}.{g}.authorized"), format!("{ns}.{g}.kernel_apply_eq")])
+        .collect();
     // The engine skips locks for `read_only` commands on the strength of
     // `ReadOnly.Sound`; for a guarded kernel that is the framework's.
     if crate::lint::overrides_read_only(p) && !has_read_only_proof(p) {

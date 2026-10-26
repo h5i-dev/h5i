@@ -291,8 +291,8 @@ impl Policy<Principal, Snapshot, Write, Row> for Forum {
                 Some(_) => is_admin(s, actor.user),
             },
             Write::PutPost(p) => match find_post(&s.posts, p.id) {
-                // Create a post as oneself.
-                None => p.author == actor.user,
+                // Create a post as oneself, under the next id.
+                None => p.author == actor.user && p.id == s.counter.next_id,
                 // Edit or (un)publish: the author or an admin; the author stays.
                 Some(old) => (old.author == actor.user || is_admin(s, actor.user)) && p.author == old.author,
             },
@@ -301,8 +301,8 @@ impl Policy<Principal, Snapshot, Write, Row> for Forum {
                 None => false,
                 Some(old) => old.author == actor.user || is_admin(s, actor.user),
             },
-            // Ids only move forward.
-            Write::SetCounter(c) => c.next_id > s.counter.next_id,
+            // The next id moves up by one: after a post took it, or skipped.
+            Write::SetCounter(c) => s.counter.next_id < u64::MAX && c.next_id == s.counter.next_id + 1,
         }
     }
 
@@ -310,6 +310,21 @@ impl Policy<Principal, Snapshot, Write, Row> for Forum {
         match d {
             Row::OfUser(u) => user_visible(s, actor.user, u),
             Row::OfPost(p) => post_visible(s, actor.user, p),
+        }
+    }
+
+    /// The row as stored under its key: a handler cannot relabel a draft as
+    /// published, or change its author, and have the copy judged instead.
+    fn stored(s: &Snapshot, d: &Row) -> bool {
+        match d {
+            Row::OfUser(u) => match find_user(&s.users, u.user) {
+                Some(stored) => stored == *u,
+                None => false,
+            },
+            Row::OfPost(p) => match find_post(&s.posts, p.id) {
+                Some(stored) => stored == *p,
+                None => false,
+            },
         }
     }
 }
@@ -450,6 +465,9 @@ mod tests {
         LeakOnPublish,
         /// Registration ignores what was asked and makes everyone admin.
         AdminOnRegister,
+        /// Unpublishing replies with the post relabelled as published, and
+        /// with another user's draft relabelled the same way.
+        ForgeOnUnpublish,
     }
 
     fn buggy(bug: &Bug, actor: &Principal, s: &Snapshot, cmd: &Command) -> Outcome {
@@ -466,6 +484,14 @@ mod tests {
                 Ok((ws, Reply::Posts(s.posts.clone())))
             }
             (Bug::AdminOnRegister, Command::Register { .. }) => register(actor.user, s, true),
+            (Bug::ForgeOnUnpublish, Command::SetPublished { id, published: false }) => match find_post(&s.posts, 0) {
+                None => Err(Error::NotFound),
+                Some(mut other) => {
+                    let (ws, _) = set_published(s, *id, false)?;
+                    other.published = true;
+                    Ok((ws, Reply::Found(other)))
+                }
+            },
             _ => transition(actor, s, cmd),
         }
     }
@@ -486,6 +512,7 @@ mod tests {
     buggy_kernel!(Steal, Bug::StealOnEdit);
     buggy_kernel!(Leak, Bug::LeakOnPublish);
     buggy_kernel!(Promote, Bug::AdminOnRegister);
+    buggy_kernel!(Forge, Bug::ForgeOnUnpublish);
 
     fn with<T: Transition<Principal, Snapshot, Command, Write, Reply, Error>>(
         s: &Snapshot,
@@ -521,6 +548,22 @@ mod tests {
         // Self-promotion through registration.
         assert_eq!(with::<Promote>(&s, 4, Command::Register { admin: false }).err(), Some(Guarded::Denied));
         assert!(with::<Promote>(&Snapshot::default(), 4, Command::Register { admin: false }).is_ok(), "the first user may be admin");
+
+        // A hidden draft relabelled as published in the reply: `stored` sees the copy is not the row.
+        let unpublish = Command::SetPublished { id: 1, published: false };
+        assert_eq!(with::<Forge>(&s, 3, unpublish.clone()).err(), Some(Guarded::Denied));
+        assert!(with::<Forge>(&s, 1, unpublish).is_err(), "even an admin gets no forged row");
+    }
+
+    #[test]
+    fn ids_come_from_the_counter() {
+        let s = Snapshot::default();
+        let forum = |w: Write| <Forum as Policy<Principal, Snapshot, Write, Row>>::permits(&Principal { org: 1, user: 1 }, &s, &w);
+        let p = |id| Write::PutPost(Post { id, author: 1, title: b"t".to_vec(), body: b"b".to_vec(), published: true });
+        assert!(forum(p(0)));
+        assert!(!forum(p(7)), "a post takes the next id, not any free one");
+        assert!(forum(Write::SetCounter(Counter { next_id: 1 })));
+        assert!(!forum(Write::SetCounter(Counter { next_id: u64::MAX })), "the counter cannot jump");
     }
 
     /// The guard's cost per command against `transition` alone, on a tenant

@@ -17,10 +17,10 @@ In the kernel crate, in the Rust subset Aeneas translates:
 
 | Item | Says | Reviewed as |
 |---|---|---|
-| `impl Policy<A, S, W, D>` | `permits(actor, s, w)`: may the actor make write `w` in state `s`; `visible(actor, s, d)`: may it see row `d` | the policy |
+| `impl Policy<A, S, W, D>` | `permits(actor, s, w)`: may the actor make write `w` in state `s`; `visible(actor, s, d)`: may it see row `d`; `stored(s, d)`: is `d` a row of `s`, exactly as stored (look it up by key and compare) | the policy |
 | `impl Disclose<D> for Reply` | the rows a reply carries | complete: a row left out is not checked |
 | `impl View<A, S, C>` (optional) | `read_only(cmd)`, and `view(actor, s)`: the part of the state the actor may see | the read side of the policy |
-| `impl Transition<A, S, C, W, R, E>` | delegates `kernel_transition` and `kernel_apply` to the kernel's `transition` and `apply` | wiring |
+| `impl Transition<A, S, C, W, R, E>` | delegates `kernel_transition` and `kernel_apply` to the kernel's `transition` and `apply` | wiring, checked: `h5i_authz` proves `kernel_apply` is the kernel's `apply` |
 | `guarded_transition` | `guard::<…>` or `guard_viewed::<…>` of the impls | wiring |
 
 In the server, `Kernel::transition` calls `guarded_transition`, and
@@ -38,7 +38,10 @@ guarded = ["guarded_transition"]
 ```
 
 Handlers need no authorization checks of their own. In the forum, they check
-input and existence only; who may do what is the `Policy` impl alone.
+input and existence only; who may do what is the `Policy` impl alone. A
+handler builds the reply, so the guard never trusts a row's own fields: a
+disclosed row counts only if `stored` finds it, exactly as disclosed, in the
+state before or after the command.
 
 ## What is proven
 
@@ -50,9 +53,9 @@ run that returned, so no app function needs a termination proof.
 
 | Theorem | States | Does not state |
 |---|---|---|
-| `guard_authorized` | a committed command is the kernel's own result (`kernel_transition` returned it); write `i` is permitted in `kernel_apply(s, ws[..i])`; every disclosed row is visible in `s` or in `kernel_apply(s, ws)` (`WritesPermitted`, `ReadsVisible`) | that the policy says what was meant; anything about values a reply derives from rows (counts, flags) |
+| `guard_authorized` | a committed command is the kernel's own result (`kernel_transition` returned it); write `i` is permitted in `kernel_apply(s, ws[..i])`; every disclosed row is stored as disclosed and visible, in `s` or in `kernel_apply(s, ws)` (`WritesPermitted`, `ReadsVisible`, `Shown`) | that the policy says what was meant; anything about values a reply derives from rows (counts, flags) |
 | `guard_app_error`, `guard_only_denies` | the guard passes the kernel's refusals through, and changes nothing but adding `Denied` | — |
-| `guard_viewed_authorized` | with `guard_viewed`: a command that writes is `guard_authorized`'s case; a committed read-only command made no writes and disclosed only rows visible in the actor's view (`AuthorizedViewed`) | that `view` hides what `visible` hides: `view` is part of the reviewed policy |
+| `guard_viewed_authorized` | with `guard_viewed`: a command that writes is `guard_authorized`'s case; a committed read-only command made no writes and disclosed only rows stored and visible in the actor's view (`AuthorizedViewed`) | that `view` hides what `visible` hides: `view` is part of the reviewed policy |
 | `guard_viewed_noninterference` | for read-only commands, two states with the same view give the same result, refusals and denials included (`ViewNoninterference`): nothing outside the view reaches the reply, derived values included | anything about commands that write |
 | `read_only_sound_of_viewed` | `H5iAppLib.ReadOnly.Sound` for the view's `read_only`: the engine may run those commands in a read-only transaction | — |
 | `transition_authorized_of_never_denied` | if the app also proves `NeverDenied` (the guard never fires), the policy holds of the kernel's own `transition`: the static guarantee | — |
@@ -69,8 +72,12 @@ h5i_authz forum_kernel.guarded_transition
 
 `h5i_authz` reads the instances off `g`'s extracted body and adds
 `g.authorized : AuthorizedViewed g … ∧ ViewNoninterference g …` (or
-`Authorized g …` for `guard`) and, for `guard_viewed`, `g.read_only_sound`. It
-prints both statements. `h5i app check` gates them by name.
+`Authorized g …` for `guard`); `g.kernel_apply_eq`, that the instance's
+`kernel_apply` is the kernel's `apply` (it refuses an instance where it is
+not, so writes are checked in the states the store commits); and, for
+`guard_viewed`, `g.read_only_sound`. It prints the statements. `h5i app check`
+gates them by name, and `h5i app lint` checks that the server's `Kernel` runs
+`g` as `transition` and the kernel's `apply` as `apply`.
 
 ## What stays trusted
 
@@ -79,7 +86,8 @@ Nothing new about the code path: the theorem rests on A4 to A9 of
 in what the app writes, and it is small enough to review:
 
 - **The policy means what was intended.** The Rust `Policy` impl *is* the
-  specification. There is no code generator between it and the theorem, so
+  specification, `stored` included: one that accepts a row without comparing
+  it to the stored one lets a handler relabel a hidden row. There is no code generator between it and the theorem, so
   nothing translates it wrongly, but nothing checks it against intent either.
 - **`Disclose` lists every row.** A reply field holding a row that `disclosed`
   omits is not checked. Read-only commands under `guard_viewed` do not depend
@@ -91,6 +99,9 @@ in what the app writes, and it is small enough to review:
   authorization bug in a handler is a 403 at runtime, not a failed proof.
   `NeverDenied`, or the forum's `handler_bugs_are_denied` test, is how an app
   learns about it before users do.
+
+Not trusted any more: that `kernel_apply` is the kernel's `apply`
+(`g.kernel_apply_eq`), and that the server runs `g` and that `apply` (lint).
 
 Three things the guard does not hide: whether a write command was refused by
 the kernel (`NotFound`) or by the policy (`Denied`) can tell an actor that a
@@ -104,7 +115,8 @@ The guard runs `kernel_apply` once per write (on the prefix) and once more for
 the state after the command, and `guard_viewed` builds the view for read-only
 commands: a few snapshot copies per command, linear in the tenant's size. The
 engine already loads and decodes the whole tenant from PostgreSQL per
-command. Measurements: [`NUMBERS.md`](NUMBERS.md#framework-proven-authorization).
+command. `stored` is one lookup per disclosed row; on `Vec` snapshots a
+listing is quadratic in its length (18.6 ms for 10,000 posts in the forum). Measurements: [`NUMBERS.md`](NUMBERS.md#framework-proven-authorization).
 
 ## Not built
 

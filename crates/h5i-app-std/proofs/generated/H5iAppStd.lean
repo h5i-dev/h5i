@@ -20,7 +20,7 @@ set_option maxRecDepth 2048
 namespace h5i_app_std
 
 /-- [h5i_app_std::authz::Guarded]
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 18:0-22:1
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 21:0-25:1
     Visibility: public -/
 @[discriminant isize]
 inductive authz.Guarded (E : Type) where
@@ -28,7 +28,7 @@ inductive authz.Guarded (E : Type) where
 | Denied : authz.Guarded E
 
 /-- [h5i_app_std::authz::{impl core::clone::Clone for h5i_app_std::authz::Guarded<E>}::clone]:
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 17:9-17:14
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 20:9-20:14
     Visibility: public -/
 def authz.Guarded.Insts.CoreCloneClone.clone
   {E : Type} (corecloneCloneInst : core.clone.Clone E) (self : authz.Guarded E)
@@ -42,7 +42,7 @@ def authz.Guarded.Insts.CoreCloneClone.clone
   | authz.Guarded.Denied => ok authz.Guarded.Denied
 
 /-- Trait implementation: [h5i_app_std::authz::{impl core::clone::Clone for h5i_app_std::authz::Guarded<E>}]
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 17:9-17:14 -/
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 20:9-20:14 -/
 @[reducible]
 def authz.Guarded.Insts.CoreCloneClone {E : Type} (corecloneCloneInst :
   core.clone.Clone E) : core.clone.Clone (authz.Guarded E) := {
@@ -50,7 +50,7 @@ def authz.Guarded.Insts.CoreCloneClone {E : Type} (corecloneCloneInst :
 }
 
 /-- Trait implementation: [h5i_app_std::authz::{impl core::marker::Copy for h5i_app_std::authz::Guarded<E>}]
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 17:16-17:20 -/
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 20:16-20:20 -/
 @[reducible]
 def authz.Guarded.Insts.CoreMarkerCopy {E : Type} (coremarkerCopyInst :
   core.marker.Copy E) : core.marker.Copy (authz.Guarded E) := {
@@ -58,7 +58,7 @@ def authz.Guarded.Insts.CoreMarkerCopy {E : Type} (coremarkerCopyInst :
 }
 
 /-- [h5i_app_std::authz::{impl core::fmt::Debug for h5i_app_std::authz::Guarded<E>}::fmt]:
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 17:22-17:27
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 20:22-20:27
     Visibility: public -/
 def authz.Guarded.Insts.CoreFmtDebug.fmt
   {E : Type} (corefmtDebugInst : core.fmt.Debug E) (self : authz.Guarded E)
@@ -72,7 +72,7 @@ def authz.Guarded.Insts.CoreFmtDebug.fmt
   | authz.Guarded.Denied => core.fmt.Formatter.write_str f (toStr "Denied")
 
 /-- Trait implementation: [h5i_app_std::authz::{impl core::fmt::Debug for h5i_app_std::authz::Guarded<E>}]
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 17:22-17:27 -/
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 20:22-20:27 -/
 @[reducible]
 def authz.Guarded.Insts.CoreFmtDebug {E : Type} (corefmtDebugInst :
   core.fmt.Debug E) : core.fmt.Debug (authz.Guarded E) := {
@@ -80,7 +80,7 @@ def authz.Guarded.Insts.CoreFmtDebug {E : Type} (corefmtDebugInst :
 }
 
 /-- Trait implementation: [h5i_app_std::authz::{impl core::marker::StructuralPartialEq for h5i_app_std::authz::Guarded<E>}]
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 17:29-17:38 -/
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 20:29-20:38 -/
 @[reducible]
 def authz.Guarded.Insts.CoreMarkerStructuralPartialEq {E : Type}
   (corecmpPartialEqInst : core.cmp.PartialEq E E) :
@@ -88,7 +88,7 @@ def authz.Guarded.Insts.CoreMarkerStructuralPartialEq {E : Type}
 }
 
 /-- [h5i_app_std::authz::{impl core::cmp::PartialEq<h5i_app_std::authz::Guarded<E>> for h5i_app_std::authz::Guarded<E>}::eq]:
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 17:29-17:38
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 20:29-20:38
     Visibility: public -/
 def authz.Guarded.Insts.CoreCmpPartialEqGuarded.eq
   {E : Type} (corecmpPartialEqInst : core.cmp.PartialEq E E)
@@ -110,7 +110,7 @@ def authz.Guarded.Insts.CoreCmpPartialEqGuarded.eq
   else ok false
 
 /-- Trait implementation: [h5i_app_std::authz::{impl core::cmp::PartialEq<h5i_app_std::authz::Guarded<E>> for h5i_app_std::authz::Guarded<E>}]
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 17:29-17:38 -/
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 20:29-20:38 -/
 @[reducible]
 impl_def authz.Guarded.Insts.CoreCmpPartialEqGuarded {E : Type}
   (corecmpPartialEqInst : core.cmp.PartialEq E E) : core.cmp.PartialEq
@@ -121,7 +121,7 @@ impl_def authz.Guarded.Insts.CoreCmpPartialEqGuarded {E : Type}
 }
 
 /-- [h5i_app_std::authz::{impl core::cmp::Eq for h5i_app_std::authz::Guarded<E>}::assert_fields_are_eq]:
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 17:40-17:42
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 20:40-20:42
     Visibility: public -/
 def authz.Guarded.Insts.CoreCmpEq.assert_fields_are_eq
   {E : Type} (corecmpEqInst : core.cmp.Eq E) (self : authz.Guarded E) :
@@ -130,7 +130,7 @@ def authz.Guarded.Insts.CoreCmpEq.assert_fields_are_eq
   ok ()
 
 /-- Trait implementation: [h5i_app_std::authz::{impl core::cmp::Eq for h5i_app_std::authz::Guarded<E>}]
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 17:40-17:42 -/
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 20:40-20:42 -/
 @[reducible]
 def authz.Guarded.Insts.CoreCmpEq {E : Type} (corecmpEqInst : core.cmp.Eq E) :
   core.cmp.Eq (authz.Guarded E) := {
@@ -141,7 +141,7 @@ def authz.Guarded.Insts.CoreCmpEq {E : Type} (corecmpEqInst : core.cmp.Eq E) :
 }
 
 /-- Trait declaration: [h5i_app_std::authz::Transition]
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 28:0-32:1
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 31:0-35:1
     Visibility: public -/
 structure authz.Transition (Self : Type) (A : Type) (S : Type) (C : Type) (W :
   Type) (R : Type) (E : Type) where
@@ -150,21 +150,22 @@ structure authz.Transition (Self : Type) (A : Type) (S : Type) (C : Type) (W :
   kernel_apply : S → alloc.vec.Vec W → Result S
 
 /-- Trait declaration: [h5i_app_std::authz::Policy]
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 36:0-41:1
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 39:0-49:1
     Visibility: public -/
 structure authz.Policy (Self : Type) (A : Type) (S : Type) (W : Type) (D :
   Type) where
   permits : A → S → W → Result Bool
   visible : A → S → D → Result Bool
+  stored : S → D → Result Bool
 
 /-- Trait declaration: [h5i_app_std::authz::Disclose]
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 45:0-47:1
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 53:0-55:1
     Visibility: public -/
 structure authz.Disclose (Self : Type) (D : Type) where
   disclosed : Self → Result (alloc.vec.Vec D)
 
 /-- [h5i_app_std::authz::prefix]: loop body 0:
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 53:4-56:5
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 61:4-64:5
     Visibility: public -/
 @[rust_loop_body]
 def authz.prefix_loop.body
@@ -187,7 +188,7 @@ def authz.prefix_loop.body
   else ok (done out)
 
 /-- [h5i_app_std::authz::prefix]: loop 0:
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 53:4-56:5
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 61:4-64:5
     Visibility: public -/
 @[rust_loop]
 def authz.prefix_loop
@@ -200,7 +201,7 @@ def authz.prefix_loop
     (out, i)
 
 /-- [h5i_app_std::authz::prefix]:
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 50:0-58:1
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 58:0-66:1
     Visibility: public -/
 @[reducible]
 def authz.prefix
@@ -211,7 +212,7 @@ def authz.prefix
   authz.prefix_loop corecloneCloneInst ws n (alloc.vec.Vec.new W) 0#usize
 
 /-- [h5i_app_std::authz::check_writes]: loop body 0:
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 67:4-75:1
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 75:4-83:1
     Visibility: public -/
 @[rust_loop_body]
 def authz.check_writes_loop.body
@@ -236,7 +237,7 @@ def authz.check_writes_loop.body
   else ok (done true)
 
 /-- [h5i_app_std::authz::check_writes]: loop 0:
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 67:4-75:1
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 75:4-83:1
     Visibility: public -/
 @[rust_loop]
 def authz.check_writes_loop
@@ -252,7 +253,7 @@ def authz.check_writes_loop
     i
 
 /-- [h5i_app_std::authz::check_writes]:
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 61:0-75:1
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 69:0-83:1
     Visibility: public -/
 @[reducible]
 def authz.check_writes
@@ -265,8 +266,21 @@ def authz.check_writes
   authz.check_writes_loop corecloneCloneInst TransitionInst PolicyInst actor s
     ws 0#usize
 
+/-- [h5i_app_std::authz::shown]:
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 86:0-91:1
+    Visibility: public -/
+def authz.shown
+  {A : Type} {S : Type} {W : Type} {D : Type} {P : Type} (PolicyInst :
+  authz.Policy P A S W D) (actor : A) (s : S) (d : D) :
+  Result Bool
+  := do
+  let b ← PolicyInst.stored s d
+  if b
+  then PolicyInst.visible actor s d
+  else ok false
+
 /-- [h5i_app_std::authz::check_reads]: loop body 0:
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 80:4-87:1
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 96:4-103:1
     Visibility: public -/
 @[rust_loop_body]
 def authz.check_reads_loop.body
@@ -280,12 +294,12 @@ def authz.check_reads_loop.body
   then
     let t ←
       alloc.vec.Vec.index (core.slice.index.SliceIndexUsizeSlice D) ds i
-    let b ← PolicyInst.visible actor before t
+    let b ← authz.shown PolicyInst actor before t
     if b
     then let i2 ← i + 1#usize
          ok (cont i2)
     else
-      let b1 ← PolicyInst.visible actor after t
+      let b1 ← authz.shown PolicyInst actor after t
       if b1
       then let i2 ← i + 1#usize
            ok (cont i2)
@@ -293,7 +307,7 @@ def authz.check_reads_loop.body
   else ok (done true)
 
 /-- [h5i_app_std::authz::check_reads]: loop 0:
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 80:4-87:1
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 96:4-103:1
     Visibility: public -/
 @[rust_loop]
 def authz.check_reads_loop
@@ -307,7 +321,7 @@ def authz.check_reads_loop
     i
 
 /-- [h5i_app_std::authz::check_reads]:
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 78:0-87:1
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 94:0-103:1
     Visibility: public -/
 @[reducible]
 def authz.check_reads
@@ -319,7 +333,7 @@ def authz.check_reads
   authz.check_reads_loop PolicyInst actor before after ds 0#usize
 
 /-- [h5i_app_std::authz::guard]:
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 91:0-109:1
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 107:0-125:1
     Visibility: public -/
 def authz.guard
   {A : Type} {S : Type} {C : Type} {W : Type} {R : Type} {E : Type} {D : Type}
@@ -347,14 +361,14 @@ def authz.guard
     ok (core.result.Result.Err (authz.Guarded.App e))
 
 /-- Trait declaration: [h5i_app_std::authz::View]
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 115:0-120:1
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 131:0-136:1
     Visibility: public -/
 structure authz.View (Self : Type) (A : Type) (S : Type) (C : Type) where
   read_only : C → Result Bool
   view : A → S → Result S
 
 /-- [h5i_app_std::authz::guard_viewed]:
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 125:0-157:1
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 141:0-173:1
     Visibility: public -/
 def authz.guard_viewed
   {A : Type} {S : Type} {C : Type} {W : Type} {R : Type} {E : Type} {D : Type}

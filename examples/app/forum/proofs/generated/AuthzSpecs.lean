@@ -7,7 +7,8 @@ import H5iAppLib
 `h5i_app_std::authz::guard` runs a kernel's `transition` and refuses the
 command unless every write is permitted, each in the state the writes before
 it leave (the kernel's own `apply` of the prefix), and every row the reply
-discloses is visible before or after the command.
+discloses is stored, exactly as disclosed, and visible, before or after the
+command (`Shown`).
 
 `guard_authorized` is proven here once, over arbitrary `Transition`, `Policy`
 and `Disclose` instances: it never looks inside `transition`, `apply`,
@@ -49,12 +50,17 @@ def WritesPermitted (tinst : h5i_app_std.authz.Transition T A S C W R E)
     (pinst : h5i_app_std.authz.Policy P A S W D) (a : A) (s : S) (ws : alloc.vec.Vec W) : Prop :=
   ∀ i (hi : i < ws.val.length), ∃ si, tinst.kernel_apply s (take ws i) = ok si ∧ pinst.permits a si ws.val[i] = ok true
 
-/-- Every row the reply discloses is visible before the command or after it. -/
+/-- `d` is stored in `s`, exactly as given, and `a` may see it there. -/
+def Shown (pinst : h5i_app_std.authz.Policy P A S W D) (a : A) (s : S) (d : D) : Prop :=
+  pinst.stored s d = ok true ∧ pinst.visible a s d = ok true
+
+/-- Every row the reply discloses is `Shown` before the command or after it:
+stored there as disclosed, and visible. -/
 def ReadsVisible (tinst : h5i_app_std.authz.Transition T A S C W R E)
     (pinst : h5i_app_std.authz.Policy P A S W D) (dinst : h5i_app_std.authz.Disclose R D)
     (a : A) (s : S) (ws : alloc.vec.Vec W) (r : R) : Prop :=
   ∃ after ds, tinst.kernel_apply s ws = ok after ∧ dinst.disclosed r = ok ds ∧
-    ∀ d ∈ ds.val, pinst.visible a s d = ok true ∨ pinst.visible a after d = ok true
+    ∀ d ∈ ds.val, Shown pinst a s d ∨ Shown pinst a after d
 
 /-- The framework theorem for a guarded kernel `g`: for every actor, state
 and command, a committed command's writes are permitted and its disclosed
@@ -164,14 +170,23 @@ theorem check_writes_ok (cinst : core.clone.Clone W) [CloneLaw cinst]
     intro _ j hj
     exact hall j (by scalar_tac) hj
 
+h5i_when h5i_app_std.authz.shown =>
+theorem shown_ok (pinst : h5i_app_std.authz.Policy P A S W D) (a : A) (s : S) (d : D)
+    (h : h5i_app_std.authz.shown pinst a s d = ok true) : Shown pinst a s d := by
+  unfold h5i_app_std.authz.shown at h
+  obtain ⟨b, hb, h⟩ := bind_eq_ok.1 h
+  split at h
+  · subst_vars; exact ⟨hb, h⟩
+  · simp at h
+
 h5i_when h5i_app_std.authz.check_reads =>
 theorem check_reads_ok (pinst : h5i_app_std.authz.Policy P A S W D) (a : A) (before after : S)
     (ds : alloc.vec.Vec D) (h : h5i_app_std.authz.check_reads pinst a before after ds = ok true) :
-    ∀ d ∈ ds.val, pinst.visible a before d = ok true ∨ pinst.visible a after d = ok true := by
+    ∀ d ∈ ds.val, Shown pinst a before d ∨ Shown pinst a after d := by
   unfold h5i_app_std.authz.check_reads h5i_app_std.authz.check_reads_loop at h
   refine loop_true_witness _
     (fun i : Usize => i.val ≤ ds.val.length ∧ ∀ j (hj : j < i.val) (hj' : j < ds.val.length),
-      pinst.visible a before ds.val[j] = ok true ∨ pinst.visible a after ds.val[j] = ok true)
+      Shown pinst a before ds.val[j] ∨ Shown pinst a after ds.val[j])
     (fun i => ds.val.length - i.val) _ ?_ 0#usize ⟨by simp, by simp⟩ h
   · rintro i r ⟨hle, hall⟩ hr
     unfold h5i_app_std.authz.check_reads_loop.body at hr
@@ -180,10 +195,10 @@ theorem check_reads_ok (pinst : h5i_app_std.authz.Policy P A S W D) (a : A) (bef
     · obtain ⟨t, ht, hr⟩ := bind_eq_ok.1 hr
       obtain ⟨hlt, rfl⟩ := index_ok ht
       obtain ⟨b, hb, hr⟩ := bind_eq_ok.1 hr
-      have step (hv : pinst.visible a before ds.val[i.val] = ok true ∨
-          pinst.visible a after ds.val[i.val] = ok true) {i2 : Usize} (hi2 : i + 1#usize = ok i2) :
+      have step (hv : Shown pinst a before ds.val[i.val] ∨ Shown pinst a after ds.val[i.val])
+          {i2 : Usize} (hi2 : i + 1#usize = ok i2) :
           (i2.val ≤ ds.val.length ∧ ∀ j (hj : j < i2.val) (hj' : j < ds.val.length),
-            pinst.visible a before ds.val[j] = ok true ∨ pinst.visible a after ds.val[j] = ok true) ∧
+            Shown pinst a before ds.val[j] ∨ Shown pinst a after ds.val[j]) ∧
           ds.val.length - i2.val < ds.val.length - i.val := by
         have hi2v := add_ok_val hi2
         refine ⟨⟨by scalar_tac, fun j hj hj' => ?_⟩, by scalar_tac⟩
@@ -194,12 +209,12 @@ theorem check_reads_ok (pinst : h5i_app_std.authz.Policy P A S W D) (a : A) (bef
       split at hr
       · obtain ⟨i2, hi2, hr⟩ := bind_eq_ok.1 hr
         simp only [ok.injEq] at hr; subst hr
-        exact step (.inl (by subst_vars; exact hb)) hi2
+        exact step (.inl (shown_ok pinst a before _ (by subst_vars; exact hb))) hi2
       · obtain ⟨b1, hb1, hr⟩ := bind_eq_ok.1 hr
         split at hr
         · obtain ⟨i2, hi2, hr⟩ := bind_eq_ok.1 hr
           simp only [ok.injEq] at hr; subst hr
-          exact step (.inr (by subst_vars; exact hb1)) hi2
+          exact step (.inr (shown_ok pinst a after _ (by subst_vars; exact hb1))) hi2
         · simp only [ok.injEq] at hr; subst hr; simp
     · simp only [ok.injEq] at hr; subst hr
       intro _ d hd
@@ -310,10 +325,10 @@ theorem transition_authorized_of_never_denied
 /-! ## Read-only commands on the actor's view -/
 
 h5i_when h5i_app_std.authz.guard_viewed =>
-/-- Every row the reply discloses is visible in `v`. -/
+/-- Every row the reply discloses is `Shown` in `v`. -/
 def DisclosedVisible (pinst : h5i_app_std.authz.Policy P A S W D) (dinst : h5i_app_std.authz.Disclose R D)
     (a : A) (v : S) (r : R) : Prop :=
-  ∃ ds, dinst.disclosed r = ok ds ∧ ∀ d ∈ ds.val, pinst.visible a v d = ok true
+  ∃ ds, dinst.disclosed r = ok ds ∧ ∀ d ∈ ds.val, Shown pinst a v d
 
 h5i_when h5i_app_std.authz.guard_viewed =>
 /-- The framework theorem for a kernel guarded with `guard_viewed`: a
@@ -423,8 +438,11 @@ end Viewed
 `h5i_authz g` for a kernel function `g` whose extracted body is the guard
 applied to the app's instances (`guarded_transition` in the kernel crate):
 it reads the instances off `g`'s definition and adds `g.authorized`, proven by
-`authorized_of_eq` or `authorized_viewed_of_eq`. The statement it adds is
-printed, so the app's report shows what was proven. -/
+`authorized_of_eq` or `authorized_viewed_of_eq`, and `g.kernel_apply_eq`: the
+instance's `kernel_apply` is the kernel's `apply`, so the states writes are
+checked in are the ones the store commits (it refuses an instance where it is
+not). The statements it adds are printed, so the app's report shows what was
+proven. -/
 
 open Lean Elab Command Meta in
 /-- `(guard function, its number of implicit type arguments)` if `e` is a
@@ -471,6 +489,22 @@ elab_rules : command
       let tv := TheoremVal.mk (ConstantVal.mk thm ci.levelParams ty) pf [thm]
       addDecl (Declaration.thmDecl tv)
       logInfo m!"{thm} : {ty}"
+      -- The states writes are checked in come from `kernel_apply`: it must be
+      -- the kernel's own `apply`, the commit semantics the store is proven to
+      -- follow (A4), not a function written for the policy.
+      let applyName := gName.getRoot ++ `apply
+      unless (← getEnv).contains applyName do
+        throwError "h5i_authz: {applyName} not found: `Transition::kernel_apply` must be the kernel's `apply` (from `schema!` with `writes`)"
+      let some structName := (← whnf (← inferType tinst)).getAppFn.constName?
+        | throwError "h5i_authz: cannot read the `Transition` instance of {gName}"
+      let kApply ← mkAppM (structName ++ `kernel_apply) #[tinst]
+      let applyE := mkConst applyName
+      unless ← isDefEq kApply applyE do
+        throwError "h5i_authz: the `Transition` instance of {gName} does not define `kernel_apply` as {applyName}; make `kernel_apply` call `apply(s, ws)` and nothing else"
+      let eqTy ← mkEq kApply applyE
+      let eqThm := gName ++ `kernel_apply_eq
+      addDecl (Declaration.thmDecl (TheoremVal.mk (ConstantVal.mk eqThm ci.levelParams eqTy) (← mkEqRefl kApply) [eqThm]))
+      logInfo m!"{eqThm} : {eqTy}"
       if viewed then
         let ro ← mkAppM ``read_only_sound_of_viewed #[gE, tinst, pinst, dinst, args[nImpl + 4]!,
           ← mkAppM ``And.left #[mkConst thm (ci.levelParams.map mkLevelParam)]]

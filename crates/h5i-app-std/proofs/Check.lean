@@ -78,6 +78,7 @@ uses only the standard axioms. Not copied into kernels. -/
 #print axioms h5i_app_std.Specs.authz.index_ok
 #print axioms h5i_app_std.Specs.authz.prefix_ok
 #print axioms h5i_app_std.Specs.authz.check_writes_ok
+#print axioms h5i_app_std.Specs.authz.shown_ok
 #print axioms h5i_app_std.Specs.authz.check_reads_ok
 #print axioms h5i_app_std.Specs.authz.guard_authorized
 #print axioms h5i_app_std.Specs.authz.guard_app_error
