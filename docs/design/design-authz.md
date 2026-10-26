@@ -199,21 +199,31 @@ versus update is the policy's own `find_*` lookup, as in the forum.
   `h5i_derive_all`, one `h5i_authz` per function). It fails if `[authz]` names
   functions but the kernel never calls the guard, or `std-specs` is off.
 - `extract` also writes a storage section into `Authz.lean` (A4 for the
-  app, below) when `sql_write` only pushes `schema!` table writes.
-- `h5i app check` runs `lake build Authz` itself, so a lakefile whose default
-  roots miss the module cannot pass on a stale `.olean`; gates the module
-  like a hand-written one; and requires `<kernel>.<fn>.authorized`,
-  `.kernel_apply_eq`, the storage theorems when generated, and
+  app, below) when `sql_write` only pushes `schema!` table writes, and
+  fails otherwise unless `[authz] storage` names the app's own theorem.
+- `h5i app check` runs `lake build Authz` itself, so it never gates a stale
+  `.olean` (a lakefile with no `Authz` target fails with a hint); gates the
+  module like a hand-written one; requires `<kernel>.<fn>.authorized`,
+  `.kernel_apply_eq`, the storage theorems (or `[authz] storage`), and
   `.read_only_sound` when the server overrides `Kernel::read_only` without a
-  proof stated in code (a comment does not count).
-- `h5i app lint` requires *every* `impl Kernel` in the project's crates'
-  `src/` (test modules and `tests/` excluded) to call an `[authz]` function
-  from `transition` and the kernel's `apply` from `apply` (whole
-  identifiers), so a wired decoy cannot cover an unwired impl; reports
-  "framework-proven"; and accepts the generated proof for `read_only` only
-  for a `guard_viewed` kernel whose `Kernel::read_only` delegates to the
-  kernel's.
-- The check record gets the coverage line only once the gate has passed.
+  proof stated in code (a comment does not count); and records the list it
+  required in the run, which the web view shows instead of recomputing it.
+- `h5i app lint` reads the Rust with `syn` (`crates/h5i-app-cli/src/rust.rs`):
+  each crate's module tree from `lib.rs`, `main.rs` and `src/bin`,
+  `#[cfg(test)]` items left out, unparsable files an error. The first
+  version scanned text and cut each file at its first `#[cfg(test)]`, which
+  the fourth review showed hid the real impl behind a test module above it,
+  missed `impl ::h5i_app_core::Kernel`, and so also let an unproven
+  `read_only` pass for apps without `[authz]`. With `[authz]`, it requires
+  *every* `impl Kernel` to call an `[authz]` function from `transition` and
+  the kernel's `apply` from `apply`; every `impl Store` to call
+  `schema_store` from `write` and `schema_load` from `load`, with no
+  hand-written function of either name, and no `load_for` override (a
+  partial load would have the policy judge a partial state); and accepts the
+  generated proof for `read_only` only for a `guard_viewed` kernel whose
+  `Kernel::read_only` delegates to the kernel's.
+- The check record gets the coverage line, with the storage status, only
+  once the gate has passed.
 
 ### The storage proof (A4 for the app)
 
@@ -231,6 +241,13 @@ anchored regexes) and `apply_write_enc` (`apply_write` changes
 `pg_stored`. A wrong reading of `sql_write`, or an `apply_write` that
 disagrees with it, fails the build. The same generated text proves storage
 for board and booking too, checked against their builds.
+
+The server's `Store` impl is not extracted, so that it calls `schema_store`
+and `schema_load` (which call the extracted `sql_writes` and `decode`) is a
+lint check, not a theorem. `pg_stored` is stated for an arbitrary `Step`, so
+it holds for whatever write sets the engine commits; it keeps the schema
+hypotheses (`Pg.Valid ts` and the table count) open, as board's `db_inv`
+does.
 - The check record carries the coverage line (`Run.authorization`), shown in
   the web view's check evidence.
 - CI needs no change: it runs `--all crates examples/app`, which finds the

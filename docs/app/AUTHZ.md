@@ -98,18 +98,42 @@ kernel's `apply` computes (A4), with no hand-written model:
 With `kernel_apply_eq`, the states the policy judges writes in are the states
 the database holds. `extract` generates the section when the kernel uses
 `schema!` with `writes` and every arm of `sql_write` only pushes table
-writes (the forum, board and booking all do); otherwise it says so, and the
-app proves A4 by hand, as board's `Storage.lean` does.
+writes (the forum, board and booking all do). Otherwise `extract` fails,
+unless the app proves A4 by hand (as board's `Storage.lean` does) and names
+that theorem as `[authz] storage = "<theorem>"`; `check` then requires it
+instead. The storage requirement never silently disappears, and the coverage
+line says which one holds (`storage: generated` or the theorem's name).
 
-`h5i app check` builds the `Authz` module itself (so a lakefile whose default
-roots miss it cannot pass on a stale build) and gates `g.authorized`,
-`g.kernel_apply_eq`, the storage theorems when generated, and
-`g.read_only_sound` when the server overrides `Kernel::read_only`. Put
-`AuthzSpecs`, `Authz` and `Schema` in a `lean_lib`'s roots so `lake build`
-builds them too. `h5i app lint` checks that every `impl Kernel` in the
-project's crates' `src/` (tests excluded) runs a guarded `g` as `transition`
-and the kernel's `apply` as `apply`, and that an overridden
-`Kernel::read_only` delegates to the kernel's.
+`pg_stored` keeps the schema's own hypotheses open, as board's `db_inv`
+does: `Pg.Valid ts`, `Pg.klOf ts = kl` and `ts.length = n` for the server's
+`schema_spec()`. They are checked at runtime (every compile and load checks
+`h5i_app_pgsql::valid`) and by the generated `schema_is_valid` test, not
+proven (TRUST.md, "Schema description").
+
+`h5i app check` builds the `Authz` module itself, so it never gates a stale
+`.olean`, and gates `g.authorized`, `g.kernel_apply_eq`, the storage theorems
+(or `[authz] storage`), and `g.read_only_sound` when the server overrides
+`Kernel::read_only`. `Authz`, `AuthzSpecs` and `Schema` must be in some
+`lean_lib`'s roots: otherwise lake has no `Authz` target and `check` fails
+with "unknown target `Authz`" and says to add it. The run records the list
+of theorems it required, which the web view shows.
+
+`h5i app lint` reads the server's Rust with `syn`, following each crate's
+module tree from `lib.rs`, `main.rs` and `src/bin` and leaving out
+`#[cfg(test)]` items (a file no `mod` reaches, or one that does not parse, is
+not skipped silently: an unparsable file fails lint). With `[authz]` it
+requires:
+
+- every `impl Kernel` (any spelling of the trait's path, or a `use … as`
+  rename) to call a guarded `g` from `transition` and the kernel's `apply`
+  from `apply`;
+- every `impl Store` to call `schema_store` from `write` and `schema_load`
+  from `load` (the code `Committed.pg_stored` is about), with no hand-written
+  function of either name, and not to override `load_for`: the guard judges
+  the policy on the snapshot it is given, so a partial load could let it
+  permit what the full state forbids (in the forum, registering as admin
+  when `users` is not loaded);
+- an overridden `Kernel::read_only` to delegate to the kernel's.
 
 ## What stays trusted
 
@@ -135,11 +159,15 @@ small enough to review:
   learns about it before users do.
 
 Not trusted any more: that `kernel_apply` is the kernel's `apply`
-(`g.kernel_apply_eq`); that the store commits what that `apply` computes
-(`Committed.pg_stored`, when generated); and that the server's `Kernel` runs
-`g` (lint, every impl). The store is written through `Store::write`, not
-`Kernel::apply`, which is why the storage theorem, not lint, carries that
-link.
+(`g.kernel_apply_eq`); that the kernel's `sql_writes` and `decode` store and
+load what that `apply` computes (`Committed.pg_stored`).
+
+Checked by lint, not proven: that the server runs that code. Its `Kernel` and
+`Store` impls are not extracted, so the link from `Store::write` to
+`schema_store` (which calls `sql_writes`) and from `load` to `schema_load` is
+the syntactic check above, as is the full-tenant load. `pg_stored` holds for
+any write sets the engine commits (its `Step` is arbitrary), so it needs no
+link to the guard; the guard's theorem says which write sets those are.
 
 ## What is not covered
 

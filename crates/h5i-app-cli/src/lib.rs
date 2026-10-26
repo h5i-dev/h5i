@@ -31,6 +31,7 @@ pub mod new;
 pub mod packages;
 pub mod pins;
 pub mod report;
+pub mod rust;
 pub mod util;
 
 use manifest::Project;

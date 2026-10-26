@@ -17,8 +17,10 @@ parser and encoder, the JSON writer, and the storage path:
 | `h5i_app_std::authz::guard`, `guard_viewed` | for every kernel and policy: a committed command's writes are permitted, each in the state the writes before it leave, and its disclosed rows stored as disclosed and visible; read-only commands under `guard_viewed` are noninterfering with what the view hides, and `ReadOnly.Sound`. An app opts in with `[authz]`; its theorem is generated ([`AUTHZ.md`](AUTHZ.md)) | `crates/h5i-app-std/proofs/AuthzSpecs.lean`, `generated/Authz.lean` |
 
 An app with `[authz]` gets this link generated (`Committed.pg_stored` in
-`generated/Authz.lean`: the store commits what its `apply` computes), with no
-invariant beyond it. Each server app with hand-written proofs applies
+`generated/Authz.lean`: the kernel's `sql_writes` and `decode` store and
+load what its `apply` computes), with no invariant beyond it; that its
+server's `Store` calls them, with the default full-tenant `load_for`, is
+checked by `h5i app lint`, not proven. Each server app with hand-written proofs applies
 `pg_loaded_inv` to its extracted `transition`,
 `sql_writes` and `decode` as `db_inv` (docs: `Database.db_inv`, which also
 covers scoped loads). It says: for the server's schema and any tenant, every

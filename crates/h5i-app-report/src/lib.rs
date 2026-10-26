@@ -298,6 +298,10 @@ pub struct Run {
     /// framework-proven, a hand-written theorem, or none.
     #[serde(default)]
     pub authorization: String,
+    /// The theorems this check required by name: `[check] theorems` and,
+    /// for `[authz]`, the generated ones.
+    #[serde(default)]
+    pub required_theorems: Vec<String>,
     pub error: Option<String>,
 }
 
@@ -349,6 +353,7 @@ impl Recorder {
             declarations: Vec::new(),
             unbuilt_modules: Vec::new(),
             authorization: String::new(),
+            required_theorems: Vec::new(),
             error: None,
         };
         let r = Self {

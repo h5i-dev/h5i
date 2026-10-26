@@ -151,7 +151,7 @@ fn extract_into(p: &Project, dest: &Path, schema_lean: bool, out: &Out) -> Resul
     if ex.std_specs {
         std_specs(&meta, &module, &id, dest)?;
     }
-    authz_lean(&p.manifest.authz.guarded, ex.std_specs, &module, &id, dest)?;
+    authz_lean(&p.manifest.authz.guarded, p.manifest.authz.storage.as_deref(), ex.std_specs, &module, &id, dest)?;
     if ex.schema && schema_lean {
         bless_schema(&krate, out)?;
     }
@@ -275,7 +275,7 @@ pub const AUTHZ_MODULE: &str = "Authz";
 /// Write `Authz.lean` for `[authz] guarded`: one `h5i_authz` per guarded
 /// kernel function, each instantiating the framework's theorem. Removes a
 /// stale one when the list is empty.
-fn authz_lean(guarded: &[String], std_specs: bool, module: &str, ns: &str, dest: &Path) -> Result<()> {
+fn authz_lean(guarded: &[String], storage: Option<&str>, std_specs: bool, module: &str, ns: &str, dest: &Path) -> Result<()> {
     let file = dest.join(format!("{AUTHZ_MODULE}.lean"));
     if guarded.is_empty() {
         if file.is_file() {
@@ -297,14 +297,18 @@ fn authz_lean(guarded: &[String], std_specs: bool, module: &str, ns: &str, dest:
     let schema = std::fs::read_to_string(dest.join("Schema.lean")).unwrap_or_default();
     let kernel = std::fs::read_to_string(dest.join(format!("{module}.lean"))).unwrap_or_default();
     let tables = schema_tables(&schema);
-    match sql_arms(&kernel) {
-        Some(arms) if !tables.is_empty() => {
+    match (storage, sql_arms(&kernel)) {
+        // The app proves A4 itself; `check` requires that theorem instead.
+        (Some(_), _) => {}
+        (None, Some(arms)) if !tables.is_empty() => {
             text = text.replacen("import AuthzSpecs\n", "import AuthzSpecs\nimport Schema\n", 1);
             text.push_str(&storage_text(ns, &tables, &arms));
         }
-        _ => eprintln!(
-            "note: no storage proof generated: needs `schema = true` with `writes`, and a `sql_write` whose arms \
-             only push `schema!` table writes; prove A4 by hand (as examples/app/board's Storage.lean does)"
+        (None, _) => bail!(
+            "cannot generate the storage proof for `[authz]`: it needs `schema = true` with `writes`, and a \
+             `sql_write` whose arms only push `schema!` table writes. Prove that the store commits what \
+             `apply` computes by hand (as examples/app/board's Storage.lean does) and name the theorem as \
+             `[authz] storage = \"<theorem>\"`"
         ),
     }
     std::fs::write(&file, text)?;

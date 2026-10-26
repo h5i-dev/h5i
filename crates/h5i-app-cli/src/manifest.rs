@@ -109,6 +109,11 @@ pub struct Authz {
     /// by instantiating the framework's theorem; `h5i app check` gates them.
     #[serde(default)]
     pub guarded: Vec<String>,
+    /// The app's own storage theorem (A4: the store commits what `apply`
+    /// computes), when `extract` cannot generate one. Absent, the generated
+    /// `Committed.*` theorems are required, and `extract` fails if it cannot
+    /// write them.
+    pub storage: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]

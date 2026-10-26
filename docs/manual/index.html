@@ -1590,12 +1590,16 @@ mutants generated from the kernel's syntax: comparison boundaries, <code>==</cod
 <code>proofs/generated/Authz.lean</code>, which proves <code>&lt;kernel&gt;.&lt;fn&gt;.authorized</code> by
 instantiating the framework's theorem, with no hand-written Lean,
 <code>&lt;fn&gt;.kernel_apply_eq</code> (the policy is checked against the kernel's own
-<code>apply</code>) and, when <code>sql_write</code> only pushes <code>schema!</code> table writes,
-<code>Committed.pg_stored</code> (the store commits what that <code>apply</code> computes). <code>check</code>
+<code>apply</code>) and <code>Committed.pg_stored</code> (the kernel's <code>sql_writes</code> and <code>decode</code>
+store and load what that <code>apply</code> computes). If <code>sql_write</code> is not a plain
+list of <code>schema!</code> table writes, <code>extract</code> fails unless
+<code>[authz] storage = "&lt;theorem&gt;"</code> names a hand-written storage proof. <code>check</code>
 builds <code>Authz</code> itself and gates these (and <code>&lt;fn&gt;.read_only_sound</code> when the
-server overrides <code>Kernel::read_only</code>); <code>lint</code> fails unless every <code>impl Kernel</code>
-outside tests runs a listed function as <code>transition</code> and the kernel's <code>apply</code>
-as <code>apply</code>. An app without <code>[authz]</code> is unaffected.</p>
+server overrides <code>Kernel::read_only</code>). <code>lint</code> parses the server with <code>syn</code>
+and fails unless every <code>impl Kernel</code> outside tests runs a listed function as
+<code>transition</code> and the kernel's <code>apply</code> as <code>apply</code>, and every <code>impl Store</code>
+writes and loads with the generated <code>schema_store</code>/<code>schema_load</code> and keeps
+the default <code>load_for</code>. An app without <code>[authz]</code> is unaffected.</p>
 <p><code>h5i app new</code> requires the h5i-app Lean library from git at this binary's
 release tag; <code>--h5i-path &lt;checkout&gt;</code> uses a local h5i checkout instead.</p>
 <div class="codeblock"><div class="codeblock-head"><span>toml</span><button class="copy-btn" type="button">Copy</button></div><pre><code class="language-toml"># h5i-app.toml
@@ -1608,6 +1612,7 @@ std-specs = true              # copy h5i-app-std's specs next to the extraction
 
 [authz]
 guarded = [&quot;guarded_transition&quot;]   # kernel fns defined as h5i_app_std::authz::guard(_viewed)
+# storage = &quot;my_kernel.Storage.db_inv&quot;   # only if the storage proof cannot be generated
 
 [check]
 theorems = [&quot;my_kernel.inv_preserved&quot;]   # must exist and pass the gate

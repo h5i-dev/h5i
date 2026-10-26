@@ -1300,12 +1300,16 @@ mutants generated from the kernel's syntax: comparison boundaries, `==` and
 `proofs/generated/Authz.lean`, which proves `<kernel>.<fn>.authorized` by
 instantiating the framework's theorem, with no hand-written Lean,
 `<fn>.kernel_apply_eq` (the policy is checked against the kernel's own
-`apply`) and, when `sql_write` only pushes `schema!` table writes,
-`Committed.pg_stored` (the store commits what that `apply` computes). `check`
+`apply`) and `Committed.pg_stored` (the kernel's `sql_writes` and `decode`
+store and load what that `apply` computes). If `sql_write` is not a plain
+list of `schema!` table writes, `extract` fails unless
+`[authz] storage = "<theorem>"` names a hand-written storage proof. `check`
 builds `Authz` itself and gates these (and `<fn>.read_only_sound` when the
-server overrides `Kernel::read_only`); `lint` fails unless every `impl Kernel`
-outside tests runs a listed function as `transition` and the kernel's `apply`
-as `apply`. An app without `[authz]` is unaffected.
+server overrides `Kernel::read_only`). `lint` parses the server with `syn`
+and fails unless every `impl Kernel` outside tests runs a listed function as
+`transition` and the kernel's `apply` as `apply`, and every `impl Store`
+writes and loads with the generated `schema_store`/`schema_load` and keeps
+the default `load_for`. An app without `[authz]` is unaffected.
 
 `h5i app new` requires the h5i-app Lean library from git at this binary's
 release tag; `--h5i-path <checkout>` uses a local h5i checkout instead.
@@ -1321,6 +1325,7 @@ std-specs = true              # copy h5i-app-std's specs next to the extraction
 
 [authz]
 guarded = ["guarded_transition"]   # kernel fns defined as h5i_app_std::authz::guard(_viewed)
+# storage = "my_kernel.Storage.db_inv"   # only if the storage proof cannot be generated
 
 [check]
 theorems = ["my_kernel.inv_preserved"]   # must exist and pass the gate

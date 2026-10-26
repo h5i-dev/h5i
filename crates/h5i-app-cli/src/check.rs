@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 
 use crate::manifest::Project;
 use crate::util::{self, Out};
@@ -55,7 +55,16 @@ fn check_recorded(
     if !authz.is_empty() {
         let mut build = Command::new("lake");
         build.args(["build", crate::extract::AUTHZ_MODULE]).current_dir(&proofs);
-        crate::report::step(record, "authz_build", out, |log| util::run(&mut build, log))?;
+        crate::report::step(record, "authz_build", out, |log| {
+            util::run(&mut build, log).with_context(|| {
+                format!(
+                    "building the generated `{m}` module failed. If lake says unknown target `{m}`, add \
+                     `{m}` (with `AuthzSpecs` and `Schema`) to a `lean_lib`'s roots in {}/lakefile.lean",
+                    proofs.display(),
+                    m = crate::extract::AUTHZ_MODULE
+                )
+            })
+        })?;
     }
     let mut problems = scan(&proofs)?;
     let (mut built, unbuilt) = hand_written_modules(&proofs, &p.manifest.check.targets)?;
@@ -73,6 +82,8 @@ fn check_recorded(
         theorems.extend(authz);
     }
     let theorems = &theorems;
+    // What this run required, so the web view shows the same list.
+    record.run.required_theorems = theorems.clone();
     if built.is_empty() && theorems.is_empty() {
         out.note("note: no hand-written modules built; nothing to gate");
     } else {
@@ -118,11 +129,11 @@ pub fn authz_theorems(p: &Project) -> Result<Vec<String>> {
     if crate::lint::overrides_read_only(p) && !has_read_only_proof(p) {
         out.extend(guarded.iter().map(|g| format!("{ns}.{g}.read_only_sound")));
     }
-    // The storage theorems, when `extract` could generate them.
-    let generated = std::fs::read_to_string(p.generated().join(format!("{}.lean", crate::extract::AUTHZ_MODULE)))
-        .unwrap_or_default();
-    if generated.contains(&format!("namespace {ns}.Committed")) {
-        out.extend(crate::extract::STORAGE_THEOREMS.iter().map(|t| format!("{ns}.{t}")));
+    // A4 for the app: the generated storage theorems, or the one the app
+    // names. Never silently neither.
+    match &p.manifest.authz.storage {
+        Some(t) => out.push(t.clone()),
+        None => out.extend(crate::extract::STORAGE_THEOREMS.iter().map(|t| format!("{ns}.{t}"))),
     }
     Ok(out)
 }
