@@ -1,0 +1,22 @@
+[package]
+name = "forum-kernel"
+description = "A forum whose authorization is proven by the framework: the kernel of Nyxis's bulletin board, ported"
+edition = "2024"
+license = "Apache-2.0"
+version = "0.1.0"
+publish = false
+
+# Extracted to Lean by Charon + Aeneas (`h5i app extract`).
+[dependencies]
+h5i-app-schema = { path = "../../../../crates/h5i-app-schema" }
+h5i-app-sql = { path = "../../../../crates/h5i-app-sql" }
+h5i-app-std = { path = "../../../../crates/h5i-app-std" }
+
+# Written in the subset of Rust that Charon + Aeneas translate (no `vec!`,
+# `&Vec` rather than slices, explicit loops and matches), as h5i-app-std is.
+[lints.clippy]
+len_zero = "allow"
+ptr_arg = "allow"
+needless_range_loop = "allow"
+vec_init_then_push = "allow"
+match_like_matches_macro = "allow"

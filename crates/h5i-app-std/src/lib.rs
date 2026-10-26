@@ -13,9 +13,14 @@
 //! --include h5i_app_std`), and `h5i app extract` copies the specs next to the
 //! kernel's Lean when its `h5i-app.toml` says `std-specs = true`.
 //!
+//! [`authz`] is different in kind: the authorization guard, whose theorem
+//! (`proofs/AuthzSpecs.lean`) holds for every kernel and policy, so an app
+//! gets proven authorization by running its kernel behind it.
+//!
 //! Written in the subset Charon + Aeneas translate: `while` loops, no
 //! closures, no `?`, `&Vec` rather than slices.
 
+pub mod authz;
 pub mod bytes;
 pub mod graph;
 pub mod hashmap;

@@ -1,0 +1,204 @@
+//! The forum's shell: moves data between the kernel, PostgreSQL and JSON.
+//! It decides nothing, and runs every command through the kernel's
+//! `guarded_transition`, so the framework's authorization theorem is about
+//! what this server commits.
+
+use axum::http::StatusCode;
+use forum_kernel as k;
+use h5i_app_core::{Kernel, TenantId};
+use h5i_app_json::Value as Out;
+use h5i_app_pg::{DbError, ReplyCodec, Store, Tx};
+use h5i_app_std::authz::Guarded;
+use serde::{Deserialize, Serialize};
+
+/// Marker type the framework's traits hang off.
+pub struct Forum;
+
+impl Kernel for Forum {
+    type Principal = k::Principal;
+    type Snapshot = k::Snapshot;
+    type Command = k::Command;
+    type WriteSet = Vec<k::Write>;
+    type Reply = k::Reply;
+    type Error = Guarded<k::Error>;
+
+    fn tenant(actor: &k::Principal) -> TenantId {
+        TenantId(actor.org)
+    }
+
+    /// The policy-guarded transition: `forum_kernel.guarded_transition.authorized`.
+    fn transition(
+        actor: &k::Principal,
+        snap: &k::Snapshot,
+        cmd: &k::Command,
+    ) -> Result<(Vec<k::Write>, k::Reply), Guarded<k::Error>> {
+        k::guarded_transition(actor, snap, cmd)
+    }
+
+    fn apply(snap: &k::Snapshot, ws: &Vec<k::Write>) -> k::Snapshot {
+        k::apply(snap, ws)
+    }
+
+    /// Proven `H5iAppLib.ReadOnly.Sound`: `forum_kernel.guarded_transition.read_only_sound`.
+    fn read_only(cmd: &k::Command) -> bool {
+        k::read_only(cmd)
+    }
+}
+
+pub fn principal(org: u64, user: u64) -> k::Principal {
+    k::Principal { org, user }
+}
+
+// The `users`, `posts` and `counters` tables, from the kernel's `schema!`.
+forum_kernel::forum_tables!(Forum);
+
+pub struct ForumStore;
+
+impl Store<Forum> for ForumStore {
+    fn ddl() -> Vec<String> {
+        schema_ddl()
+    }
+
+    fn tables() -> Vec<&'static str> {
+        schema_tables()
+    }
+
+    async fn load(tx: &Tx<'_>, t: TenantId) -> Result<k::Snapshot, DbError> {
+        schema_load(tx, t).await
+    }
+
+    async fn write(tx: &Tx<'_>, t: TenantId, ws: &Vec<k::Write>) -> Result<(), DbError> {
+        schema_store(tx, t, ws).await
+    }
+}
+
+/// The JSON a client sends, e.g. `{"cmd":"create_post","title":"hi","body":"…"}`.
+#[derive(Deserialize)]
+#[serde(tag = "cmd", rename_all = "snake_case", deny_unknown_fields)]
+enum CommandJson {
+    Register {
+        #[serde(default)]
+        admin: bool,
+    },
+    CreatePost {
+        title: String,
+        body: String,
+        #[serde(default)]
+        published: bool,
+    },
+    EditPost { id: u64, title: String, body: String },
+    SetPublished { id: u64, published: bool },
+    DeletePost { id: u64 },
+    SetAdmin { user: u64, admin: bool },
+    ReadPost { id: u64 },
+    ListPosts,
+    ReadUser { user: u64 },
+}
+
+impl From<CommandJson> for k::Command {
+    fn from(c: CommandJson) -> Self {
+        match c {
+            CommandJson::Register { admin } => k::Command::Register { admin },
+            CommandJson::CreatePost { title, body, published } => {
+                k::Command::CreatePost { title: title.into_bytes(), body: body.into_bytes(), published }
+            }
+            CommandJson::EditPost { id, title, body } => {
+                k::Command::EditPost { id, title: title.into_bytes(), body: body.into_bytes() }
+            }
+            CommandJson::SetPublished { id, published } => k::Command::SetPublished { id, published },
+            CommandJson::DeletePost { id } => k::Command::DeletePost { id },
+            CommandJson::SetAdmin { user, admin } => k::Command::SetAdmin { user, admin },
+            CommandJson::ReadPost { id } => k::Command::ReadPost { id },
+            CommandJson::ListPosts => k::Command::ListPosts,
+            CommandJson::ReadUser { user } => k::Command::ReadUser { user },
+        }
+    }
+}
+
+fn post_json(p: &k::Post) -> Out {
+    Out::obj([
+        ("id", p.id.into()),
+        ("author", p.author.into()),
+        ("title", Out::Str(p.title.clone())),
+        ("body", Out::Str(p.body.clone())),
+        ("published", p.published.into()),
+    ])
+}
+
+impl h5i_app_http::Api<Forum> for ForumStore {
+    fn decode_command(body: serde_json::Value) -> Result<k::Command, String> {
+        serde_json::from_value::<CommandJson>(body).map(Into::into).map_err(|e| e.to_string())
+    }
+
+    fn encode_reply(r: &k::Reply) -> Out {
+        match r {
+            k::Reply::Created(id) => Out::obj([("id", (*id).into())]),
+            k::Reply::Done => Out::obj([("ok", true.into())]),
+            k::Reply::Found(p) => post_json(p),
+            k::Reply::Posts(ps) => Out::Arr(ps.iter().map(post_json).collect()),
+            k::Reply::Account(u) => Out::obj([("user", u.user.into()), ("admin", u.admin.into())]),
+        }
+    }
+
+    fn encode_error(e: &Guarded<k::Error>) -> (StatusCode, Out) {
+        let (status, code) = match e {
+            Guarded::Denied => (StatusCode::FORBIDDEN, "forbidden"),
+            Guarded::App(k::Error::NotFound) => (StatusCode::NOT_FOUND, "not_found"),
+            Guarded::App(k::Error::BadText) => (StatusCode::UNPROCESSABLE_ENTITY, "bad_text"),
+            Guarded::App(k::Error::Exists) => (StatusCode::CONFLICT, "exists"),
+            Guarded::App(k::Error::Overflow) => (StatusCode::INTERNAL_SERVER_ERROR, "overflow"),
+        };
+        (status, h5i_app_http::error_body(code))
+    }
+}
+
+type PostTuple = (u64, u64, Vec<u8>, Vec<u8>, bool);
+
+/// Stored replies for idempotent retries.
+#[derive(Serialize, Deserialize)]
+enum StoredReply {
+    Created(u64),
+    Done,
+    Found(PostTuple),
+    Posts(Vec<PostTuple>),
+    Account(u64, bool),
+}
+
+fn tuple(p: &k::Post) -> PostTuple {
+    (p.id, p.author, p.title.clone(), p.body.clone(), p.published)
+}
+
+fn untuple((id, author, title, body, published): PostTuple) -> k::Post {
+    k::Post { id, author, title, body, published }
+}
+
+impl ReplyCodec<Forum> for ForumStore {
+    fn fingerprint(cmd: &k::Command) -> Vec<u8> {
+        format!("{cmd:?}").into_bytes()
+    }
+
+    fn scope(actor: &k::Principal) -> String {
+        format!("u{}", actor.user)
+    }
+
+    fn encode(r: &k::Reply) -> Vec<u8> {
+        let stored = match r {
+            k::Reply::Created(id) => StoredReply::Created(*id),
+            k::Reply::Done => StoredReply::Done,
+            k::Reply::Found(p) => StoredReply::Found(tuple(p)),
+            k::Reply::Posts(ps) => StoredReply::Posts(ps.iter().map(tuple).collect()),
+            k::Reply::Account(u) => StoredReply::Account(u.user, u.admin),
+        };
+        serde_json::to_vec(&stored).expect("stored replies serialize")
+    }
+
+    fn decode(b: &[u8]) -> Result<k::Reply, String> {
+        Ok(match serde_json::from_slice(b).map_err(|e| e.to_string())? {
+            StoredReply::Created(id) => k::Reply::Created(id),
+            StoredReply::Done => k::Reply::Done,
+            StoredReply::Found(p) => k::Reply::Found(untuple(p)),
+            StoredReply::Posts(ps) => k::Reply::Posts(ps.into_iter().map(untuple).collect()),
+            StoredReply::Account(user, admin) => k::Reply::Account(k::User { user, admin }),
+        })
+    }
+}

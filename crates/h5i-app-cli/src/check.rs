@@ -48,15 +48,26 @@ fn check_recorded(
         .current_dir(&proofs);
     crate::report::step(record, "lean_build", out, |log| util::run(&mut build, log))?;
 
+    if let Some(a) = crate::lint::authz_coverage(p) {
+        record.run.authorization = a;
+    }
     let mut problems = scan(&proofs)?;
-    let (built, unbuilt) = hand_written_modules(&proofs, &p.manifest.check.targets)?;
+    let (mut built, unbuilt) = hand_written_modules(&proofs, &p.manifest.check.targets)?;
     record.run.unbuilt_modules = unbuilt.clone();
     for m in &unbuilt {
         out.note(&format!(
             "note: {m} is not built by `lake build`, so its theorems are not gated"
         ));
     }
-    let theorems = &p.manifest.check.theorems;
+    let mut theorems = p.manifest.check.theorems.clone();
+    // `[authz]`: the generated module is gated like a hand-written one, and
+    // each guarded function's theorem must exist.
+    let authz = authz_theorems(p)?;
+    if !authz.is_empty() {
+        built.push(crate::extract::AUTHZ_MODULE.to_string());
+        theorems.extend(authz);
+    }
+    let theorems = &theorems;
     if built.is_empty() && theorems.is_empty() {
         out.note("note: no hand-written modules built; nothing to gate");
     } else {
@@ -74,6 +85,35 @@ fn check_recorded(
         );
     }
     Ok(())
+}
+
+/// `<kernel>.<fn>.authorized` for each `[authz] guarded` function.
+pub fn authz_theorems(p: &Project) -> Result<Vec<String>> {
+    let guarded = &p.manifest.authz.guarded;
+    if guarded.is_empty() {
+        return Ok(Vec::new());
+    }
+    let Some(ex) = &p.manifest.extract else {
+        bail!("{}: `[authz] guarded` needs an [extract] section", p.display());
+    };
+    let krate = p.root.join(&ex.krate);
+    let meta = util::metadata(&krate, false)?;
+    let ns = util::ident(&meta.package_at(&krate)?.name);
+    let mut out: Vec<String> = guarded.iter().map(|g| format!("{ns}.{g}.authorized")).collect();
+    // The engine skips locks for `read_only` commands on the strength of
+    // `ReadOnly.Sound`; for a guarded kernel that is the framework's.
+    if crate::lint::overrides_read_only(p) && !has_read_only_proof(p) {
+        out.extend(guarded.iter().map(|g| format!("{ns}.{g}.read_only_sound")));
+    }
+    Ok(out)
+}
+
+/// A hand-written proof states `ReadOnly.Sound`.
+fn has_read_only_proof(p: &Project) -> bool {
+    std::fs::read_dir(p.proofs()).into_iter().flatten().flatten().any(|e| {
+        e.path().extension().is_some_and(|x| x == "lean")
+            && std::fs::read_to_string(e.path()).unwrap_or_default().contains("ReadOnly.Sound")
+    })
 }
 
 fn lean_files(dir: &Path, out: &mut Vec<PathBuf>) {

@@ -150,6 +150,7 @@ fn extract_into(p: &Project, dest: &Path, schema_lean: bool, out: &Out) -> Resul
     if ex.std_specs {
         std_specs(&meta, &module, &id, dest)?;
     }
+    authz_lean(&p.manifest.authz.guarded, ex.std_specs, &module, &id, dest)?;
     if ex.schema && schema_lean {
         bless_schema(&krate, out)?;
     }
@@ -247,18 +248,84 @@ fn clean(p: &Path) -> PathBuf {
 /// Copy h5i-app-std's specs next to a kernel's extraction. The copy imports
 /// the kernel's module and opens its namespace, where Aeneas puts the
 /// `h5i_app_std.*` functions the kernel calls; their bodies are the crate's,
-/// so the proofs go through unchanged.
+/// so the proofs go through unchanged. `AuthzSpecs` is copied too when the
+/// kernel calls the authorization guard (`h5i_app_std::authz`).
 fn std_specs(meta: &util::Metadata, module: &str, ns: &str, dest: &Path) -> Result<()> {
     let std = meta
         .packages
         .iter()
         .find(|p| p.name == "h5i-app-std")
         .context("`std-specs = true` but the crate does not depend on h5i-app-std")?;
-    let src = std
-        .manifest_path
-        .parent()
-        .unwrap()
-        .join("proofs/StdSpecs.lean");
+    let proofs = std.manifest_path.parent().unwrap().join("proofs");
+    copy_spec(&proofs, "StdSpecs.lean", module, ns, dest)?;
+    let authz = dest.join("AuthzSpecs.lean");
+    let kernel = std::fs::read_to_string(dest.join(format!("{module}.lean")))?;
+    if calls_guard(&kernel) {
+        copy_spec(&proofs, "AuthzSpecs.lean", module, ns, dest)?;
+    } else if authz.is_file() {
+        std::fs::remove_file(authz)?;
+    }
+    Ok(())
+}
+
+/// The generated module holding an app's authorization theorems.
+pub const AUTHZ_MODULE: &str = "Authz";
+
+/// Write `Authz.lean` for `[authz] guarded`: one `h5i_authz` per guarded
+/// kernel function, each instantiating the framework's theorem. Removes a
+/// stale one when the list is empty.
+fn authz_lean(guarded: &[String], std_specs: bool, module: &str, ns: &str, dest: &Path) -> Result<()> {
+    let file = dest.join(format!("{AUTHZ_MODULE}.lean"));
+    if guarded.is_empty() {
+        if file.is_file() {
+            std::fs::remove_file(&file)?;
+        }
+        return Ok(());
+    }
+    if !std_specs {
+        bail!("`[authz] guarded` needs `std-specs = true` in [extract]: the theorem comes with h5i-app-std's AuthzSpecs");
+    }
+    if !dest.join("AuthzSpecs.lean").is_file() {
+        bail!(
+            "`[authz] guarded` names {}, but {module}.lean never calls `h5i_app_std::authz::guard`; \
+             is each one a start point in [extract]?",
+            guarded.join(", ")
+        );
+    }
+    std::fs::write(&file, authz_text(guarded, ns))?;
+    Ok(())
+}
+
+pub fn authz_text(guarded: &[String], ns: &str) -> String {
+    let mut s = format!(
+        "-- Written by `h5i app extract` from `[authz] guarded` in h5i-app.toml. Do not edit.\n\
+         import AuthzSpecs\n\
+         /-!\n\
+         # Framework-proven authorization\n\n\
+         Each `h5i_authz g` reads the policy's instances off `g`'s extracted body and\n\
+         proves `g.authorized` by instantiating `h5i_app_std.Specs.authz`: every\n\
+         committed command makes only writes the policy permits and discloses only rows\n\
+         it lets the caller see. For `guard_viewed` it also proves noninterference of\n\
+         read-only commands and `H5iAppLib.ReadOnly.Sound` (`g.read_only_sound`).\n\
+         -/\n\
+         open Aeneas Aeneas.Std Result H5iAppLib {ns}\n\n\
+         h5i_derive_all\n\n"
+    );
+    for g in guarded {
+        s.push_str(&format!("h5i_authz {ns}.{g}\n"));
+    }
+    s
+}
+
+/// The kernel's extraction holds `h5i_app_std::authz::guard` or `guard_viewed`.
+fn calls_guard(kernel: &str) -> bool {
+    kernel.contains("h5i_app_std.authz.guard")
+}
+
+/// Copy one spec file of h5i-app-std, rewriting its header to import the
+/// kernel's module and open its namespace.
+fn copy_spec(proofs: &Path, name: &str, module: &str, ns: &str, dest: &Path) -> Result<()> {
+    let src = proofs.join(name);
     let text = std::fs::read_to_string(&src).with_context(|| {
         format!(
             "reading {} (this h5i-app-std ships without its proofs)",
@@ -266,9 +333,7 @@ fn std_specs(meta: &util::Metadata, module: &str, ns: &str, dest: &Path) -> Resu
         )
     })?;
     let (mut import, mut open) = (false, false);
-    let mut out = String::from(
-        "-- Copied from h5i-app-std's proofs/StdSpecs.lean by `h5i app extract`. Do not edit.\n",
-    );
+    let mut out = format!("-- Copied from h5i-app-std's proofs/{name} by `h5i app extract`. Do not edit.\n");
     for line in text.lines() {
         if line == "import H5iAppStd" {
             import = true;
@@ -287,7 +352,7 @@ fn std_specs(meta: &util::Metadata, module: &str, ns: &str, dest: &Path) -> Resu
             src.display()
         );
     }
-    std::fs::write(dest.join("StdSpecs.lean"), out)?;
+    std::fs::write(dest.join(name), out)?;
     Ok(())
 }
 
@@ -304,6 +369,21 @@ mod tests {
             normalize_sources(text, ws, base),
             "-- Source: 'examples/app/atuin/kernel/src/lib.rs', lines 1:0-2:0\n-- Source: 'crates/s/src/lib.rs', lines 3\n-- Source: '/elsewhere/x.rs'"
         );
+    }
+
+    #[test]
+    fn authz_lean_has_one_line_per_kernel() {
+        let t = authz_text(&["guarded_transition".into(), "admin".into()], "forum_kernel");
+        assert!(t.contains("import AuthzSpecs\n"));
+        assert!(t.contains("open Aeneas Aeneas.Std Result H5iAppLib forum_kernel\n"));
+        assert!(t.contains("h5i_authz forum_kernel.guarded_transition\nh5i_authz forum_kernel.admin\n"));
+    }
+
+    #[test]
+    fn authz_specs_follow_the_guard() {
+        assert!(calls_guard("def guarded_transition := h5i_app_std.authz.guard inst"));
+        assert!(calls_guard("h5i_app_std.authz.guard_viewed a b"));
+        assert!(!calls_guard("h5i_app_std.set.contains inst s x"));
     }
 
     #[test]

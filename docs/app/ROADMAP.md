@@ -17,6 +17,7 @@ second.
 | A8 | No handler bypasses the engine | Opaque `Tx` and pool; `cargo deny check bans` keeps DB crates in `h5i-app-pg`; `h5i_app_pg::lockdown` role separation. In CI. | Superusers out of scope |
 | A9 | Running code is the extracted code | CI re-extracts every kernel and extracted crate (`h5i-app-sql`, `h5i-app-token`, `h5i-app-json`) with pinned tools and fails on diff | Done |
 | A10 | The spec says what we meant | Human review; mutation suites (the `[[mutant]]`s in each `h5i-app.toml`, run by `h5i app mutate`; `--auto` for generated ones); scenario theorems in every app; one upstream-bug counterexample per port | Add mutants for new failure modes |
+| A11 | An `[authz]` app's `Policy`, `Disclose` and `View` say what we meant | The framework proves the guard enforces them for every kernel (`h5i_app_std.Specs.authz`, [`AUTHZ.md`](AUTHZ.md)); they are Rust, extracted with the kernel, so no generator sits between them and the theorem. Human review of three small impls; read-only commands under `guard_viewed` do not rely on `Disclose`. | Derive `Disclose` from the reply type |
 
 ## Phase 0: proofs on the example app
 

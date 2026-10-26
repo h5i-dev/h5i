@@ -1293,6 +1293,16 @@ mutants generated from the kernel's syntax: comparison boundaries, `==` and
 `!=`, `&&` and `||`, dropped `!`, and `if` conditions forced to `true` or
 `false`.
 
+`[authz] guarded` opts a kernel into framework-proven authorization
+([`docs/app/AUTHZ.md`](app/AUTHZ.md)). Each listed function must be defined as
+`h5i_app_std::authz::guard` or `guard_viewed` of the app's `Transition`,
+`Policy`, `Disclose` (and `View`) impls. `extract` then writes
+`proofs/generated/Authz.lean`, which proves `<kernel>.<fn>.authorized` by
+instantiating the framework's theorem, with no hand-written Lean. `check` gates
+that theorem (and `<fn>.read_only_sound` when the server overrides
+`Kernel::read_only`), and `lint` fails unless a `Kernel::transition` calls a
+listed function. An app without `[authz]` is unaffected.
+
 `h5i app new` requires the h5i-app Lean library from git at this binary's
 release tag; `--h5i-path <checkout>` uses a local h5i checkout instead.
 
@@ -1304,6 +1314,9 @@ start-from = ["transition"]   # Charon start points, inside the crate
 include = ["h5i_app_sql"]     # crates extracted with the kernel
 schema = true                 # also start from what schema! generates, and write its lean "..." file
 std-specs = true              # copy h5i-app-std's specs next to the extraction
+
+[authz]
+guarded = ["guarded_transition"]   # kernel fns defined as h5i_app_std::authz::guard(_viewed)
 
 [check]
 theorems = ["my_kernel.inv_preserved"]   # must exist and pass the gate

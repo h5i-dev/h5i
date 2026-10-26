@@ -67,6 +67,42 @@ Shared code:
 | `h5i-app-std` (bytes, sets, maps, reachability, expiry), with its list models in `H5iAppLib` | 335 | 1,102 |
 | `Schema.lean`, generated for docs | none | 474 |
 
+## Framework-proven authorization
+
+Measured 2026-10-26 ([`AUTHZ.md`](AUTHZ.md)). The guard and its theorem are
+written once; an app adds a policy and no Lean.
+
+| Piece | Rust | Lean |
+|---|---|---|
+| `h5i_app_std::authz` (guard, checks, traits) | 106 | none |
+| `AuthzSpecs.lean` (theorems, `h5i_authz`) | none | 377 |
+| forum: handlers | 77 | 0 |
+| forum: `Policy`, `Disclose`, `View`, wiring | 95 | 0 |
+| forum: `generated/Authz.lean` | none | 4, written by `h5i app extract` |
+
+`h5i app check` on the forum gates 34 theorems, among them
+`guarded_transition.authorized` and `.read_only_sound`. For comparison, board
+(tutorial 2) states its authorization and invariants in 319 hand-written Lean
+lines (`Spec`, `Commands`, `Theorems`) over a 177-line kernel; its
+authorization theorem alone is a six-way case split over the commands.
+
+Handler bugs behind the forum's policy (`handler_bugs_are_denied`): taking
+over a post on edit, disclosing others' drafts on publish, and self-promotion
+on registration are each denied. `tests/postgres.rs` runs 600 random commands
+from four users on PostgreSQL and `MemoryEngine`; replies, denials included,
+and final state agree, with both denials and commits in the run.
+
+Guard cost per command (`guard_overhead`, release build, one core), against
+`transition` alone. It is `kernel_apply` per write prefix and once for the
+state after, and building the view for reads: snapshot copies, linear in the
+tenant. The engine loads and decodes the whole tenant per command as well.
+
+| Tenant | Edit | Create (2 writes) | List (read-only, view) |
+|---|---|---|---|
+| 10 users, 100 posts | 0.4 µs → 22 µs | 0.07 µs → 25 µs | 8 µs → 21 µs |
+| 100 users, 1,000 posts | 0.8 µs → 162 µs | 0.07 µs → 235 µs | 78 µs → 198 µs |
+| 1,000 users, 10,000 posts | 9 µs → 1.8 ms | 0.08 µs → 2.7 ms | 0.85 ms → 3.2 ms |
+
 ## Checks
 
 | Check | Result |

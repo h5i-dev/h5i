@@ -43,6 +43,7 @@ unchanged.
 | reconnaissance | phase 1 built 2026-09-07: ledger, extract, known, crawl, paths, triage, jobs. `h5i plugin install recon` | [`docs/design/design-recon.md`](design/design-recon.md) |
 | security regression tests | MVP built 2026-09-13: portable flows, external oracles, JSON/JUnit, OpenAPI coverage and an optional gate. `h5i plugin install test` | [`docs/design/design-test.md`](design/design-test.md) |
 | h5i-app | 0.1 published; `h5i app` new, extract, check, prove, lint, mutate, doctor. | [`docs/app/DESIGN.md`](app/DESIGN.md), [`docs/app/ROADMAP.md`](app/ROADMAP.md) |
+| framework-proven authorization (h5i-app) | Z0 to Z6 built 2026-10-26: the guard and its theorem in h5i-app-std, `[authz]` in `h5i app`, the forum example; Z7 (Cedar) not built | [`docs/design/design-authz.md`](design/design-authz.md), [`docs/app/AUTHZ.md`](app/AUTHZ.md) |
 
 ## The three decisions the red-teaming workflow rests on
 
@@ -87,6 +88,7 @@ of it whether you need the rest.
 | N1 to N21 | `docs/design/design-recon.md` | the endpoint ledger, discovery, triage, and where recon stops |
 | C1 to C8 | `docs/design/design-console.md` | what `h5i ui` shows, what it refuses to, and how it says which session wants you |
 | T1 | `docs/design/design-test.md` | portable attack flows, external oracles, CI results and coverage |
+| Z0 to Z7 | `docs/design/design-authz.md` | the authorization guard, `policy!`, read disclosure, and the framework-wide theorem |
 
 Live code cites these section numbers. The superseded browser engine design
 remains in `docs/design/design-browser.md` for historical context.

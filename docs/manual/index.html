@@ -1583,6 +1583,15 @@ a theorem that holds because the kernel refuses everything. <code>--auto</code> 
 mutants generated from the kernel's syntax: comparison boundaries, <code>==</code> and
 <code>!=</code>, <code>&amp;&amp;</code> and <code>||</code>, dropped <code>!</code>, and <code>if</code> conditions forced to <code>true</code> or
 <code>false</code>.</p>
+<p><code>[authz] guarded</code> opts a kernel into framework-proven authorization
+(<a href="https://github.com/h5i-dev/h5i/blob/main/docs/app/AUTHZ.md"><code>docs/app/AUTHZ.md</code></a>). Each listed function must be defined as
+<code>h5i_app_std::authz::guard</code> or <code>guard_viewed</code> of the app's <code>Transition</code>,
+<code>Policy</code>, <code>Disclose</code> (and <code>View</code>) impls. <code>extract</code> then writes
+<code>proofs/generated/Authz.lean</code>, which proves <code>&lt;kernel&gt;.&lt;fn&gt;.authorized</code> by
+instantiating the framework's theorem, with no hand-written Lean. <code>check</code> gates
+that theorem (and <code>&lt;fn&gt;.read_only_sound</code> when the server overrides
+<code>Kernel::read_only</code>), and <code>lint</code> fails unless a <code>Kernel::transition</code> calls a
+listed function. An app without <code>[authz]</code> is unaffected.</p>
 <p><code>h5i app new</code> requires the h5i-app Lean library from git at this binary's
 release tag; <code>--h5i-path &lt;checkout&gt;</code> uses a local h5i checkout instead.</p>
 <div class="codeblock"><div class="codeblock-head"><span>toml</span><button class="copy-btn" type="button">Copy</button></div><pre><code class="language-toml"># h5i-app.toml
@@ -1592,6 +1601,9 @@ start-from = [&quot;transition&quot;]   # Charon start points, inside the crate
 include = [&quot;h5i_app_sql&quot;]     # crates extracted with the kernel
 schema = true                 # also start from what schema! generates, and write its lean &quot;...&quot; file
 std-specs = true              # copy h5i-app-std's specs next to the extraction
+
+[authz]
+guarded = [&quot;guarded_transition&quot;]   # kernel fns defined as h5i_app_std::authz::guard(_viewed)
 
 [check]
 theorems = [&quot;my_kernel.inv_preserved&quot;]   # must exist and pass the gate

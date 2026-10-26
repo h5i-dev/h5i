@@ -23,6 +23,9 @@ pub struct Manifest {
     pub proofs: Proofs,
     #[serde(default)]
     pub check: Check,
+    /// Framework-proven authorization (`docs/design/design-authz.md`).
+    #[serde(default)]
+    pub authz: Authz,
     #[serde(default)]
     pub mutate: Mutate,
     /// Bugs the proofs must reject: `[[mutant]]`.
@@ -49,7 +52,8 @@ pub struct Extract {
     #[serde(default)]
     pub include: Vec<String>,
     /// Copy h5i-app-std's specs next to the extraction as `StdSpecs.lean`,
-    /// importing it. For kernels that include `h5i_app_std`.
+    /// importing it, and `AuthzSpecs.lean` when the kernel calls the
+    /// authorization guard. For kernels that include `h5i_app_std`.
     #[serde(default)]
     pub std_specs: bool,
     /// Further arguments for `charon cargo`, before `--dest-file`.
@@ -94,6 +98,17 @@ pub struct Check {
     /// theorems that live in a library.
     #[serde(default)]
     pub theorems: Vec<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Authz {
+    /// Kernel functions defined as `h5i_app_std::authz::guard` or
+    /// `guard_viewed` of the app's instances. `h5i app extract` writes
+    /// `generated/Authz.lean`, which proves `<kernel>.<fn>.authorized` for each
+    /// by instantiating the framework's theorem; `h5i app check` gates them.
+    #[serde(default)]
+    pub guarded: Vec<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]

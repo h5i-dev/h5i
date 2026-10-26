@@ -1128,6 +1128,9 @@ function Evidence({ view, project }: { view?: RunView; project: string }) {
           </p>
           {view.run.error && <Note tone="warn">{view.run.error}</Note>}
           <Stages stages={view.run.stages} />
+          {view.run.authorization && (
+            <p className="app-muted">{view.run.authorization}</p>
+          )}
           {!!view.run.unbuilt_modules.length && (
             <Note tone="warn">
               Not gated: {view.run.unbuilt_modules.join(", ")}

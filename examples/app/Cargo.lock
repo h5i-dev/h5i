@@ -403,6 +403,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "forum-kernel"
+version = "0.1.0"
+dependencies = [
+ "h5i-app-schema",
+ "h5i-app-sql",
+ "h5i-app-std",
+]
+
+[[package]]
+name = "forum-server"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "forum-kernel",
+ "h5i-app-core",
+ "h5i-app-http",
+ "h5i-app-json",
+ "h5i-app-pg",
+ "h5i-app-std",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "futures-channel"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -522,6 +549,10 @@ version = "0.1.3"
 
 [[package]]
 name = "h5i-app-sql"
+version = "0.1.3"
+
+[[package]]
+name = "h5i-app-std"
 version = "0.1.3"
 
 [[package]]

@@ -78,6 +78,8 @@ export interface AppRun {
   stages: AppStage[];
   declarations: Declaration[];
   unbuilt_modules: string[];
+  /** What authorization the proofs cover; empty in runs recorded before it. */
+  authorization?: string;
   error: string | null;
 }
 export interface RunView {

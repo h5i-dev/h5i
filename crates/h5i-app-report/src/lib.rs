@@ -294,6 +294,10 @@ pub struct Run {
     pub stages: Vec<Stage>,
     pub declarations: Vec<Declaration>,
     pub unbuilt_modules: Vec<String>,
+    /// What authorization the proofs cover (`h5i app lint`'s report line):
+    /// framework-proven, a hand-written theorem, or none.
+    #[serde(default)]
+    pub authorization: String,
     pub error: Option<String>,
 }
 
@@ -344,6 +348,7 @@ impl Recorder {
             stages: Vec::new(),
             declarations: Vec::new(),
             unbuilt_modules: Vec::new(),
+            authorization: String::new(),
             error: None,
         };
         let r = Self {

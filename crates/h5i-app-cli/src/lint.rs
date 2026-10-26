@@ -9,8 +9,11 @@
 //! - A `Kernel` impl that declares read-only commands (`fn read_only`) comes
 //!   with a proof of `H5iAppLib.ReadOnly.Sound`: the engine skips locks and
 //!   retries for them on the strength of it.
+//! - An app that lists `[authz] guarded` functions runs one of them as its
+//!   `Kernel::transition`: otherwise the framework's theorem is about code the
+//!   server does not run.
 //! - A report, never a failure: whether the proofs state a universal
-//!   authorization theorem.
+//!   authorization theorem, or the framework proves one.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -24,6 +27,7 @@ pub fn lint(p: &Project, out: &Out) -> Result<()> {
     let mut bad = route_coverage(p);
     bad.extend(command_hygiene(p));
     bad.extend(read_only_proof(p));
+    bad.extend(guarded_wiring(p));
     if let Some(note) = authz_coverage(p) {
         out.note(&note);
     }
@@ -170,31 +174,76 @@ fn route_coverage(p: &Project) -> Vec<String> {
     bad
 }
 
-/// Every `impl Kernel` that overrides `read_only` has a `ReadOnly.Sound` proof.
-fn read_only_proof(p: &Project) -> Vec<String> {
+/// Each `impl Kernel` body, with its file and line.
+fn kernel_impls(p: &Project) -> Vec<(PathBuf, usize, String)> {
     let mut files = Vec::new();
     rs_files(&p.root, &mut files);
     files.sort();
+    let mut out = Vec::new();
+    for f in files {
+        let text = std::fs::read_to_string(&f).unwrap_or_default();
+        let Some(at) = text.find("impl Kernel for").or_else(|| text.find("impl h5i_app_core::Kernel for")) else { continue };
+        let Some(brace) = text[at..].find('{') else { continue };
+        let body = balanced_braces(&text[at + brace + 1..]).to_string();
+        let line = text[..at].lines().count() + 1;
+        out.push((f, line, body));
+    }
+    out
+}
+
+/// Whether some `impl Kernel` overrides `read_only`.
+pub fn overrides_read_only(p: &Project) -> bool {
+    kernel_impls(p).iter().any(|(_, _, body)| body.contains("fn read_only("))
+}
+
+/// The body of `fn name(` inside an impl body.
+fn fn_body<'a>(body: &'a str, name: &str) -> Option<&'a str> {
+    let at = body.find(&format!("fn {name}("))?;
+    let brace = body[at..].find('{')?;
+    Some(balanced_braces(&body[at + brace + 1..]))
+}
+
+/// Every `impl Kernel` that overrides `read_only` has a `ReadOnly.Sound`
+/// proof: a hand-written one, or the framework's for a kernel guarded with
+/// `guard_viewed` (`h5i app check` then requires `<fn>.read_only_sound`).
+fn read_only_proof(p: &Project) -> Vec<String> {
     let proven = std::fs::read_dir(p.proofs()).into_iter().flatten().flatten().any(|e| {
         e.path().extension().is_some_and(|x| x == "lean")
             && std::fs::read_to_string(e.path()).unwrap_or_default().contains("ReadOnly.Sound")
-    });
+    }) || (!p.manifest.authz.guarded.is_empty()
+        && p.generated().join(format!("{}.lean", crate::extract::AUTHZ_MODULE)).is_file());
     let mut bad = Vec::new();
-    for f in &files {
-        let text = std::fs::read_to_string(f).unwrap_or_default();
-        let Some(at) = text.find("impl Kernel for").or_else(|| text.find("impl h5i_app_core::Kernel for")) else { continue };
-        let Some(brace) = text[at..].find('{') else { continue };
-        let body = balanced_braces(&text[at + brace + 1..]);
+    for (f, line, body) in kernel_impls(p) {
         if body.contains("fn read_only(") && !proven {
-            let line = text[..at].lines().count() + 1;
             bad.push(format!(
                 "{}:{line}: Kernel::read_only is overridden, but no proof in {} states `H5iAppLib.ReadOnly.Sound`",
-                rel(p, f),
+                rel(p, &f),
                 p.proofs().display()
             ));
         }
     }
     bad
+}
+
+/// With `[authz] guarded`, some `Kernel::transition` calls a guarded function.
+fn guarded_wiring(p: &Project) -> Vec<String> {
+    let guarded = &p.manifest.authz.guarded;
+    if guarded.is_empty() {
+        return Vec::new();
+    }
+    let impls = kernel_impls(p);
+    let wired = impls.iter().any(|(_, _, body)| {
+        fn_body(body, "transition").is_some_and(|t| guarded.iter().any(|g| t.contains(&format!("{g}("))))
+    });
+    if wired {
+        return Vec::new();
+    }
+    let at = impls.first().map(|(f, line, _)| format!("{}:{line}: ", rel(p, f))).unwrap_or_default();
+    vec![format!(
+        "{at}`[authz] guarded` names {}, but no `Kernel::transition` calls it: the framework's theorem \
+         would be about code the server does not run",
+        guarded.join(", ")
+    )]
 }
 
 /// The kernel's `Command` carries no client-set identity or privilege field.
@@ -244,6 +293,18 @@ pub fn flagged_command_fields(text: &str) -> Vec<(usize, String)> {
 /// authorization theorem. `None` for a project that has no `Command`.
 pub fn authz_coverage(p: &Project) -> Option<String> {
     let krate = p.krate()?;
+    let guarded = &p.manifest.authz.guarded;
+    if !guarded.is_empty() {
+        let mut files = Vec::new();
+        rs_files(&krate.join("src"), &mut files);
+        let viewed = files.iter().any(|f| std::fs::read_to_string(f).unwrap_or_default().contains("guard_viewed"));
+        let thms: Vec<String> = guarded.iter().map(|g| format!("{g}.authorized")).collect();
+        return Some(format!(
+            "authorization: framework-proven ({}; writes and disclosed rows{})",
+            thms.join(", "),
+            if viewed { ", read-only noninterference" } else { "" }
+        ));
+    }
     let mut files = Vec::new();
     rs_files(&krate.join("src"), &mut files);
     let has_commands = files.iter().any(|f| {
@@ -331,6 +392,21 @@ mod tests {
         assert_eq!(read_only_proof(&p).len(), 1);
         std::fs::write(d.path().join("proofs/ReadOnly.lean"), "theorem ro : H5iAppLib.ReadOnly.Sound k t w := k_sound\n").unwrap();
         assert!(read_only_proof(&p).is_empty());
+    }
+
+    #[test]
+    fn guarded_kernels_must_be_wired() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("h5i-app.toml"), "[authz]\nguarded = [\"guarded_transition\"]\n").unwrap();
+        let server = d.path().join("server");
+        std::fs::create_dir_all(server.join("src")).unwrap();
+        std::fs::write(server.join("Cargo.toml"), "[package]\nname = \"s\"\n").unwrap();
+        let lib = server.join("src/lib.rs");
+        std::fs::write(&lib, "impl Kernel for K {\n    fn transition(a: &P, s: &S, c: &C) -> R {\n        k::transition(a, s, c)\n    }\n}\n").unwrap();
+        let p = Project::load(&d.path().join("h5i-app.toml")).unwrap();
+        assert_eq!(guarded_wiring(&p).len(), 1);
+        std::fs::write(&lib, "impl Kernel for K {\n    fn transition(a: &P, s: &S, c: &C) -> R {\n        k::guarded_transition(a, s, c)\n    }\n}\n").unwrap();
+        assert!(guarded_wiring(&p).is_empty());
     }
 
     #[test]

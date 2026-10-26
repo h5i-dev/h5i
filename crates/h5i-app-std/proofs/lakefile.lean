@@ -15,6 +15,7 @@ lean_lib Generated where
   roots := #[`H5iAppStd]
 
 -- The specs. A kernel that includes h5i-app-std gets a copy of `StdSpecs`
--- importing its own extraction (`h5i app extract`, `std-specs = true`).
+-- importing its own extraction (`h5i app extract`, `std-specs = true`), and
+-- of `AuthzSpecs` too when it calls the authorization guard.
 @[default_target] lean_lib Proofs where
-  roots := #[`StdSpecs, `Check]
+  roots := #[`StdSpecs, `AuthzSpecs, `Check]

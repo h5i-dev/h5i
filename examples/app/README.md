@@ -19,6 +19,11 @@ commands from there.
 
 ## Further examples
 
+[Forum](forum/README.md) ports Nyxis's bulletin board (drafts, admins,
+self-registration) with no hand-written Lean: its handlers run behind a policy
+written in Rust, and the framework proves the authorization theorem
+([docs/app/AUTHZ.md](../../docs/app/AUTHZ.md)). Read it after tutorial 4.
+
 A larger application lives in
 [h5i-app-bench](https://github.com/h5i-dev/h5i-app-bench), with its own Cargo
 workspace and proof project: [Conduit](https://github.com/h5i-dev/h5i-app-bench/tree/realworld-bench/realworld/rust-h5i-app) (`realworld/rust-h5i-app`) is a port of the
