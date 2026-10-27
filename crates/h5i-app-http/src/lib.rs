@@ -80,8 +80,10 @@ impl<K: Kernel> HmacAuth<K> {
         libcrux_hmac::hmac(libcrux_hmac::Algorithm::Sha256, &self.secret, payload, None)
     }
 
+    /// A token that expires `ttl_secs` from now. The expiry saturates at
+    /// `u64::MAX` instead of overflowing.
     pub fn issue(&self, tenant: u64, user: u64, ttl_secs: u64) -> String {
-        let payload = h5i_app_token::encode_payload(tenant, user, now() + ttl_secs);
+        let payload = h5i_app_token::encode_payload(tenant, user, now().saturating_add(ttl_secs));
         let token = h5i_app_token::join(&payload, &self.tag(&payload));
         String::from_utf8(token).expect("tokens are ascii")
     }
@@ -304,5 +306,90 @@ mod compatibility {
     fn alternative_executor<K: Kernel, S: Store<K>>(engine: Arc<h5i_app_core::MemoryEngine<K>>, auth: impl Authenticator<K>) {
         let app = H5iApp::<K, S, _>::with_executor(engine, auth);
         let _: &h5i_app_core::MemoryEngine<K> = app.engine();
+    }
+}
+
+#[cfg(test)]
+mod auth {
+    use super::*;
+    use h5i_app_core::TenantId;
+
+    /// Principals are (tenant, user); every other type is `()`.
+    struct Users;
+
+    impl Kernel for Users {
+        type Principal = (u64, u64);
+        type Snapshot = ();
+        type Command = ();
+        type WriteSet = ();
+        type Reply = ();
+        type Error = ();
+
+        fn tenant(p: &(u64, u64)) -> TenantId {
+            TenantId(p.0)
+        }
+
+        fn transition(_: &(u64, u64), _: &(), _: &()) -> Result<((), ()), ()> {
+            Ok(((), ()))
+        }
+
+        fn apply(_: &(), _: &()) {}
+    }
+
+    fn hmac(secret: &str) -> HmacAuth<Users> {
+        HmacAuth::new(secret, |t, u| (t, u))
+    }
+
+    fn headers(value: &str) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert(header::AUTHORIZATION, value.parse().unwrap());
+        h
+    }
+
+    fn signed(a: &HmacAuth<Users>, tenant: u64, user: u64, exp: u64) -> String {
+        let payload = h5i_app_token::encode_payload(tenant, user, exp);
+        String::from_utf8(h5i_app_token::join(&payload, &a.tag(&payload))).unwrap()
+    }
+
+    #[test]
+    fn issued_tokens_authenticate() {
+        let a = hmac("secret");
+        let t = a.issue(3, 4, 60);
+        assert_eq!(a.verify(&t).unwrap(), (3, 4));
+        assert_eq!(a.authenticate(&headers(&format!("Bearer {t}"))).unwrap(), (3, 4));
+    }
+
+    #[test]
+    fn ttl_saturates() {
+        // `now() + u64::MAX` overflowed: a panic with overflow checks, else an
+        // expiry in the past.
+        let a = hmac("secret");
+        let t = a.issue(1, 2, u64::MAX);
+        assert_eq!(h5i_app_token::parse(t.as_bytes()).unwrap().exp, u64::MAX);
+        assert_eq!(a.verify(&t).unwrap(), (1, 2));
+    }
+
+    #[test]
+    fn rejects_bad_tokens() {
+        let a = hmac("secret");
+        let t = a.issue(1, 2, 60);
+        assert_eq!(hmac("other").verify(&t).unwrap_err().0, "bad signature");
+        assert_eq!(a.verify(&t.replacen("v1.1.", "v1.9.", 1)).unwrap_err().0, "bad signature");
+        assert_eq!(a.verify(&signed(&a, 1, 2, now() - 1)).unwrap_err().0, "token expired");
+        assert_eq!(a.verify(&t[..t.rfind('.').unwrap()]).unwrap_err().0, "malformed token");
+    }
+
+    #[test]
+    fn authorization_header() {
+        let a = hmac("secret");
+        let t = a.issue(1, 2, 60);
+        assert!(a.authenticate(&HeaderMap::new()).is_err());
+        assert!(a.authenticate(&headers(&format!("Token {t}"))).is_err());
+        let token_scheme = hmac("secret").with_scheme("Token");
+        assert_eq!(token_scheme.authenticate(&headers(&format!("Token {t}"))).unwrap(), (1, 2));
+        // Anonymous access covers a missing header only, never a bad one.
+        let anon = hmac("secret").or_anonymous((0, 0));
+        assert_eq!(anon.authenticate(&HeaderMap::new()).unwrap(), (0, 0));
+        assert!(anon.authenticate(&headers("Bearer v1.1.2.3.00")).is_err());
     }
 }
