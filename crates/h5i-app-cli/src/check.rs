@@ -111,7 +111,8 @@ fn check_recorded(
 }
 
 /// `<kernel>.<fn>.authorized` and `.kernel_apply_eq` for each `[authz]
-/// guarded` function (and `.read_only_sound` when the server needs it).
+/// guarded` function, `.read_only_sound`, and the storage theorems (or
+/// `[authz] storage`).
 pub fn authz_theorems(p: &Project) -> Result<Vec<String>> {
     let guarded = &p.manifest.authz.guarded;
     if guarded.is_empty() {

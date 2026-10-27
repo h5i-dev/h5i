@@ -204,10 +204,10 @@ versus update is the policy's own `find_*` lookup, as in the forum.
 - `h5i app check` runs `lake build Authz` itself, so it never gates a stale
   `.olean` (a lakefile with no `Authz` target fails with a hint); gates the
   module like a hand-written one; requires `<kernel>.<fn>.authorized`,
-  `.kernel_apply_eq`, the storage theorems (or `[authz] storage`), and
-  `.read_only_sound` when the server overrides `Kernel::read_only` without a
-  proof stated in code (a comment does not count); and records the list it
-  required in the run, which the web view shows instead of recomputing it.
+  `.kernel_apply_eq`, `.read_only_sound` (`Authz<T>` always declares the
+  view's read-only commands) and the storage theorems (or `[authz]
+  storage`); and records the list it required in the run before building,
+  which the web view shows instead of recomputing it.
 - `h5i app lint` reads the Rust with `syn` (`crates/h5i-app-cli/src/rust.rs`,
   following each crate's module tree as rustc does: `[lib]`/`[[bin]]`
   paths, `#[path]`, cfg'd modules, `#[cfg(test)]` and `cfg(all(test, …))`
@@ -275,8 +275,14 @@ from the Lean without a message (its associated types and `Send + Sync +
 'static` bounds are the likely cause), and Charon refuses a generic trait
 impl as a start point (`--start-from does not support trait generics`).
 
-What stays outside the proofs is one line: that the server builds its engine
-from `App` and the generated store. Lint flags the plain alternative.
+What stays outside the proofs: that the kernel builds `App` with
+`authz_kernel!` (once), and that the server builds its engine from `App` and
+the generated store. Lint checks the plain form of both. The sixth review
+found both gaps: a kernel could hand-write `guarded_transition` and an `App`
+over a permissive type, which the proofs cannot see, and the generated store
+named the kernel by a relative path, so a server module of the same name
+could replace its `decode` and `sql_writes`. The second is fixed (absolute
+paths, with a test); the first is now listed as trusted and linted.
 
 ## Z6. Demonstration
 

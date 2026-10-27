@@ -1325,7 +1325,7 @@ schema = true                 # also start from what schema! generates, and writ
 std-specs = true              # copy h5i-app-std's specs next to the extraction
 
 [authz]
-guarded = ["guarded_transition"]   # kernel fns defined as h5i_app_std::authz::guard(_viewed)
+guarded = ["guarded_transition"]   # written by h5i_app_std::authz_kernel! (guard_viewed)
 # storage = "my_kernel.Storage.db_inv"   # only if the storage proof cannot be generated
 
 [check]

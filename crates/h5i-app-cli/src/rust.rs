@@ -299,6 +299,15 @@ impl Sources {
         })
     }
 
+    /// Item-position invocations of a macro `name!` (any path to it).
+    pub fn macro_calls(&self, name: &str) -> usize {
+        self.files
+            .iter()
+            .flat_map(|(_, _, items)| items)
+            .filter(|i| matches!(i, syn::Item::Macro(m) if m.mac.path.segments.last().is_some_and(|s| s.ident == name)))
+            .count()
+    }
+
     /// Whether the sources define a free function `name` themselves (a
     /// macro's expansion is not visible here, so this is a hand-written one).
     pub fn defines_fn(&self, name: &str) -> bool {

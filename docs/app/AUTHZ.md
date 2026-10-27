@@ -73,12 +73,27 @@ every table with `schema_load` and stores with `schema_store`, the code
 A partial load would have the guard judge the policy on a partial state (in
 the forum, registering as admin while `users` is not loaded).
 
-One fact stays outside the proofs: that the server builds its engine from
-`App` and the generated store, one line of `main.rs`, rather than from a
-kernel or store of its own. `h5i app lint` flags a hand-written `impl
-Kernel`, `impl Store` or `impl AuthzKernel` in an `[authz]` project. That is
-hygiene for the plain mistake, not a guarantee: it reads the source with
-`syn`, so what only a macro or `include!` produces is not seen.
+Two facts stay outside the proofs:
+
+- the kernel builds `App` with `authz_kernel!`, once. A kernel that wrote
+  `guarded_transition` by hand and an `App` over another type would have its
+  theorems about one instantiation and its engine running another. With the
+  macro, coherence and name resolution leave no room: a second `App` at the
+  crate root is a duplicate name, and a second `AuthzKernel` impl for the
+  same type a conflict;
+- the server builds its engine from `forum_kernel::App` and the generated
+  store, one line of `main.rs`, rather than from a kernel or store of its
+  own.
+
+`h5i app lint` checks the plain form of both: the kernel invokes
+`authz_kernel!` exactly once, and no crate of the project hand-writes an
+`impl Kernel`, `impl Store` or `impl AuthzKernel`. That is hygiene for the
+plain mistake, not a guarantee: it reads the source with `syn`, so what only
+a macro or `include!` produces is not seen.
+
+The generated store names the kernel's `decode` and `sql_writes` by absolute
+path (`::forum_kernel::…`), so a server module that happens to be called
+`forum_kernel` cannot stand in for them.
 
 Handlers need no checks of *who may write what*: in the forum they check
 input and existence only, and the `Policy` impl alone decides. A handler
@@ -125,8 +140,10 @@ h5i_authz forum_kernel.guarded_transition
 that does not pass its own actor, state and command to the guard unchanged,
 and an instance whose `kernel_apply` is not the kernel's `apply`; then it adds
 `g.kernel_apply_eq`, `g.authorized : AuthorizedViewed g … ∧
-ViewNoninterference g …` (or `Authorized g …` for `guard`) and, for
-`guard_viewed`, `g.read_only_sound`. It prints the statements.
+ViewNoninterference g …` and `g.read_only_sound`. It prints the statements.
+(`h5i_authz` also accepts a `g` built on plain `guard`, proving `Authorized
+g …` only, but `Authz<T>` runs `guard_viewed`, so an `[authz]` app uses
+`authz_kernel!`'s `guarded_transition`.)
 
 The storage section proves, for this app, that the store commits what the
 kernel's `apply` computes (A4), with no hand-written model:
@@ -189,8 +206,9 @@ small enough to review:
   `NeverDenied`, or the forum's `handler_bugs_are_denied` test, is how an app
   learns about it before users do.
 
-- **The server runs `App` on the generated store.** One line of `main.rs`
-  ([above](#what-the-server-runs)); lint flags the plain alternative.
+- **The kernel builds `App` with `authz_kernel!`, and the server runs it on
+  the generated store.** One macro invocation and one line of `main.rs`
+  ([above](#what-the-server-runs)); lint checks their plain form.
 - **A hand-named storage theorem says what it should.** Only with
   `[authz] storage`; `check` prints it.
 - **The framework's `Authz<T>`, `authz_kernel!` and the generated store**,

@@ -103,9 +103,10 @@ pub struct Check {
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Authz {
-    /// Kernel functions defined as `h5i_app_std::authz::guard` or
-    /// `guard_viewed` of the app's instances. `h5i app extract` writes
-    /// `generated/Authz.lean`, which proves `<kernel>.<fn>.authorized` for each
+    /// The kernel's guarded function: `guarded_transition`, which
+    /// `h5i_app_std::authz_kernel!` defines as `guard_viewed` of the app's
+    /// instances. `h5i app extract` writes `generated/Authz.lean`, which proves
+    /// `<kernel>.<fn>.authorized`, `.kernel_apply_eq` and `.read_only_sound`
     /// by instantiating the framework's theorem; `h5i app check` gates them.
     #[serde(default)]
     pub guarded: Vec<String>,

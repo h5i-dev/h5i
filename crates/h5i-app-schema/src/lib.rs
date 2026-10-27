@@ -460,7 +460,7 @@ macro_rules! __mapping {
                 /// tables' `Table` tag: the kernel `$d app` is not local here.
                 pub struct $d store;
 
-                $krate::$mapping!($d store);
+                ::$krate::$mapping!($d store);
 
                 impl ::h5i_app_pg::Store<$d app> for $d store {
                     fn ddl() -> ::std::vec::Vec<::std::string::String> {
@@ -488,12 +488,12 @@ macro_rules! __mapping {
                 }
             };
             ($d app:ty) => {
-                $( ::h5i_app_pg::table!($d app, $krate::$name => $table { key: [$($k),*], cols: [$($c),*] }); )*
+                $( ::h5i_app_pg::table!($d app, ::$krate::$name => $table { key: [$($k),*], cols: [$($c),*] }); )*
 
                 /// Every table, numbered like `TABLE`, for `h5i_app_pgsql`.
                 #[allow(dead_code)]
                 fn schema_spec() -> ::std::vec::Vec<::h5i_app_pg::pgsql::Table> {
-                    ::std::vec![ $( ::h5i_app_pg::spec::<$d app, $krate::$name>() ),* ]
+                    ::std::vec![ $( ::h5i_app_pg::spec::<$d app, ::$krate::$name>() ),* ]
                 }
 
                 /// `CREATE TABLE` statements. Panics on an invalid schema; `schema_is_valid` catches that.
@@ -508,8 +508,8 @@ macro_rules! __mapping {
                     assert!(::h5i_app_pg::pgsql::valid(&spec), "h5i_app_pgsql rejects this schema");
                     let mut n: u32 = 0;
                     $(
-                        assert_eq!($krate::$name::TABLE, n);
-                        assert_eq!(spec[n as usize].key_len, $krate::$name::KEY_LEN);
+                        assert_eq!(::$krate::$name::TABLE, n);
+                        assert_eq!(spec[n as usize].key_len, ::$krate::$name::KEY_LEN);
                         n += 1;
                     )*
                     let _ = n;
@@ -576,7 +576,7 @@ macro_rules! __mapping {
 
                 /// Table names, in `TABLE` order.
                 fn schema_tables() -> ::std::vec::Vec<&'static str> {
-                    ::std::vec![ $( <$krate::$name as ::h5i_app_pg::Table<$d app>>::NAME ),* ]
+                    ::std::vec![ $( <::$krate::$name as ::h5i_app_pg::Table<$d app>>::NAME ),* ]
                 }
 
                 $crate::__mapping_snap! { [$d app] $krate [$($w)?] $snap }
@@ -596,12 +596,12 @@ macro_rules! __mapping_snap {
         async fn schema_load(
             tx: &::h5i_app_pg::Tx<'_>,
             tenant: ::h5i_app_core::TenantId,
-        ) -> ::std::result::Result<$krate::$snap, ::h5i_app_pg::DbError> {
+        ) -> ::std::result::Result<::$krate::$snap, ::h5i_app_pg::DbError> {
             let spec = schema_spec();
             // Every table's SELECT is sent before any result is awaited.
-            let mut got = ::h5i_app_pg::load_tables(tx, tenant, &spec, &[$($krate::$t::TABLE),*]).await?.into_iter();
-            let rows = $krate::Rows { $($f: got.next().unwrap_or_default(),)* };
-            $krate::decode(&rows).ok_or_else(|| ::h5i_app_pg::DbError::Decode("stored rows do not decode".into()))
+            let mut got = ::h5i_app_pg::load_tables(tx, tenant, &spec, &[$(::$krate::$t::TABLE),*]).await?.into_iter();
+            let rows = ::$krate::Rows { $($f: got.next().unwrap_or_default(),)* };
+            ::$krate::decode(&rows).ok_or_else(|| ::h5i_app_pg::DbError::Decode("stored rows do not decode".into()))
         }
 
         /// Each table by the plan's read of it, `decode`d; a table the plan
@@ -611,20 +611,20 @@ macro_rules! __mapping_snap {
             tx: &::h5i_app_pg::Tx<'_>,
             tenant: ::h5i_app_core::TenantId,
             plan: &::std::vec::Vec<::h5i_app_pg::sql::Read>,
-        ) -> ::std::result::Result<$krate::$snap, ::h5i_app_pg::DbError> {
+        ) -> ::std::result::Result<::$krate::$snap, ::h5i_app_pg::DbError> {
             let spec = schema_spec();
             // The read of each table, in field order; all of them are sent
             // before any result is awaited.
             let reads: ::std::vec::Vec<::std::option::Option<&::h5i_app_pg::sql::Read>> =
-                ::std::vec![$(plan.iter().find(|q| q.table == $krate::$t::TABLE)),*];
+                ::std::vec![$(plan.iter().find(|q| q.table == ::$krate::$t::TABLE)),*];
             let wanted: ::std::vec::Vec<&::h5i_app_pg::sql::Read> = reads.iter().filter_map(|q| *q).collect();
             let mut got = ::h5i_app_pg::load_reads(tx, tenant, &spec, &wanted).await?.into_iter();
             let mut each = reads.iter().map(|q| match q {
                 ::std::option::Option::Some(_) => got.next().unwrap_or_default(),
                 ::std::option::Option::None => ::std::vec::Vec::new(),
             });
-            let rows = $krate::Rows { $($f: { let _ = $krate::$t::TABLE; each.next().unwrap_or_default() },)* };
-            $krate::decode(&rows).ok_or_else(|| ::h5i_app_pg::DbError::Decode("stored rows do not decode".into()))
+            let rows = ::$krate::Rows { $($f: { let _ = ::$krate::$t::TABLE; each.next().unwrap_or_default() },)* };
+            ::$krate::decode(&rows).ok_or_else(|| ::h5i_app_pg::DbError::Decode("stored rows do not decode".into()))
         }
 
         $crate::__mapping_store! { $krate [$($w)?] }
@@ -641,9 +641,30 @@ macro_rules! __mapping_store {
         async fn schema_store(
             tx: &::h5i_app_pg::Tx<'_>,
             tenant: ::h5i_app_core::TenantId,
-            ws: &::std::vec::Vec<$krate::$w>,
+            ws: &::std::vec::Vec<::$krate::$w>,
         ) -> ::std::result::Result<(), ::h5i_app_pg::DbError> {
-            schema_write(tx, tenant, &$krate::sql_writes(ws)).await
+            schema_write(tx, tenant, &::$krate::sql_writes(ws)).await
         }
     };
+}
+
+#[cfg(test)]
+mod hygiene {
+    /// The mapping macro expands in the server, so a relative `$krate::…`
+    /// path would resolve to whatever the server names `<kernel>` there: a
+    /// local module could stand in for the kernel's `decode` or `sql_writes`
+    /// under the generated `Store`. Every kernel path is absolute.
+    #[test]
+    fn kernel_paths_are_absolute() {
+        let all = include_str!("lib.rs");
+        let src = &all[..all.find("mod hygiene").unwrap_or(all.len())];
+        let bad: Vec<(usize, &str)> = src
+            .lines()
+            .enumerate()
+            .filter(|(_, l)| !l.trim_start().starts_with("//"))
+            .filter(|(_, l)| l.match_indices("$krate::").any(|(i, _)| !l[..i].ends_with("::")))
+            .map(|(n, l)| (n + 1, l.trim()))
+            .collect();
+        assert!(bad.is_empty(), "relative kernel paths: {bad:?}");
+    }
 }

@@ -227,6 +227,19 @@ fn guarded_wiring(p: &Project) -> Vec<String> {
     }
     let s = rust::Sources::under(&p.root);
     let mut bad = Vec::new();
+    // The kernel's `App` and `guarded_transition` come from one
+    // `authz_kernel!`, so the engine's guard instantiation is the proven one.
+    if let Some(krate) = p.krate() {
+        let k = rust::Sources::of_crate(&krate);
+        let n = k.macro_calls("authz_kernel");
+        if n != 1 {
+            bad.push(format!(
+                "{}: the kernel invokes `h5i_app_std::authz_kernel!` {n} times; with `[authz]` it must once, so \
+                 that `App` runs the guard instantiation `guarded_transition` is proven for",
+                rel(p, &krate)
+            ));
+        }
+    }
     for (name, from) in [
         ("Kernel", "`h5i_app_core::Authz<T>` (run the kernel crate's `App`)"),
         ("Store", "`schema!`'s mapping macro (`<mapping>!(App, store <Name>)`)"),
@@ -406,6 +419,20 @@ mod tests {
         // The intended server: the kernel's `App` and the generated store.
         std::fs::write(&lib, "pub type Forum = k::App;\nk::forum_tables!(Forum, store ForumStore);\n").unwrap();
         assert!(guarded_wiring(&p).is_empty(), "{:?}", guarded_wiring(&p));
+        // The kernel must build `App` with `authz_kernel!`, exactly once.
+        std::fs::write(d.path().join("h5i-app.toml"), "[extract]\ncrate = \"kernel\"\n[authz]\nguarded = [\"guarded_transition\"]\n").unwrap();
+        let kernel = d.path().join("kernel");
+        std::fs::create_dir_all(kernel.join("src")).unwrap();
+        std::fs::write(kernel.join("Cargo.toml"), "[package]\nname = \"k\"\n").unwrap();
+        let p = Project::load(&d.path().join("h5i-app.toml")).unwrap();
+        for (code, want) in [
+            ("h5i_app_std::authz_kernel! { Forum { } }\n", 0),
+            ("macro_rules! mine { () => {} }\nmine!();\npub type App = h5i_app_core::Authz<Lax>;\n", 1),
+        ] {
+            std::fs::write(kernel.join("src/lib.rs"), code).unwrap();
+            assert_eq!(guarded_wiring(&p).len(), want, "{code}: {:?}", guarded_wiring(&p));
+        }
+        std::fs::write(kernel.join("src/lib.rs"), "h5i_app_std::authz_kernel! { Forum { } }\n").unwrap();
         // Each hand-written impl is flagged, under any path spelling and past a test module.
         for (code, what) in [
             ("#[cfg(test)]\nmod t {}\nimpl ::h5i_app_core::Kernel for Mine {}\n", "Kernel"),
