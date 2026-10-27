@@ -30,6 +30,12 @@ authorization is still proven, for every request sequence.
   back what that `apply` computes).
 
 What is proven and what stays trusted: [`docs/app/AUTHZ.md`](../../../docs/app/AUTHZ.md).
+To review the forum's authorization, read its `Policy`, `View` and `Disclose`
+impls with `Write` and `apply_write`, the `authz_kernel!` call, the principal
+function `HmacAuth` is given (`principal`) and `ReplyCodec::scope` in
+`server/src/lib.rs`, the two `Cargo.toml`s and the engine line of
+`server/src/main.rs`. The handlers may be wrong without breaking it, as long
+as the server acts only through `H5iApp` (it does: `rpc_router`).
 
 ## Run it
 

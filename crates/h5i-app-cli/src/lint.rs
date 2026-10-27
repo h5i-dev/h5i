@@ -31,6 +31,11 @@ pub fn lint(p: &Project, out: &Out) -> Result<()> {
     bad.extend(command_hygiene(p));
     bad.extend(read_only_proof(p));
     bad.extend(guarded_wiring(p));
+    let (actor_bad, actor_notes) = actor_paths(p);
+    bad.extend(actor_bad);
+    for n in actor_notes {
+        out.note(&n);
+    }
     if let Some(note) = authz_coverage(p) {
         out.note(&note);
     }
@@ -263,6 +268,40 @@ fn guarded_wiring(p: &Project) -> Vec<String> {
     bad
 }
 
+/// Under `[authz]`, the policy is judged for the principal the engine is
+/// given, and only commands go through the guard. The handler-facing ways
+/// around that fail: `.engine()` (whose `execute` takes any principal),
+/// `.snapshot()` and `.snapshot_for()` (the tenant's state, unguarded); they
+/// are for `main.rs`'s setup and for tests, and tests are not scanned. The
+/// places that legitimately decide a principal or write outside commands
+/// (`assume_authenticated`, `or_anonymous`, `.migrate()`) are listed as part
+/// of the reviewed surface. Hygiene: what only a macro produces is not seen.
+fn actor_paths(p: &Project) -> (Vec<String>, Vec<String>) {
+    if p.manifest.authz.guarded.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+    let s = rust::Sources::under(&p.root);
+    let at = |f: &Path, l: usize| format!("{}:{l}", rel(p, f));
+    let bad = s
+        .calls_to(&["engine", "snapshot", "snapshot_for"])
+        .into_iter()
+        .map(|(f, l, n)| {
+            format!(
+                "{}: `{n}` outside tests: with `[authz]`, handlers act only through `H5iApp` with the request's \
+                 `Actor`, since the policy is judged for whatever principal the engine is given and `snapshot` \
+                 skips the guard (docs/app/AUTHZ.md, \"Who this is for\")",
+                at(&f, l)
+            )
+        })
+        .collect();
+    let notes = s
+        .calls_to(&["assume_authenticated", "or_anonymous", "migrate"])
+        .into_iter()
+        .map(|(f, l, n)| format!("[authz] reviewed surface: {}: `{n}` (decides a principal, or writes outside the guard)", at(&f, l)))
+        .collect();
+    (bad, notes)
+}
+
 /// The kernel's `Command` carries no client-set identity or privilege field.
 fn command_hygiene(p: &Project) -> Vec<String> {
     let Some(krate) = p.krate() else { return Vec::new() };
@@ -420,6 +459,35 @@ mod tests {
             "[package]\nname = \"k\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[workspace]\n[dependencies]\n\
              h5i-app-core = {{ path = \"{crates}/h5i-app-core\" }}\nh5i-app-std = {{ path = \"{crates}/h5i-app-std\" }}\n{extra}"
         )
+    }
+
+    #[test]
+    fn handlers_act_only_as_the_request_actor() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("h5i-app.toml"), "[authz]\nguarded = [\"guarded_transition\"]\n").unwrap();
+        let server = d.path().join("server");
+        std::fs::create_dir_all(server.join("src")).unwrap();
+        std::fs::create_dir_all(server.join("tests")).unwrap();
+        std::fs::write(server.join("Cargo.toml"), "[package]\nname = \"s\"\n").unwrap();
+        let p = Project::load(&d.path().join("h5i-app.toml")).unwrap();
+        // The final review's mistakes: a route acting as another user, and an export of the snapshot.
+        std::fs::write(
+            server.join("src/lib.rs"),
+            "async fn posts_of(app: A, actor: Actor<K>, user: u64) { app.engine().execute(&principal(1, user), &ListPosts).await; }\n\
+             async fn export(app: A, a: Actor<K>) { app.engine().snapshot_for(a.principal(), &ListPosts).await; }\n",
+        )
+        .unwrap();
+        let (bad, _) = actor_paths(&p);
+        assert_eq!(bad.len(), 3, "{bad:?}");
+        // Custom auth and migrations are allowed, and listed for review.
+        std::fs::write(server.join("src/lib.rs"), "fn a(p: P) -> Actor<K> { Actor::assume_authenticated(p) }\nasync fn m(e: E) { e.migrate(&[]).await; }\n").unwrap();
+        let (bad, notes) = actor_paths(&p);
+        assert!(bad.is_empty(), "{bad:?}");
+        assert_eq!(notes.len(), 2, "{notes:?}");
+        // Tests may act as anyone.
+        std::fs::write(server.join("src/lib.rs"), "").unwrap();
+        std::fs::write(server.join("tests/t.rs"), "fn t(e: E) { e.snapshot(T(1)); }\n").unwrap();
+        assert!(actor_paths(&p).0.is_empty());
     }
 
     #[test]

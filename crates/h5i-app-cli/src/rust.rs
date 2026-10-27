@@ -10,6 +10,8 @@
 use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
+use syn::visit::Visit;
+
 
 /// One `impl <Trait> for …` with its methods.
 pub struct Impl {
@@ -288,6 +290,44 @@ impl Sources {
                 });
             }
         }
+        out
+    }
+
+    /// Calls to methods or functions named in `names`, anywhere in the
+    /// sources (method calls `x.name(..)` and path calls `a::name(..)`), as
+    /// `(file, line, name)`.
+    pub fn calls_to(&self, names: &[&str]) -> Vec<(PathBuf, usize, String)> {
+        struct V<'a> {
+            names: &'a [&'a str],
+            hits: Vec<(usize, String)>,
+        }
+        impl<'ast> Visit<'ast> for V<'_> {
+            fn visit_expr_method_call(&mut self, c: &'ast syn::ExprMethodCall) {
+                let m = c.method.to_string();
+                if self.names.contains(&m.as_str()) {
+                    self.hits.push((c.method.span().start().line, m));
+                }
+                syn::visit::visit_expr_method_call(self, c);
+            }
+            fn visit_expr_call(&mut self, c: &'ast syn::ExprCall) {
+                if let syn::Expr::Path(p) = &*c.func
+                    && let Some(last) = p.path.segments.last()
+                    && self.names.contains(&last.ident.to_string().as_str())
+                {
+                    self.hits.push((last.ident.span().start().line, last.ident.to_string()));
+                }
+                syn::visit::visit_expr_call(self, c);
+            }
+        }
+        let mut out = Vec::new();
+        for (file, _, items) in &self.files {
+            let mut v = V { names, hits: Vec::new() };
+            for i in items {
+                v.visit_item(i);
+            }
+            out.extend(v.hits.into_iter().map(|(l, n)| (file.clone(), l, n)));
+        }
+        out.sort();
         out
     }
 

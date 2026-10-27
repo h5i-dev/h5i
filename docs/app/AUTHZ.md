@@ -4,12 +4,70 @@ An h5i-app server can get a proven authorization theorem without writing Lean.
 The app writes its policy in Rust, runs its kernel behind the framework's
 guard, and lists the guarded function in `h5i-app.toml`. The theorem is proven
 once, in `crates/h5i-app-std/proofs/AuthzSpecs.lean`, for every kernel;
-`h5i app extract` instantiates it for the app in a generated one-line file.
+`h5i app extract` instantiates it for the app in a generated file, with no
+hand-written Lean.
 
 The worked example is [`examples/app/forum`](../../examples/app/forum/), a port of
 Nyxis's bulletin board (drafts, admins, self-registration). It has no
 hand-written Lean. The design and its alternatives are in
 [`docs/design/design-authz.md`](../design/design-authz.md).
+
+## Who this is for, and against what
+
+The app's author writes both the kernel and the server, often with an AI
+agent. The guarantee is not a check on that author: one who wants a
+permissive app writes `permits = true`, and no framework prevents that.
+
+It is for whoever reads the policy: a reviewer, an auditor, the person who
+asked an agent to build the app, the author months later. The claim is:
+
+> Read the reviewed surface below. Whatever it says is what the running app
+> enforces, however wrong the code behind the guard is, as long as the
+> server acts only through `H5iApp` with each request's `Actor`.
+
+**The reviewed surface** is small and stays the same size as the app grows:
+
+- the `Policy`, `View` and `Disclose` impls (the specification), and the
+  `Write` type with `apply_write`: `permits` judges a write's value, and
+  what that write then does to the state is `apply_write`'s;
+- the one `authz_kernel!` invocation (which type, and the tenant);
+- how a request becomes a principal: the `Authenticator` (for `HmacAuth`, the
+  principal function passed to `HmacAuth::new`), any `or_anonymous`, and any
+  `Actor::assume_authenticated`. The policy is judged for the principal it is
+  given, so this decides *who* each rule is about;
+- `ReplyCodec::scope`, which decides whose stored replies a repeated request
+  gets back (below);
+- the kernel's and server's `Cargo.toml` dependencies on `h5i-app-*`;
+- `main.rs`: the line that builds the engine from `App` and the generated
+  store, and any `Engine::migrate`, which writes outside commands.
+
+**What may be wrong** without breaking authorization: every kernel handler
+(the `transition` code behind the guard), everything generated, and the rest
+of the server *as long as it acts only through `H5iApp`* with the request's
+`Actor`, as `rpc_router` does. A handler that writes what the policy forbids,
+or replies with a row the caller may not see, is denied (`Guarded::Denied`, a
+403), not committed. What the server must not do is go around that: call
+`H5iApp::engine()` (its `execute` takes any principal, so a route could act
+as another user), or read `Engine::snapshot`/`snapshot_for` (the tenant's
+state, unguarded) outside tests. `h5i app lint` fails on those calls in an
+`[authz]` server and lists the reviewed-surface calls above; like all of its
+checks it reads the source, so it is hygiene, not proof. Making the engine
+handle accept only an authenticated `Actor` is the structural fix, not built
+yet. "Authorization" here means the
+policy's two questions: which writes commit, and which stored rows a reply
+discloses. What it does not cover is listed under [What is not
+covered](#what-is-not-covered): chiefly, a command that writes can carry
+hidden data in what it writes.
+
+**Out of scope:** the author deceiving their own reviewer. A decoy type with a
+stricter policy, a crate renamed to stand in for the framework, code that
+only a macro or `include!` produces, a fork of h5i-app: all of these change
+the reviewed surface itself, or what it means. `h5i app lint` and `check`
+reject the plain forms anyway (`[authz] guarded` must be
+`guarded_transition`, `h5i_app_*` dependencies must be the framework's own
+packages, no hand-written `Kernel` or `Store`), because a hurried author or an
+agent working around a failing check makes those too. They are not a
+defence against someone set on it.
 
 ## What an app writes
 
@@ -209,7 +267,10 @@ checked: review it (it should be the shape of `pg_stored`).
 On the code path, the theorem rests on A5 to A9 of [`ROADMAP.md`](ROADMAP.md)
 like every other h5i-app theorem, and on A4's trusted half (PostgreSQL runs
 statements as `H5iAppLib.Pg` says); the app's half of A4 is the generated
-storage section above. The new trust is in what the app writes, and it is
+storage section above. A8 (no handler bypasses the engine) is the condition
+"acts only through `H5iApp` with the request's `Actor`" above: the engine's
+own public API (`engine()`, `snapshot`, `migrate`) is a way around it that
+the opaque `Tx` and `cargo deny` do not cover. The new trust is in what the app writes, and it is
 small enough to review:
 
 - **The policy means what was intended.** The Rust `Policy` impl *is* the
@@ -226,10 +287,11 @@ small enough to review:
   authorization bug in a handler is a 403 at runtime, not a failed proof.
   `NeverDenied`, or the forum's `handler_bugs_are_denied` test, is how an app
   learns about it before users do.
-
 - **The kernel builds `App` with `authz_kernel!`, and the server runs it on
   the generated store.** One macro invocation and one line of `main.rs`
   ([above](#what-the-server-runs)); lint checks their plain form.
+- **The `h5i-app-*` dependencies are the framework.** Part of the reviewed
+  surface; `lint` and `check` reject renames and look-alike copies.
 - **A hand-named storage theorem says what it should.** Only with
   `[authz] storage`; `check` prints it.
 - **The framework's `Authz<T>`, `authz_kernel!` and the generated store**,
@@ -237,6 +299,8 @@ small enough to review:
   for every app.
 
 Not trusted any more: that the server calls the guard (`Authz<T>` does);
+that the theorems are about what `App` runs (`guarded` is fixed to the
+function `authz_kernel!` writes);
 that `kernel_apply` is the kernel's `apply` (`g.kernel_apply_eq`); that the
 kernel's `sql_writes` and `decode` store and load what that `apply` computes
 (`Committed.pg_stored`), which the generated store calls. `pg_stored` holds
@@ -265,10 +329,16 @@ the handler read:
 - **Replayed replies.** A request repeated with the same idempotency key
   gets its stored reply back without running `transition` again
   (`crates/h5i-app-pg`, `Attempt::Replayed`), so without the guard. Keys are
-  scoped per user (`ReplyCodec::scope`), so a user only gets back what was
-  shown to them, but after losing a right they can still replay a reply that
-  needed it: stale access, not escalation. Expire or purge stored replies
-  when rights change if that matters.
+  scoped by the server's `ReplyCodec::scope`, which is on the reviewed
+  surface: per user (the forum's `u{user}`), a user only gets back what was
+  shown to them, though after losing a right they can still replay a reply
+  that needed it (stale access). A coarser scope, per organization say, lets
+  one user replay another's reply, an admin's listing with its drafts
+  included: escalation. Expire or purge stored replies when rights change if
+  that matters.
+- **Time.** `Authz<T>` keeps `Kernel::stamp`'s default, so the engine's clock
+  does not reach the principal; a policy that depends on time gets it from
+  the principal function, on the reviewed surface.
 - **Existence.** Whether a write command was refused by the kernel
   (`NotFound`) or by the policy (`Denied`) can tell an actor that a row exists.
 - **Failures.** The guard checks after `transition`, so a kernel that panics

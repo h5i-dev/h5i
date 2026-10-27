@@ -321,6 +321,26 @@ does) is the stretch goal.
 
 ## The guarantee
 
+Who it is for: the reader of the policy, not a check on the author, who
+writes both kernel and server and could write a permissive policy outright.
+Reviews one to six found ways a *mistaken* app broke it; review seven's two
+high findings (a decoy policy type named in `[authz] guarded`, a renamed
+stand-in for `h5i-app-core`) were the author deceiving their own reviewer,
+which is out of scope ([`AUTHZ.md`](../app/AUTHZ.md#who-this-is-for-and-against-what)).
+Their plain forms are rejected anyway, since an agent working around a
+failing check produces them too.
+
+The final review, scoped to mistaken apps, found that the claim "every other
+line may be wrong" was too strong: the policy is judged for whichever
+principal the engine is given, and `H5iApp::engine()` executes as any
+principal while `Engine::snapshot` reads the tenant unguarded. The claim is
+now conditioned on the server acting through `H5iApp` with the request's
+`Actor`; lint fails on `engine()` and `snapshot` calls in `[authz]` servers,
+the principal function, `ReplyCodec::scope` and `Write`/`apply_write` joined
+the reviewed surface, and an engine handle that accepts only an
+authenticated `Actor` is left for a separate change (it alters the HTTP API
+for every app).
+
 States, for every actor, state and command of a kernel run through `guard`:
 a committed command is the kernel's own result, each write is permitted in
 the state the writes before it leave (by the kernel's own `apply`), and each
