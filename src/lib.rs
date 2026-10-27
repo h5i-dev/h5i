@@ -78,7 +78,10 @@ pub enum Commands {
         action: cli::browser::BrowserCommands,
     },
 
-    /// Install, list or remove a plugin.
+    /// Install, list or remove a plugin. Plugins add top-level commands:
+    /// `h5i websec` (HTTP workbench: edit, resend and compare captured
+    /// requests), `h5i recon` (endpoint ledger) and `h5i test` (security
+    /// regression tests). `h5i plugin list` shows which are installed.
     ///
     /// A plugin is a capability that is not in the default build: a separate
     /// executable, run in its own process, reaching a session through the same
