@@ -86,10 +86,31 @@ Two facts stay outside the proofs:
   own.
 
 `h5i app lint` checks the plain form of both: the kernel invokes
-`authz_kernel!` exactly once, and no crate of the project hand-writes an
-`impl Kernel`, `impl Store` or `impl AuthzKernel`. That is hygiene for the
-plain mistake, not a guarantee: it reads the source with `syn`, so what only
-a macro or `include!` produces is not seen.
+`h5i_app_std::authz_kernel!` (by that path) exactly once, and no crate of the
+project hand-writes an `impl Kernel`, `impl Store` or `impl AuthzKernel`.
+That is hygiene for the plain mistake, not a guarantee: it reads the source
+with `syn`, so what only a macro or `include!` produces is not seen.
+
+Two things are checked, not trusted:
+
+- **The theorems are about `guarded_transition`.** `[authz] guarded` accepts
+  only `["guarded_transition"]`, the function `authz_kernel!` writes, so the
+  proofs cannot be about another function with a stricter policy while `App`
+  runs `Forum`'s.
+- **The framework is the framework.** `authz_kernel!`, `Authz<T>` and the
+  generated store name `::h5i_app_core`, `::h5i_app_std`, `::h5i_app_pg` and
+  `::h5i_app_sql`, which each crate's `Cargo.toml` resolves. `lint` and
+  `check` read Cargo's resolution (`cargo metadata`) and fail unless every
+  `h5i_app_*` dependency of the project's crates is the package of that name
+  (no `package =` rename) and comes from the one place `h5i-app-core` comes
+  from (no `[patch]` or path to a look-alike). Otherwise a stand-in
+  `h5i_app_core` could supply an `Authz<T>` that skips the guard, with the
+  Rust and the extracted Lean unchanged. A fork of the whole framework is out
+  of scope, like a modified compiler.
+
+The store form needs `writes` and a snapshot in `schema!`; without them it
+does not compile, since its `schema_store` and `schema_load` would otherwise
+resolve to functions the server writes.
 
 The generated store names the kernel's `decode` and `sql_writes` by absolute
 path (`::forum_kernel::…`), so a server module that happens to be called

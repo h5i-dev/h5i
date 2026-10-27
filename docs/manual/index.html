@@ -1585,7 +1585,8 @@ mutants generated from the kernel's syntax: comparison boundaries, <code>==</cod
 <code>false</code>.</p>
 <p><code>[authz] guarded</code> opts a kernel into framework-proven authorization
 (<a href="https://github.com/h5i-dev/h5i/blob/main/docs/app/AUTHZ.md"><code>docs/app/AUTHZ.md</code></a>). The kernel invokes
-<code>h5i_app_std::authz_kernel!</code>, which writes <code>guarded_transition</code> and <code>App</code>
+<code>h5i_app_std::authz_kernel!</code>, which writes <code>guarded_transition</code> (the only
+value <code>guarded</code> accepts) and <code>App</code>
 (<code>h5i_app_core::Authz&lt;_&gt;</code>, whose <code>Kernel::transition</code> is the guard), and the
 server runs <code>App</code> on the store its mapping macro generates
 (<code>&lt;mapping&gt;!(App, store Name)</code>), writing no <code>Kernel</code> or <code>Store</code> itself. <code>extract</code> then writes
@@ -1597,9 +1598,11 @@ store and load what that <code>apply</code> computes). If <code>sql_write</code>
 list of <code>schema!</code> table writes, <code>extract</code> fails unless
 <code>[authz] storage = "&lt;theorem&gt;"</code> names a hand-written storage proof. <code>check</code>
 builds <code>Authz</code> itself and gates these and <code>&lt;fn&gt;.read_only_sound</code>. <code>lint</code>
-flags a hand-written <code>impl Kernel</code>, <code>impl Store</code> or <code>impl AuthzKernel</code> in an
-<code>[authz]</code> project (hygiene: that the server runs <code>App</code> on the generated
-store is the one fact outside the proofs). An app without <code>[authz]</code> is
+flags a hand-written <code>impl Kernel</code>, <code>impl Store</code> or <code>impl AuthzKernel</code> and a
+kernel without exactly one <code>h5i_app_std::authz_kernel!</code> (hygiene: those two
+pieces of wiring are what stays outside the proofs), and <code>lint</code> and <code>check</code>
+both fail unless every <code>h5i_app_*</code> dependency is the framework's own package
+(<code>cargo metadata</code>: no <code>package =</code> renames, no copy from elsewhere). An app without <code>[authz]</code> is
 unaffected.</p>
 <p><code>h5i app new</code> requires the h5i-app Lean library from git at this binary's
 release tag; <code>--h5i-path &lt;checkout&gt;</code> uses a local h5i checkout instead.</p>

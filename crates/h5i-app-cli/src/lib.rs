@@ -22,6 +22,7 @@ use anyhow::{Result, bail};
 use clap::Subcommand;
 
 pub mod check;
+pub mod deps;
 pub mod doctor;
 pub mod extract;
 pub mod lint;

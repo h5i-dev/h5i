@@ -191,6 +191,16 @@ impl Project {
         let root = root
             .canonicalize()
             .with_context(|| format!("resolving {}", root.display()))?;
+        // The theorems must be about the function `authz_kernel!` writes,
+        // the instantiation `h5i_app_core::Authz<T>` runs, not another one.
+        let g = &manifest.authz.guarded;
+        if !g.is_empty() && g.as_slice() != ["guarded_transition"] {
+            bail!(
+                "{}: `[authz] guarded` must be [\"guarded_transition\"], the function `h5i_app_std::authz_kernel!` \
+                 writes: the theorems are about it because `App` runs the same guard instantiation",
+                file.display()
+            );
+        }
         let mut names = std::collections::HashSet::new();
         for m in &manifest.mutants {
             m.edits()?;

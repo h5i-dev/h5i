@@ -119,6 +119,10 @@ pub struct Node {
 
 #[derive(Debug, Deserialize)]
 pub struct NodeDep {
+    /// The name the dependent crate uses for it (`extern crate` name, after
+    /// any `package =` rename).
+    #[serde(default)]
+    pub name: String,
     pub pkg: String,
 }
 

@@ -303,7 +303,9 @@ fn authz_lean(guarded: &[String], storage: Option<&str>, std_specs: bool, module
     match (storage, sql_arms(&kernel)) {
         // The app proves A4 itself; `check` requires that theorem instead.
         (Some(_), _) => {}
-        (None, Some(arms)) if !tables.is_empty() => {
+        // The storage proof builds on `Schema.lean`'s store section, which
+        // `schema!` writes only with `writes` and a snapshot.
+        (None, Some(arms)) if !tables.is_empty() && schema.contains("theorem apply_spec'") && schema.contains("theorem sql_writes_spec'") => {
             text = text.replacen("import AuthzSpecs\n", "import AuthzSpecs\nimport Schema\n", 1);
             text.push_str(&storage_text(ns, &tables, &arms));
         }

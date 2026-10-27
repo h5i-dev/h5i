@@ -7,10 +7,9 @@
 //! so a test's impl or a stray file can neither satisfy nor fail a check. A
 //! file that does not parse is an error, never skipped.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
-use syn::visit::Visit;
 
 /// One `impl <Trait> for …` with its methods.
 pub struct Impl {
@@ -20,7 +19,8 @@ pub struct Impl {
     /// The last path segment of the type implemented for (`Authz` in `Authz<T>`).
     pub self_ty: String,
     pub line: usize,
-    pub fns: BTreeMap<String, syn::Block>,
+    /// The methods it defines.
+    pub fns: BTreeSet<String>,
 }
 
 /// The parsed module trees of every crate under a project root.
@@ -271,7 +271,7 @@ impl Sources {
                     .items
                     .iter()
                     .filter_map(|it| match it {
-                        syn::ImplItem::Fn(f) => Some((f.sig.ident.to_string(), f.block.clone())),
+                        syn::ImplItem::Fn(f) => Some(f.sig.ident.to_string()),
                         _ => None,
                     })
                     .collect();
@@ -291,56 +291,22 @@ impl Sources {
         out
     }
 
-    /// The body of a free function `name`, anywhere in the sources.
-    pub fn free_fn(&self, name: &str) -> Option<&syn::Block> {
-        self.files.iter().flat_map(|(_, _, items)| items).find_map(|i| match i {
-            syn::Item::Fn(f) if f.sig.ident == name => Some(&*f.block),
-            _ => None,
-        })
-    }
-
-    /// Item-position invocations of a macro `name!` (any path to it).
-    pub fn macro_calls(&self, name: &str) -> usize {
+    /// Item-position invocations of the macro at exactly `path`
+    /// (`h5i_app_std::authz_kernel!`, with or without a leading `::`), so a
+    /// local macro of the same name does not count.
+    pub fn macro_calls(&self, path: &[&str]) -> usize {
         self.files
             .iter()
             .flat_map(|(_, _, items)| items)
-            .filter(|i| matches!(i, syn::Item::Macro(m) if m.mac.path.segments.last().is_some_and(|s| s.ident == name)))
+            .filter(|i| match i {
+                syn::Item::Macro(m) => {
+                    m.mac.path.segments.len() == path.len()
+                        && m.mac.path.segments.iter().zip(path).all(|(s, want)| s.ident == want)
+                }
+                _ => false,
+            })
             .count()
     }
-
-    /// Whether the sources define a free function `name` themselves (a
-    /// macro's expansion is not visible here, so this is a hand-written one).
-    pub fn defines_fn(&self, name: &str) -> bool {
-        self.free_fn(name).is_some()
-    }
-}
-
-/// `block` calls `name`: `name(…)`, `path::name(…)`, `path::name::<…>(…)` or
-/// `x.name(…)`. Only real calls count, not a mention in a string or comment.
-pub fn calls(block: &syn::Block, name: &str) -> bool {
-    struct V<'a> {
-        name: &'a str,
-        hit: bool,
-    }
-    impl<'ast> Visit<'ast> for V<'_> {
-        fn visit_expr_call(&mut self, c: &'ast syn::ExprCall) {
-            if let syn::Expr::Path(p) = &*c.func
-                && p.path.segments.last().is_some_and(|s| s.ident == self.name)
-            {
-                self.hit = true;
-            }
-            syn::visit::visit_expr_call(self, c);
-        }
-        fn visit_expr_method_call(&mut self, c: &'ast syn::ExprMethodCall) {
-            if c.method == self.name {
-                self.hit = true;
-            }
-            syn::visit::visit_expr_method_call(self, c);
-        }
-    }
-    let mut v = V { name, hit: false };
-    v.visit_block(block);
-    v.hit
 }
 
 #[cfg(test)]
@@ -370,11 +336,10 @@ mod tests {
         assert!(s.errors.is_empty(), "{:?}", s.errors);
         let impls = s.impls_of("Kernel");
         assert_eq!(impls.len(), 2, "A and B only: not the test module, tests.rs or an unreachable file");
-        let a = impls.iter().find(|i| i.fns.contains_key("transition")).unwrap();
-        let b = impls.iter().find(|i| i.fns.contains_key("apply")).unwrap();
+        let a = impls.iter().find(|i| i.fns.contains("transition")).unwrap();
+        let b = impls.iter().find(|i| i.fns.contains("apply")).unwrap();
         assert_eq!((a.line, b.line), (6, 1));
-        assert!(calls(&a.fns["transition"], "guarded") && !calls(&a.fns["transition"], "decoy"));
-        assert!(calls(&b.fns["apply"], "apply"));
+        assert_eq!(a.self_ty, "A");
     }
 
     #[test]
@@ -410,11 +375,4 @@ mod tests {
         assert!(impls[0].file.ends_with("real.rs"));
     }
 
-    #[test]
-    fn calls_are_calls() {
-        let b: syn::Block = syn::parse_str("{ let x = \"apply(\"; reapply(s); s.apply_one(); k::apply::<T>(s) }").unwrap();
-        assert!(calls(&b, "apply"));
-        let b: syn::Block = syn::parse_str("{ let x = \"apply(\"; reapply(s); s.apply_one() }").unwrap();
-        assert!(!calls(&b, "apply"), "a string, a longer name and another method do not count");
-    }
 }

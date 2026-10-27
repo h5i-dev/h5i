@@ -1295,7 +1295,8 @@ mutants generated from the kernel's syntax: comparison boundaries, `==` and
 
 `[authz] guarded` opts a kernel into framework-proven authorization
 ([`docs/app/AUTHZ.md`](app/AUTHZ.md)). The kernel invokes
-`h5i_app_std::authz_kernel!`, which writes `guarded_transition` and `App`
+`h5i_app_std::authz_kernel!`, which writes `guarded_transition` (the only
+value `guarded` accepts) and `App`
 (`h5i_app_core::Authz<_>`, whose `Kernel::transition` is the guard), and the
 server runs `App` on the store its mapping macro generates
 (`<mapping>!(App, store Name)`), writing no `Kernel` or `Store` itself. `extract` then writes
@@ -1307,9 +1308,11 @@ store and load what that `apply` computes). If `sql_write` is not a plain
 list of `schema!` table writes, `extract` fails unless
 `[authz] storage = "<theorem>"` names a hand-written storage proof. `check`
 builds `Authz` itself and gates these and `<fn>.read_only_sound`. `lint`
-flags a hand-written `impl Kernel`, `impl Store` or `impl AuthzKernel` in an
-`[authz]` project (hygiene: that the server runs `App` on the generated
-store is the one fact outside the proofs). An app without `[authz]` is
+flags a hand-written `impl Kernel`, `impl Store` or `impl AuthzKernel` and a
+kernel without exactly one `h5i_app_std::authz_kernel!` (hygiene: those two
+pieces of wiring are what stays outside the proofs), and `lint` and `check`
+both fail unless every `h5i_app_*` dependency is the framework's own package
+(`cargo metadata`: no `package =` renames, no copy from elsewhere). An app without `[authz]` is
 unaffected.
 
 `h5i app new` requires the h5i-app Lean library from git at this binary's

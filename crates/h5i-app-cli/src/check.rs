@@ -73,6 +73,7 @@ fn check_recorded(
         })?;
     }
     let mut problems = scan(&proofs)?;
+    problems.extend(crate::deps::framework_problems(p)?);
     let (mut built, unbuilt) = hand_written_modules(&proofs, &p.manifest.check.targets)?;
     record.run.unbuilt_modules = unbuilt.clone();
     for m in &unbuilt {

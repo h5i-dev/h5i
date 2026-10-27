@@ -9,9 +9,11 @@
 //! - A `Kernel` impl that declares read-only commands (`fn read_only`) comes
 //!   with a proof of `H5iAppLib.ReadOnly.Sound`: the engine skips locks and
 //!   retries for them on the strength of it.
-//! - An app that lists `[authz] guarded` functions runs one of them as its
-//!   `Kernel::transition`: otherwise the framework's theorem is about code the
-//!   server does not run.
+//! - An `[authz]` app's kernel invokes `h5i_app_std::authz_kernel!` once, no
+//!   crate of it hand-writes an `impl Kernel`, `Store` or `AuthzKernel`, and
+//!   its `h5i_app_*` dependencies are the framework's packages (`deps`).
+//!   Hygiene for the first two (macro output is not seen); the third reads
+//!   Cargo's resolution.
 //! - A report, never a failure: whether the proofs state a universal
 //!   authorization theorem, or the framework proves one.
 
@@ -200,7 +202,7 @@ fn read_only_proof(p: &Project) -> Vec<String> {
         // for each app that runs it (`<fn>.read_only_sound`, required by
         // `h5i app check`), so it carries no proof of its own.
         let framework = i.self_ty == "Authz" && crate::util::package_name(&i.krate).as_deref() == Some("h5i-app-core");
-        if i.fns.contains_key("read_only") && !proven && !framework {
+        if i.fns.contains("read_only") && !proven && !framework {
             bad.push(format!(
                 "{}:{}: Kernel::read_only is overridden, but no proof in {} states `H5iAppLib.ReadOnly.Sound`",
                 rel(p, &i.file),
@@ -231,14 +233,18 @@ fn guarded_wiring(p: &Project) -> Vec<String> {
     // `authz_kernel!`, so the engine's guard instantiation is the proven one.
     if let Some(krate) = p.krate() {
         let k = rust::Sources::of_crate(&krate);
-        let n = k.macro_calls("authz_kernel");
+        let n = k.macro_calls(&["h5i_app_std", "authz_kernel"]);
         if n != 1 {
             bad.push(format!(
-                "{}: the kernel invokes `h5i_app_std::authz_kernel!` {n} times; with `[authz]` it must once, so \
+                "{}: the kernel invokes `h5i_app_std::authz_kernel!` (by that path) {n} times; with `[authz]` it must once, so \
                  that `App` runs the guard instantiation `guarded_transition` is proven for",
                 rel(p, &krate)
             ));
         }
+    }
+    match crate::deps::framework_problems(p) {
+        Ok(more) => bad.extend(more),
+        Err(e) => bad.push(format!("reading the framework's packages: {e:#}")),
     }
     for (name, from) in [
         ("Kernel", "`h5i_app_core::Authz<T>` (run the kernel crate's `App`)"),
@@ -407,6 +413,45 @@ mod tests {
         assert!(read_only_proof(&p).is_empty());
     }
 
+    /// A kernel crate on the framework's real packages, with `extra` deps.
+    fn kernel_manifest(extra: &str) -> String {
+        let crates = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().display().to_string();
+        format!(
+            "[package]\nname = \"k\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[workspace]\n[dependencies]\n\
+             h5i-app-core = {{ path = \"{crates}/h5i-app-core\" }}\nh5i-app-std = {{ path = \"{crates}/h5i-app-std\" }}\n{extra}"
+        )
+    }
+
+    #[test]
+    fn framework_packages_are_the_framework() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("h5i-app.toml"), "[extract]\ncrate = \"kernel\"\n[authz]\nguarded = [\"guarded_transition\"]\n").unwrap();
+        let kernel = d.path().join("kernel");
+        std::fs::create_dir_all(kernel.join("src")).unwrap();
+        std::fs::write(kernel.join("src/lib.rs"), "").unwrap();
+        std::fs::write(kernel.join("Cargo.toml"), kernel_manifest("")).unwrap();
+        let p = Project::load(&d.path().join("h5i-app.toml")).unwrap();
+        assert_eq!(crate::deps::framework_problems(&p).unwrap(), Vec::<String>::new());
+        let crates = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().display().to_string();
+        // A `package =` rename puts another package behind the framework's name.
+        let renamed = kernel_manifest(&format!("h5i_app_pg = {{ path = \"{crates}/h5i-app-sql\", package = \"h5i-app-sql\" }}\n"));
+        std::fs::write(kernel.join("Cargo.toml"), renamed).unwrap();
+        let bad = crate::deps::framework_problems(&p).unwrap();
+        assert!(bad.iter().any(|b| b.contains("rename")), "{bad:?}");
+        // A look-alike `h5i-app-sql` from somewhere else than `h5i-app-core`.
+        let fake = d.path().join("fake/h5i-app-sql");
+        std::fs::create_dir_all(fake.join("src")).unwrap();
+        std::fs::write(fake.join("Cargo.toml"), "[package]\nname = \"h5i-app-sql\"\nversion = \"0.1.3\"\nedition = \"2024\"\n").unwrap();
+        std::fs::write(fake.join("src/lib.rs"), "").unwrap();
+        let swapped = kernel_manifest(&format!("h5i-app-sql = {{ path = \"{}\" }}\n", fake.display()));
+        std::fs::write(kernel.join("Cargo.toml"), swapped).unwrap();
+        let bad = crate::deps::framework_problems(&p).unwrap();
+        assert!(bad.iter().any(|b| b.contains("h5i-app-sql") && b.contains("comes from")), "{bad:?}");
+        // The theorems' subject is fixed.
+        std::fs::write(d.path().join("h5i-app.toml"), "[extract]\ncrate = \"kernel\"\n[authz]\nguarded = [\"reviewed_transition\"]\n").unwrap();
+        assert!(Project::load(&d.path().join("h5i-app.toml")).is_err());
+    }
+
     #[test]
     fn authz_projects_write_no_kernel_or_store() {
         let d = tempfile::tempdir().unwrap();
@@ -423,7 +468,7 @@ mod tests {
         std::fs::write(d.path().join("h5i-app.toml"), "[extract]\ncrate = \"kernel\"\n[authz]\nguarded = [\"guarded_transition\"]\n").unwrap();
         let kernel = d.path().join("kernel");
         std::fs::create_dir_all(kernel.join("src")).unwrap();
-        std::fs::write(kernel.join("Cargo.toml"), "[package]\nname = \"k\"\n").unwrap();
+        std::fs::write(kernel.join("Cargo.toml"), kernel_manifest("")).unwrap();
         let p = Project::load(&d.path().join("h5i-app.toml")).unwrap();
         for (code, want) in [
             ("h5i_app_std::authz_kernel! { Forum { } }\n", 0),
