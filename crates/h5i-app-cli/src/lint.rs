@@ -188,35 +188,19 @@ fn rel_str(p: &Project, s: &str) -> String {
     s.replace(&format!("{}/", p.root.display()), "")
 }
 
-/// Whether some `impl Kernel` overrides `read_only`. A source that does not
-/// parse counts as yes: `h5i app check` then requires the proof.
-pub fn overrides_read_only(p: &Project) -> bool {
-    let (impls, errors) = kernel_impls(p);
-    !errors.is_empty() || impls.iter().any(|i| i.fns.contains_key("read_only"))
-}
-
-/// Whether a guarded function is defined as `guard_viewed`, the guard that
-/// comes with a `ReadOnly.Sound` proof.
-pub fn uses_guard_viewed(p: &Project) -> bool {
-    let Some(krate) = p.krate() else { return false };
-    let s = rust::Sources::of_crate(&krate);
-    p.manifest.authz.guarded.iter().any(|g| s.free_fn(g).is_some_and(|b| rust::calls(b, "guard_viewed")))
-}
-
-/// Every `impl Kernel` that overrides `read_only` has a `ReadOnly.Sound`
-/// proof: a hand-written one, or the framework's for a kernel guarded with
-/// `guard_viewed` (`h5i app check` then requires `<fn>.read_only_sound`).
+/// Every `impl Kernel` that overrides `read_only` has a hand-written
+/// `ReadOnly.Sound` proof. (An `[authz]` app writes no `impl Kernel`:
+/// `Authz<T>` declares the view's read-only commands, and `h5i app check`
+/// requires `<fn>.read_only_sound`.) A source that does not parse fails.
 fn read_only_proof(p: &Project) -> Vec<String> {
     let proven = crate::check::has_read_only_proof(p);
-    // The framework's proof is about the view's `read_only`, so it counts only
-    // for an impl that delegates to the kernel's.
-    let generated = !p.manifest.authz.guarded.is_empty()
-        && uses_guard_viewed(p)
-        && p.generated().join(format!("{}.lean", crate::extract::AUTHZ_MODULE)).is_file();
     let (impls, mut bad) = kernel_impls(p);
     for i in impls {
-        let Some(ro) = i.fns.get("read_only") else { continue };
-        if !proven && !(generated && rust::calls(ro, "read_only")) {
+        // h5i-app-core's `Authz<T>`: its `read_only` is the view's, proven
+        // for each app that runs it (`<fn>.read_only_sound`, required by
+        // `h5i app check`), so it carries no proof of its own.
+        let framework = i.self_ty == "Authz" && crate::util::package_name(&i.krate).as_deref() == Some("h5i-app-core");
+        if i.fns.contains_key("read_only") && !proven && !framework {
             bad.push(format!(
                 "{}:{}: Kernel::read_only is overridden, but no proof in {} states `H5iAppLib.ReadOnly.Sound`",
                 rel(p, &i.file),
@@ -228,55 +212,32 @@ fn read_only_proof(p: &Project) -> Vec<String> {
     bad
 }
 
-/// With `[authz] guarded`, the server runs what the theorems are about:
-/// every `impl Kernel` runs a guarded function as its `transition` and the
-/// kernel's `apply` as its `apply`; every `impl Store` writes and loads with
-/// the `schema!`-generated `schema_store` and `schema_load` (the code
-/// `Committed.pg_stored` is about) and keeps the default full-tenant
-/// `load_for` (the guard judges the policy on the snapshot it is given).
+/// With `[authz] guarded`, the project writes no `Kernel`, `Store` or
+/// `AuthzKernel` impl: the server runs `h5i_app_core::Authz<T>`, whose
+/// `transition` is the guard (framework code), with the `AuthzKernel` impl
+/// `h5i_app_std::authz_kernel!` writes and the `Store` `schema!` generates.
+///
+/// Hygiene, not a guarantee: the theorems hold for `Authz<T>` whatever the
+/// rest of the server does, and this flags the plain way of running something
+/// else instead. Code that only a macro or `include!` produces is not seen.
 fn guarded_wiring(p: &Project) -> Vec<String> {
     let guarded = &p.manifest.authz.guarded;
     if guarded.is_empty() {
         return Vec::new();
     }
     let s = rust::Sources::under(&p.root);
-    let mut bad: Vec<String> = s.errors.iter().map(|e| rel_str(p, e)).collect();
-    let kernels = s.impls_of("Kernel");
-    if kernels.is_empty() {
-        bad.push(format!("`[authz] guarded` names {}, but no crate builds an `impl Kernel`", guarded.join(", ")));
-    }
-    let calls_in = |i: &rust::Impl, f: &str, callee: &str| i.fns.get(f).is_some_and(|b| rust::calls(b, callee));
-    for i in &kernels {
-        if !guarded.iter().any(|g| calls_in(i, "transition", g)) || !calls_in(i, "apply", "apply") {
+    let mut bad = Vec::new();
+    for (name, from) in [
+        ("Kernel", "`h5i_app_core::Authz<T>` (run the kernel crate's `App`)"),
+        ("Store", "`schema!`'s mapping macro (`<mapping>!(App, store <Name>)`)"),
+        ("AuthzKernel", "`h5i_app_std::authz_kernel!` in the kernel crate"),
+    ] {
+        for i in s.impls_of(name) {
             bad.push(format!(
-                "{}:{}: this `Kernel` impl does not call {} from `transition` and the kernel's `apply` \
-                 from `apply`: with `[authz]`, every impl must, or the framework's theorem is about \
-                 code the server does not run",
+                "{}:{}: a hand-written `impl {name}`: with `[authz]` it comes from {from}, so that what the \
+                 server runs is what the theorems are about",
                 rel(p, &i.file),
-                i.line,
-                guarded.join(" or ")
-            ));
-        }
-    }
-    for i in s.impls_of("Store") {
-        let at = format!("{}:{}", rel(p, &i.file), i.line);
-        if !calls_in(&i, "write", "schema_store") || !calls_in(&i, "load", "schema_load") {
-            bad.push(format!(
-                "{at}: this `Store` impl does not call `schema_store` from `write` and `schema_load` from \
-                 `load`: with `[authz]`, the store must be the generated one `Committed.pg_stored` is about"
-            ));
-        }
-        if i.fns.contains_key("load_for") {
-            bad.push(format!(
-                "{at}: this `Store` impl overrides `load_for`: with `[authz]`, the policy is judged on the \
-                 snapshot loaded, so a partial load could let it permit what the full state forbids"
-            ));
-        }
-    }
-    for f in ["schema_store", "schema_load"] {
-        if s.defines_fn(f) {
-            bad.push(format!(
-                "`{f}` is written by hand: with `[authz]`, it must come from the kernel's `schema!` mapping macro"
+                i.line
             ));
         }
     }
@@ -332,16 +293,14 @@ pub fn authz_coverage(p: &Project) -> Option<String> {
     let krate = p.krate()?;
     let guarded = &p.manifest.authz.guarded;
     if !guarded.is_empty() {
-        let viewed = uses_guard_viewed(p);
         let thms: Vec<String> = guarded.iter().map(|g| format!("{g}.authorized")).collect();
         let storage = match &p.manifest.authz.storage {
             Some(t) => format!("storage: {t}"),
             None => "storage: generated".to_string(),
         };
         return Some(format!(
-            "authorization: framework-proven ({}; writes and disclosed rows{}; {storage})",
-            thms.join(", "),
-            if viewed { ", read-only noninterference" } else { "" }
+            "authorization: framework-proven ({}; writes and disclosed rows, read-only noninterference; {storage})",
+            thms.join(", ")
         ));
     }
     let mut files = Vec::new();
@@ -436,55 +395,32 @@ mod tests {
     }
 
     #[test]
-    fn guarded_kernels_must_be_wired() {
+    fn authz_projects_write_no_kernel_or_store() {
         let d = tempfile::tempdir().unwrap();
         std::fs::write(d.path().join("h5i-app.toml"), "[authz]\nguarded = [\"guarded_transition\"]\n").unwrap();
         let server = d.path().join("server");
         std::fs::create_dir_all(server.join("src")).unwrap();
-        std::fs::create_dir_all(server.join("tests")).unwrap();
-        std::fs::write(server.join("Cargo.toml"), "[package]\nname = \"s\"\n[dependencies]\naxum = \"0.8\"\n").unwrap();
+        std::fs::write(server.join("Cargo.toml"), "[package]\nname = \"s\"\n").unwrap();
         let lib = server.join("src/lib.rs");
-        let kernel = |t: &str, a: &str| {
-            format!("impl Kernel for K {{\n    fn transition(a: &P, s: &S, c: &C) -> R {{\n        {t}(a, s, c)\n    }}\n    fn apply(s: &S, ws: &W) -> S {{\n        {a}(s, ws)\n    }}\n}}\n")
-        };
         let p = Project::load(&d.path().join("h5i-app.toml")).unwrap();
-        std::fs::write(&lib, kernel("k::transition", "k::apply")).unwrap();
-        assert_eq!(guarded_wiring(&p).len(), 1, "unguarded transition");
-        std::fs::write(&lib, kernel("k::my_guarded_transition", "k::apply")).unwrap();
-        assert_eq!(guarded_wiring(&p).len(), 1, "a longer name is not the guarded function");
-        std::fs::write(&lib, kernel("k::guarded_transition", "k::snapshot_of")).unwrap();
-        assert_eq!(guarded_wiring(&p).len(), 1, "commits with something else than apply");
-        std::fs::write(&lib, kernel("k::guarded_transition", "k::apply")).unwrap();
-        assert!(guarded_wiring(&p).is_empty());
-        // A wired impl elsewhere does not excuse an unwired one, in any order.
-        let two = format!("{}{}", kernel("k::guarded_transition", "k::apply"), kernel("k::transition", "k::apply"));
-        std::fs::write(&lib, two).unwrap();
-        assert_eq!(guarded_wiring(&p).len(), 1, "second impl unwired");
-        std::fs::write(&lib, kernel("k::transition", "k::apply")).unwrap();
-        std::fs::write(server.join("tests/decoy.rs"), kernel("k::guarded_transition", "k::apply")).unwrap();
-        assert_eq!(guarded_wiring(&p).len(), 1, "a wired impl in tests/ is not the server's");
-        let with_test = format!("{}#[cfg(test)]\nmod t {{\n{}}}\n", kernel("k::guarded_transition", "k::apply"), kernel("k::transition", "k::apply"));
-        std::fs::write(&lib, with_test).unwrap();
-        assert!(guarded_wiring(&p).is_empty(), "an impl in a test module is not the server's");
-        // The fourth review's bypass: a test module above the real impl, a
-        // longer path, and a wired decoy in a file no `mod` reaches.
-        let bypass = format!("#[cfg(test)]\nmod unit {{}}\n{}", kernel("k::transition", "k::apply").replace("impl Kernel", "impl ::h5i_app_core::Kernel"));
-        std::fs::write(&lib, bypass).unwrap();
-        std::fs::write(server.join("src/decoy.rs"), kernel("k::guarded_transition", "k::apply")).unwrap();
-        assert_eq!(guarded_wiring(&p).len(), 1, "the real impl is still seen, the decoy is not");
-        std::fs::remove_file(server.join("src/decoy.rs")).unwrap();
-        // The store must be the generated one, with the full-tenant load.
-        let store = |w: &str, extra: &str| {
-            format!("{}impl Store<K> for S {{\n    async fn load(tx: &Tx, t: T) -> R {{ schema_load(tx, t).await }}\n    async fn write(tx: &Tx, t: T, ws: &W) -> R {{ {w}(tx, t, ws).await }}\n{extra}}}\n", kernel("k::guarded_transition", "k::apply"))
-        };
-        std::fs::write(&lib, store("schema_store", "")).unwrap();
+        // The intended server: the kernel's `App` and the generated store.
+        std::fs::write(&lib, "pub type Forum = k::App;\nk::forum_tables!(Forum, store ForumStore);\n").unwrap();
         assert!(guarded_wiring(&p).is_empty(), "{:?}", guarded_wiring(&p));
-        std::fs::write(&lib, store("schema_write_nothing", "")).unwrap();
-        assert_eq!(guarded_wiring(&p).len(), 1, "a store that does not write through schema_store");
-        std::fs::write(&lib, store("schema_store", "    async fn load_for(tx: &Tx, t: T, a: &A, c: &C) -> R { part(tx).await }\n")).unwrap();
-        assert_eq!(guarded_wiring(&p).len(), 1, "a scoped load");
-        std::fs::write(&lib, format!("{}fn schema_store() {{}}\n", store("schema_store", ""))).unwrap();
-        assert_eq!(guarded_wiring(&p).len(), 1, "a hand-written schema_store");
+        // Each hand-written impl is flagged, under any path spelling and past a test module.
+        for (code, what) in [
+            ("#[cfg(test)]\nmod t {}\nimpl ::h5i_app_core::Kernel for Mine {}\n", "Kernel"),
+            ("impl Store<App> for MyStore {}\n", "Store"),
+            ("use h5i_app_core::AuthzKernel as AK;\nimpl AK for Mine {}\n", "AuthzKernel"),
+        ] {
+            std::fs::write(&lib, code).unwrap();
+            let bad = guarded_wiring(&p);
+            assert_eq!(bad.len(), 1, "{what}: {bad:?}");
+            assert!(bad[0].contains(&format!("impl {what}")), "{bad:?}");
+        }
+        // Without `[authz]`, writing them is how an app works.
+        std::fs::write(d.path().join("h5i-app.toml"), "").unwrap();
+        let p = Project::load(&d.path().join("h5i-app.toml")).unwrap();
+        assert!(guarded_wiring(&p).is_empty());
     }
 
     #[test]
@@ -499,6 +435,10 @@ mod tests {
         std::fs::write(server.join("Cargo.toml"), "[package]\nname = \"s\"\n").unwrap();
         std::fs::write(server.join("src/lib.rs"), "#[cfg(test)]\nmod t {}\nimpl Kernel for K {\n    fn read_only(c: &C) -> bool { true }\n}\n").unwrap();
         let p = Project::load(&d.path().join("h5i-app.toml")).unwrap();
+        assert_eq!(read_only_proof(&p).len(), 1);
+        // The exemption for h5i-app-core's `Authz<T>` is not one for a type an
+        // app names `Authz`.
+        std::fs::write(server.join("src/lib.rs"), "impl<T> Kernel for Authz<T> {\n    fn read_only(c: &C) -> bool { true }\n}\n").unwrap();
         assert_eq!(read_only_proof(&p).len(), 1);
     }
 

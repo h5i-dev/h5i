@@ -356,7 +356,7 @@ function Guarantees({
     return (
       <div className="app-pad app-scroll">
         <MapPrompt project={data.summary.id} />
-        <Evidence view={latest} project={data.summary.id} />
+        <Evidence view={latest} project={data.summary.id} required={data.required_theorems} />
       </div>
     );
   const drift = explanationDrift(data.model, data.issues);
@@ -650,7 +650,7 @@ function Guarantees({
                       )}
                     </>
                   )}
-                  <Evidence view={latest} project={data.summary.id} />
+                  <Evidence view={latest} project={data.summary.id} required={data.required_theorems} />
                 </>
               )}
             </aside>
@@ -1114,7 +1114,15 @@ function Code({
   );
 }
 
-function Evidence({ view, project }: { view?: RunView; project: string }) {
+function Evidence({
+  view,
+  project,
+  required,
+}: {
+  view?: RunView;
+  project: string;
+  required: string[];
+}) {
   return (
     <section className="app-evidence">
       <h3>Check evidence</h3>
@@ -1130,6 +1138,18 @@ function Evidence({ view, project }: { view?: RunView; project: string }) {
           <Stages stages={view.run.stages} />
           {view.run.authorization && (
             <p className="app-muted">{view.run.authorization}</p>
+          )}
+          {!!required.length && (
+            <details>
+              <summary>Required theorems ({required.length})</summary>
+              <ul>
+                {required.map((t) => (
+                  <li key={t}>
+                    <code>{t}</code>
+                  </li>
+                ))}
+              </ul>
+            </details>
           )}
           {!!view.run.unbuilt_modules.length && (
             <Note tone="warn">

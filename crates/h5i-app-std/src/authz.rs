@@ -172,6 +172,70 @@ pub fn guard_viewed<
     }
 }
 
+/// One kernel behind the guard, in the kernel crate:
+///
+/// ```ignore
+/// h5i_app_std::authz_kernel! {
+///     Forum {
+///         principal: Principal, snapshot: Snapshot, command: Command,
+///         write: Write, reply: Reply, error: Error, row: Row,
+///         tenant: |actor| actor.org,
+///     }
+/// }
+/// ```
+///
+/// writes, from the same types:
+/// - `guarded_transition`, `guard_viewed` of `Forum`'s `Transition`, `Policy`
+///   and `View`: what `h5i app extract` extracts and the generated
+///   `Authz.lean` proves (`[authz] guarded = ["guarded_transition"]`);
+/// - `read_only`, the view's;
+/// - `impl h5i_app_core::AuthzKernel for Forum`, and `App`,
+///   `h5i_app_core::Authz<Forum>`: the `Kernel` the server runs, whose
+///   `transition` is the same `guard_viewed` call, made by h5i-app-core.
+///
+/// The kernel crate depends on `h5i-app-core` for these; nothing of it is
+/// extracted.
+#[macro_export]
+macro_rules! authz_kernel {
+    ($app:ident {
+        principal: $p:ty, snapshot: $s:ty, command: $c:ty,
+        write: $w:ty, reply: $r:ty, error: $e:ty, row: $d:ty,
+        tenant: |$a:ident| $tenant:expr $(,)?
+    }) => {
+        /// The policy-guarded transition, as the server runs it
+        /// (`h5i_app_core::Authz`): `guarded_transition.authorized`.
+        pub fn guarded_transition(
+            actor: &$p,
+            s: &$s,
+            cmd: &$c,
+        ) -> ::core::result::Result<(::std::vec::Vec<$w>, $r), $crate::authz::Guarded<$e>> {
+            $crate::authz::guard_viewed::<$p, $s, $c, $w, $r, $e, $d, $app, $app, $app>(actor, s, cmd)
+        }
+
+        /// The view's `read_only`: `guarded_transition.read_only_sound`.
+        pub fn read_only(cmd: &$c) -> bool {
+            <$app as $crate::authz::View<$p, $s, $c>>::read_only(cmd)
+        }
+
+        impl ::h5i_app_core::AuthzKernel for $app {
+            type Principal = $p;
+            type Snapshot = $s;
+            type Command = $c;
+            type Write = $w;
+            type Reply = $r;
+            type Error = $e;
+            type Row = $d;
+
+            fn tenant($a: &$p) -> ::h5i_app_core::TenantId {
+                ::h5i_app_core::TenantId($tenant)
+            }
+        }
+
+        /// The `Kernel` the server runs: this kernel behind the guard.
+        pub type App = ::h5i_app_core::Authz<$app>;
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

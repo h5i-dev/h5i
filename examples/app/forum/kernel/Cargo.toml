@@ -11,6 +11,8 @@ publish = false
 h5i-app-schema = { path = "../../../../crates/h5i-app-schema" }
 h5i-app-sql = { path = "../../../../crates/h5i-app-sql" }
 h5i-app-std = { path = "../../../../crates/h5i-app-std" }
+# `App`, the `Kernel` the server runs (`h5i_app_std::authz_kernel!`). Not extracted.
+h5i-app-core = { path = "../../../../crates/h5i-app-core" }
 
 # Written in the subset of Rust that Charon + Aeneas translate (no `vec!`,
 # `&Vec` rather than slices, explicit loops and matches), as h5i-app-std is.

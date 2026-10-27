@@ -65,6 +65,9 @@ impl Timestamp {
     }
 }
 
+pub mod authz;
+pub use authz::{Authz, AuthzKernel};
+
 /// Implement on a marker type in the server crate, delegating to the kernel crate.
 pub trait Kernel: Send + Sync + 'static {
     type Principal: Send + Sync + Clone;

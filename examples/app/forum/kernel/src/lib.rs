@@ -9,14 +9,16 @@
 //!
 //! The split is the point of the example. The handlers below say *what* a
 //! command does and check only its input; *who* may do it is [`Forum`]'s
-//! `Policy` alone. The server runs [`guarded_transition`], and the framework
-//! proves, once for every kernel, that a committed command makes only writes
-//! the policy permits and discloses only rows it lets the caller see, and that
-//! a read-only command's reply depends on nothing outside the caller's view
-//! (`h5i_app_std.Specs.authz`). This crate has no hand-written proof of it:
-//! `proofs/generated/Authz.lean` is one line, written by `h5i app extract`.
+//! `Policy` alone. The server runs [`App`], `h5i_app_core::Authz<Forum>`,
+//! whose `transition` is the guard over these handlers and this policy, and
+//! the framework proves, once for every kernel, that a committed command
+//! makes only writes the policy permits and discloses only rows it lets the
+//! caller see, and that a read-only command's reply depends on nothing outside
+//! the caller's view (`h5i_app_std.Specs.authz`). This crate has no
+//! hand-written proof of it: `proofs/generated/Authz.lean` is written by
+//! `h5i app extract`.
 
-use h5i_app_std::authz::{Disclose, Guarded, Policy, Transition, View, guard_viewed};
+use h5i_app_std::authz::{Disclose, Policy, Transition, View};
 
 pub type Text = Vec<u8>;
 
@@ -403,23 +405,21 @@ impl Transition<Principal, Snapshot, Command, Write, Reply, Error> for Forum {
     }
 }
 
-/// What the server runs: `transition` behind the policy.
-pub fn guarded_transition(
-    actor: &Principal,
-    s: &Snapshot,
-    cmd: &Command,
-) -> Result<(Vec<Write>, Reply), Guarded<Error>> {
-    guard_viewed::<Principal, Snapshot, Command, Write, Reply, Error, Row, Forum, Forum, Forum>(actor, s, cmd)
-}
-
-/// `Kernel::read_only` for the server: the view's.
-pub fn read_only(cmd: &Command) -> bool {
-    <Forum as View<Principal, Snapshot, Command>>::read_only(cmd)
+// What the server runs: this kernel behind the guard. Writes
+// `guarded_transition` (what `Authz.lean` proves), `read_only`, and `App`,
+// `h5i_app_core::Authz<Forum>`, whose `Kernel::transition` is the same guard.
+h5i_app_std::authz_kernel! {
+    Forum {
+        principal: Principal, snapshot: Snapshot, command: Command,
+        write: Write, reply: Reply, error: Error, row: Row,
+        tenant: |actor| actor.org,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use h5i_app_std::authz::{Guarded, guard_viewed};
 
     fn run(s: &Snapshot, user: u64, c: Command) -> (Snapshot, Result<Reply, Guarded<Error>>) {
         match guarded_transition(&Principal { org: 1, user }, s, &c) {

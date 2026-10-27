@@ -15,10 +15,12 @@ authorization is still proven, for every request sequence.
   stored (`stored` compares it with the row under its key). `Disclose` lists
   the rows each reply carries; `View` is the part of the state a caller may
   see.
-- `guarded_transition` runs the handlers behind the policy
-  (`h5i_app_std::authz::guard_viewed`), and the server runs it as
-  `Kernel::transition`.
-- `h5i app extract` writes `proofs/generated/Authz.lean`, one line that
+- `h5i_app_std::authz_kernel!` writes `guarded_transition` (the handlers
+  behind the policy, `guard_viewed`) and `App`, `h5i_app_core::Authz<Forum>`:
+  the `Kernel` the server runs, whose `transition` is that same guard, called
+  by the framework. The server writes no `Kernel` and no `Store`: it runs
+  `App` on the store `schema!` generates.
+- `h5i app extract` writes `proofs/generated/Authz.lean`, which
   instantiates the framework's theorem:
   `forum_kernel.guarded_transition.authorized` (every committed command makes
   only permitted writes and discloses only stored rows it may see; read-only commands
@@ -51,7 +53,7 @@ rpc $T2 '{"cmd":"set_admin","user":2,"admin":true}'   # 403 forbidden
 
 ```bash
 h5i app prove          # extract, build, gate: guarded_transition.authorized
-h5i app lint           # Kernel runs the guarded function and the kernel's apply
+h5i app lint           # no hand-written Kernel or Store (hygiene)
 cd kernel && cargo test --release                  # policy, view, handler bugs denied
 cd ../server && H5I_APP_TEST_DATABASE_URL=$DATABASE_URL cargo test --release
 ```

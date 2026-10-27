@@ -19,13 +19,26 @@ In the kernel crate, in the Rust subset Aeneas translates:
 |---|---|---|
 | `impl Policy<A, S, W, D>` | `permits(actor, s, w)`: may the actor make write `w` in state `s`; `visible(actor, s, d)`: may it see row `d`; `stored(s, d)`: is `d` a row of `s`, exactly as stored (look it up by key and compare) | the policy |
 | `impl Disclose<D> for Reply` | the rows a reply carries | complete: a row left out is not checked |
-| `impl View<A, S, C>` (optional) | `read_only(cmd)`, and `view(actor, s)`: the part of the state the actor may see | the read side of the policy |
+| `impl View<A, S, C>` | `read_only(cmd)`, and `view(actor, s)`: the part of the state the actor may see | the read side of the policy |
 | `impl Transition<A, S, C, W, R, E>` | delegates `kernel_transition` and `kernel_apply` to the kernel's `transition` and `apply` | wiring, checked: `h5i_authz` proves `kernel_apply` is the kernel's `apply` |
-| `guarded_transition` | `guard::<…>` or `guard_viewed::<…>` of the impls | wiring |
+| `h5i_app_std::authz_kernel! { Forum { … } }` | the types, and the tenant of a principal | the types; the tenant |
 
-In the server, `Kernel::transition` calls `guarded_transition`, and
-`Kernel::Error` is `Guarded<Error>`: `Guarded::Denied` maps to 403. In
-`h5i-app.toml`:
+`authz_kernel!` writes, from one list of types, `guarded_transition` (the
+function the generated proof is about), `read_only`, and `App`: the kernel
+behind the guard, as the server runs it. The kernel crate depends on
+`h5i-app-core` for `App`; none of it is extracted.
+
+The server writes no `Kernel` and no `Store`. It runs `forum_kernel::App` on
+the store `schema!` generates, and maps `Guarded::Denied` to 403:
+
+```rust
+pub type Forum = forum_kernel::App;
+forum_kernel::forum_tables!(Forum, store ForumStore);
+// …
+Engine::<Forum, ForumStore>::new(pool, EngineConfig::default())
+```
+
+In `h5i-app.toml`:
 
 ```toml
 [extract]
@@ -36,6 +49,36 @@ std-specs = true
 [authz]
 guarded = ["guarded_transition"]
 ```
+
+## What the server runs
+
+`App` is `h5i_app_core::Authz<Forum>`. `h5i-app-core` has one `Kernel` impl
+for `Authz<T>`, and coherence allows no other, so its methods are what the
+engine calls:
+
+- `transition` is `h5i_app_std::authz::guard_viewed` of `T`'s `Transition`,
+  `Policy` and `View` and the reply's `Disclose`. The guard's theorems hold
+  for *every* `Transition` instance, so whatever the handlers do, what
+  commits is guarded. No per-app wiring decides this.
+- The types come from `T`'s `AuthzKernel` impl, which only the kernel crate
+  can write (orphan rule). `authz_kernel!` writes it and `guarded_transition`
+  from the same types, so the guard instantiation the engine runs is the one
+  `guarded_transition.authorized` is about.
+- `apply` is `T`'s `kernel_apply` (`kernel_apply_eq`: the kernel's `apply`)
+  and `read_only` is the view's (`read_only_sound`).
+
+The store the mapping macro generates (`<mapping>!(App, store Name)`) loads
+every table with `schema_load` and stores with `schema_store`, the code
+`Committed.pg_stored` is about, and keeps the default full-tenant `load_for`.
+A partial load would have the guard judge the policy on a partial state (in
+the forum, registering as admin while `users` is not loaded).
+
+One fact stays outside the proofs: that the server builds its engine from
+`App` and the generated store, one line of `main.rs`, rather than from a
+kernel or store of its own. `h5i app lint` flags a hand-written `impl
+Kernel`, `impl Store` or `impl AuthzKernel` in an `[authz]` project. That is
+hygiene for the plain mistake, not a guarantee: it reads the source with
+`syn`, so what only a macro or `include!` produces is not seen.
 
 Handlers need no checks of *who may write what*: in the forum they check
 input and existence only, and the `Policy` impl alone decides. A handler
@@ -111,29 +154,17 @@ does: `Pg.Valid ts`, `Pg.klOf ts = kl` and `ts.length = n` for the server's
 proven (TRUST.md, "Schema description").
 
 `h5i app check` builds the `Authz` module itself, so it never gates a stale
-`.olean`, and gates `g.authorized`, `g.kernel_apply_eq`, the storage theorems
-(or `[authz] storage`), and `g.read_only_sound` when the server overrides
-`Kernel::read_only`. `Authz`, `AuthzSpecs` and `Schema` must be in some
+`.olean`, and gates `g.authorized`, `g.kernel_apply_eq`, `g.read_only_sound`
+(`App` declares the view's read-only commands) and the storage theorems (or
+`[authz] storage`). `Authz`, `AuthzSpecs` and `Schema` must be in some
 `lean_lib`'s roots: otherwise lake has no `Authz` target and `check` fails
-with "unknown target `Authz`" and says to add it. The run records the list
-of theorems it required, which the web view shows.
+with "unknown target `Authz`" and says to add it. Each run records the
+theorems it required before it builds anything, and the web view lists the
+latest run's.
 
-`h5i app lint` reads the server's Rust with `syn`, following each crate's
-module tree from `lib.rs`, `main.rs` and `src/bin` and leaving out
-`#[cfg(test)]` items (a file no `mod` reaches, or one that does not parse, is
-not skipped silently: an unparsable file fails lint). With `[authz]` it
-requires:
-
-- every `impl Kernel` (any spelling of the trait's path, or a `use … as`
-  rename) to call a guarded `g` from `transition` and the kernel's `apply`
-  from `apply`;
-- every `impl Store` to call `schema_store` from `write` and `schema_load`
-  from `load` (the code `Committed.pg_stored` is about), with no hand-written
-  function of either name, and not to override `load_for`: the guard judges
-  the policy on the snapshot it is given, so a partial load could let it
-  permit what the full state forbids (in the forum, registering as admin
-  when `users` is not loaded);
-- an overridden `Kernel::read_only` to delegate to the kernel's.
+`[authz] storage = "<theorem>"` must name a theorem in the kernel's
+namespace; `check` prints its statement. What that statement says is not
+checked: review it (it should be the shape of `pg_stored`).
 
 ## What stays trusted
 
@@ -158,16 +189,20 @@ small enough to review:
   `NeverDenied`, or the forum's `handler_bugs_are_denied` test, is how an app
   learns about it before users do.
 
-Not trusted any more: that `kernel_apply` is the kernel's `apply`
-(`g.kernel_apply_eq`); that the kernel's `sql_writes` and `decode` store and
-load what that `apply` computes (`Committed.pg_stored`).
+- **The server runs `App` on the generated store.** One line of `main.rs`
+  ([above](#what-the-server-runs)); lint flags the plain alternative.
+- **A hand-named storage theorem says what it should.** Only with
+  `[authz] storage`; `check` prints it.
+- **The framework's `Authz<T>`, `authz_kernel!` and the generated store**,
+  like the rest of h5i-app's shell (A8): each is a few lines, reviewed once
+  for every app.
 
-Checked by lint, not proven: that the server runs that code. Its `Kernel` and
-`Store` impls are not extracted, so the link from `Store::write` to
-`schema_store` (which calls `sql_writes`) and from `load` to `schema_load` is
-the syntactic check above, as is the full-tenant load. `pg_stored` holds for
-any write sets the engine commits (its `Step` is arbitrary), so it needs no
-link to the guard; the guard's theorem says which write sets those are.
+Not trusted any more: that the server calls the guard (`Authz<T>` does);
+that `kernel_apply` is the kernel's `apply` (`g.kernel_apply_eq`); that the
+kernel's `sql_writes` and `decode` store and load what that `apply` computes
+(`Committed.pg_stored`), which the generated store calls. `pg_stored` holds
+for any write sets the engine commits (its `Step` is arbitrary), so it needs
+no link to the guard; the guard's theorem says which write sets those are.
 
 ## What is not covered
 

@@ -9,3 +9,5 @@ homepage = "https://github.com/h5i-dev/h5i"
 readme = "../h5i-app/README.md"
 
 [dependencies]
+# The authorization guard `Authz` runs; see `authz`.
+h5i-app-std.workspace = true

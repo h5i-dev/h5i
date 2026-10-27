@@ -1294,9 +1294,11 @@ mutants generated from the kernel's syntax: comparison boundaries, `==` and
 `false`.
 
 `[authz] guarded` opts a kernel into framework-proven authorization
-([`docs/app/AUTHZ.md`](app/AUTHZ.md)). Each listed function must be defined as
-`h5i_app_std::authz::guard` or `guard_viewed` of the app's `Transition`,
-`Policy`, `Disclose` (and `View`) impls. `extract` then writes
+([`docs/app/AUTHZ.md`](app/AUTHZ.md)). The kernel invokes
+`h5i_app_std::authz_kernel!`, which writes `guarded_transition` and `App`
+(`h5i_app_core::Authz<_>`, whose `Kernel::transition` is the guard), and the
+server runs `App` on the store its mapping macro generates
+(`<mapping>!(App, store Name)`), writing no `Kernel` or `Store` itself. `extract` then writes
 `proofs/generated/Authz.lean`, which proves `<kernel>.<fn>.authorized` by
 instantiating the framework's theorem, with no hand-written Lean,
 `<fn>.kernel_apply_eq` (the policy is checked against the kernel's own
@@ -1304,12 +1306,11 @@ instantiating the framework's theorem, with no hand-written Lean,
 store and load what that `apply` computes). If `sql_write` is not a plain
 list of `schema!` table writes, `extract` fails unless
 `[authz] storage = "<theorem>"` names a hand-written storage proof. `check`
-builds `Authz` itself and gates these (and `<fn>.read_only_sound` when the
-server overrides `Kernel::read_only`). `lint` parses the server with `syn`
-and fails unless every `impl Kernel` outside tests runs a listed function as
-`transition` and the kernel's `apply` as `apply`, and every `impl Store`
-writes and loads with the generated `schema_store`/`schema_load` and keeps
-the default `load_for`. An app without `[authz]` is unaffected.
+builds `Authz` itself and gates these and `<fn>.read_only_sound`. `lint`
+flags a hand-written `impl Kernel`, `impl Store` or `impl AuthzKernel` in an
+`[authz]` project (hygiene: that the server runs `App` on the generated
+store is the one fact outside the proofs). An app without `[authz]` is
+unaffected.
 
 `h5i app new` requires the h5i-app Lean library from git at this binary's
 release tag; `--h5i-path <checkout>` uses a local h5i checkout instead.

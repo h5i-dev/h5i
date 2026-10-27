@@ -115,7 +115,9 @@ fn extract_into(p: &Project, dest: &Path, schema_lean: bool, out: &Out) -> Resul
         .current_dir(&krate)
         .args(["cargo", "--preset=aeneas"]);
     for s in &ex.start_from {
-        charon.args(["--start-from", &format!("{id}::{s}")]);
+        // Charon takes an impl pattern only as the first element of a path.
+        let path = if s.starts_with("{impl ") { s.clone() } else { format!("{id}::{s}") };
+        charon.args(["--start-from", &path]);
     }
     if ex.schema {
         charon.args(schema_items(&id));
@@ -151,10 +153,11 @@ fn extract_into(p: &Project, dest: &Path, schema_lean: bool, out: &Out) -> Resul
     if ex.std_specs {
         std_specs(&meta, &module, &id, dest)?;
     }
-    authz_lean(&p.manifest.authz.guarded, p.manifest.authz.storage.as_deref(), ex.std_specs, &module, &id, dest)?;
+    // `Schema.lean` first: the storage proof is read off it.
     if ex.schema && schema_lean {
         bless_schema(&krate, out)?;
     }
+    authz_lean(&p.manifest.authz.guarded, p.manifest.authz.storage.as_deref(), ex.std_specs, &module, &id, dest)?;
     out.note(&format!(
         "extracted {} to {}",
         pkg.name,

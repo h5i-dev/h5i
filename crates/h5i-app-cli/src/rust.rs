@@ -15,6 +15,10 @@ use syn::visit::Visit;
 /// One `impl <Trait> for …` with its methods.
 pub struct Impl {
     pub file: PathBuf,
+    /// The crate directory it is in.
+    pub krate: PathBuf,
+    /// The last path segment of the type implemented for (`Authz` in `Authz<T>`).
+    pub self_ty: String,
     pub line: usize,
     pub fns: BTreeMap<String, syn::Block>,
 }
@@ -27,11 +31,22 @@ pub struct Sources {
     pub errors: Vec<String>,
 }
 
+/// `#[cfg(test)]` or `#[cfg(all(test, …))]`: compiled only for tests.
 fn is_cfg_test(attrs: &[syn::Attribute]) -> bool {
-    attrs.iter().any(|a| {
-        a.path().is_ident("cfg")
-            && a.parse_args::<syn::Ident>().is_ok_and(|i| i == "test")
-    })
+    fn test_only(m: &syn::Meta) -> bool {
+        match m {
+            syn::Meta::Path(p) => p.is_ident("test"),
+            syn::Meta::List(l) if l.path.is_ident("all") => l
+                .parse_args_with(syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated)
+                .is_ok_and(|ms| ms.iter().any(test_only)),
+            _ => false,
+        }
+    }
+    attrs.iter().any(|a| a.path().is_ident("cfg") && a.parse_args::<syn::Meta>().is_ok_and(|m| test_only(&m)))
+}
+
+fn has_cfg(attrs: &[syn::Attribute]) -> bool {
+    attrs.iter().any(|a| a.path().is_ident("cfg"))
 }
 
 /// Crate directories under `root`: a `Cargo.toml` with a `src/`.
@@ -72,6 +87,21 @@ impl Sources {
     fn add_crate(&mut self, krate: &Path) {
         let src = krate.join("src");
         let mut roots: Vec<PathBuf> = ["lib.rs", "main.rs"].iter().map(|f| src.join(f)).filter(|f| f.is_file()).collect();
+        // Targets `Cargo.toml` places elsewhere: `[lib] path`, `[[bin]] path`.
+        let manifest = std::fs::read_to_string(krate.join("Cargo.toml"))
+            .ok()
+            .and_then(|t| t.parse::<toml::Table>().ok())
+            .unwrap_or_default();
+        let lib = manifest.get("lib").and_then(|l| l.get("path")).and_then(|p| p.as_str());
+        if let Some(l) = lib {
+            roots.retain(|r| !r.ends_with("lib.rs"));
+            roots.push(krate.join(l));
+        }
+        for b in manifest.get("bin").and_then(|b| b.as_array()).into_iter().flatten() {
+            if let Some(p) = b.get("path").and_then(|p| p.as_str()) {
+                roots.push(krate.join(p));
+            }
+        }
         if let Ok(bins) = std::fs::read_dir(src.join("bin")) {
             let mut bins: Vec<PathBuf> = bins.flatten().map(|e| e.path()).collect();
             bins.sort();
@@ -85,6 +115,10 @@ impl Sources {
         }
         let mut seen = HashSet::new();
         for r in roots {
+            if !r.is_file() {
+                self.errors.push(format!("{}: target source is missing", r.display()));
+                continue;
+            }
             // A root's own `mod` files sit next to it.
             let dir = r.parent().unwrap_or(&src).to_path_buf();
             self.add_file(krate, &r, &dir, &mut seen);
@@ -108,13 +142,26 @@ impl Sources {
             }
         };
         let mut items = Vec::new();
-        self.collect(krate, parsed.items, dir, &mut items, seen);
+        // `#[path]` on a module of this file is relative to the file's own
+        // directory; its plain child modules live in `dir`.
+        let base = file.parent().unwrap_or(dir).to_path_buf();
+        self.collect(krate, parsed.items, dir, &base, &mut items, seen);
         self.files.push((file.to_path_buf(), krate.to_path_buf(), items));
     }
 
-    /// Keep non-test items; flatten inline modules (their files go in `dir/name`)
-    /// and follow `mod name;` to its file.
-    fn collect(&mut self, krate: &Path, items: Vec<syn::Item>, dir: &Path, out: &mut Vec<syn::Item>, seen: &mut HashSet<PathBuf>) {
+    /// Keep non-test items; flatten inline modules (their files go in
+    /// `dir/name`) and follow `mod name;` to its file. `base` is what a
+    /// `#[path]` here is relative to.
+    #[allow(clippy::too_many_arguments)]
+    fn collect(
+        &mut self,
+        krate: &Path,
+        items: Vec<syn::Item>,
+        dir: &Path,
+        base: &Path,
+        out: &mut Vec<syn::Item>,
+        seen: &mut HashSet<PathBuf>,
+    ) {
         for item in items {
             let attrs = match &item {
                 syn::Item::Mod(m) => &m.attrs,
@@ -134,20 +181,34 @@ impl Sources {
                     let name = m.ident.to_string();
                     let explicit = m.attrs.iter().find(|a| a.path().is_ident("path")).and_then(|a| match &a.meta {
                         syn::Meta::NameValue(nv) => match &nv.value {
-                            syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(s), .. }) => Some(dir.join(s.value())),
+                            syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(s), .. }) => Some(base.join(s.value())),
                             _ => None,
                         },
                         _ => None,
                     });
+                    let cfgd = has_cfg(&m.attrs);
                     match m.content {
-                        Some((_, inner)) => self.collect(krate, inner, &dir.join(&name), out, seen),
+                        Some((_, inner)) => {
+                            let d = dir.join(&name);
+                            self.collect(krate, inner, &d, &d, out, seen)
+                        }
                         None => {
+                            let path_attr = explicit.is_some();
                             let candidates = match explicit {
                                 Some(p) => vec![p],
                                 None => vec![dir.join(format!("{name}.rs")), dir.join(&name).join("mod.rs")],
                             };
                             match candidates.iter().find(|c| c.is_file()) {
+                                // A `#[path]` file's or a `mod.rs`'s children sit next
+                                // to it; a `name.rs`'s in `name/`.
+                                Some(f) if path_attr || f.ends_with("mod.rs") => {
+                                    let d = f.parent().unwrap_or(dir).to_path_buf();
+                                    self.add_file(krate, f, &d, seen)
+                                }
                                 Some(f) => self.add_file(krate, f, &dir.join(&name), seen),
+                                // A module under some other `cfg` may legitimately
+                                // have no file in this configuration.
+                                None if cfgd => {}
                                 None => self.errors.push(format!(
                                     "{}: `mod {name};` has no file ({})",
                                     dir.display(),
@@ -175,14 +236,22 @@ impl Sources {
             }
         }
         let mut out = HashSet::from([name.to_string()]);
-        for (_, _, items) in &self.files {
-            for i in items {
-                if let syn::Item::Use(u) = i {
-                    walk(&u.tree, name, &mut out);
+        // Follow chains (`use x::Kernel as K1; use self::K1 as K2;`).
+        loop {
+            let before = out.len();
+            for n in out.clone() {
+                for (_, _, items) in &self.files {
+                    for i in items {
+                        if let syn::Item::Use(u) = i {
+                            walk(&u.tree, &n, &mut out);
+                        }
+                    }
                 }
             }
+            if out.len() == before {
+                break out;
+            }
         }
-        out
     }
 
     /// Every `impl <trait> for …`, the trait named by its last path segment
@@ -190,7 +259,7 @@ impl Sources {
     pub fn impls_of(&self, trait_name: &str) -> Vec<Impl> {
         let names = self.names_of(trait_name);
         let mut out = Vec::new();
-        for (file, _, items) in &self.files {
+        for (file, krate, items) in &self.files {
             for i in items {
                 let syn::Item::Impl(imp) = i else { continue };
                 let Some((_, path, _)) = &imp.trait_ else { continue };
@@ -206,7 +275,17 @@ impl Sources {
                         _ => None,
                     })
                     .collect();
-                out.push(Impl { file: file.clone(), line: imp.impl_token.span.start().line, fns });
+                let self_ty = match &*imp.self_ty {
+                    syn::Type::Path(p) => p.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default(),
+                    _ => String::new(),
+                };
+                out.push(Impl {
+                    file: file.clone(),
+                    krate: krate.clone(),
+                    self_ty,
+                    line: imp.impl_token.span.start().line,
+                    fns,
+                });
             }
         }
         out
@@ -295,6 +374,31 @@ mod tests {
         assert_eq!(s.impls_of("Kernel").len(), 1);
         let (_d, s) = tree(&[("src/lib.rs", "mod gone;\nimpl Kernel for {\n")]);
         assert!(!s.errors.is_empty(), "a file that does not parse is an error, not skipped");
+    }
+
+    #[test]
+    fn module_tree_follows_rustc() {
+        // `#[path]` in a non-mod-rs file is relative to that file's directory,
+        // and a `#[path]` file's children sit next to it; a cfg'd module may
+        // have no file; `cfg(all(test, …))` is test code; `[lib] path` and
+        // rename chains are followed.
+        let (_d, s) = tree(&[
+            ("src/lib.rs", "mod shell;\n#[cfg(feature = \"never\")]\nmod optional;\n#[cfg(all(test, unix))]\nmod t { impl Kernel for T {} }\n"),
+            ("src/shell.rs", "#[path = \"impl/k.rs\"]\nmod kern;\n"),
+            ("src/impl/k.rs", "mod inner;\nimpl Kernel for Real {}\n"),
+            ("src/impl/inner.rs", "use h5i_app_core::Kernel as K1;\nuse self::K1 as K2;\nimpl K2 for Chained {}\n"),
+            ("src/shell/impl/k.rs", "impl Kernel for Decoy {}\n"),
+        ]);
+        assert!(s.errors.is_empty(), "{:?}", s.errors);
+        assert_eq!(s.impls_of("Kernel").len(), 2, "Real and Chained, not the decoy or the test impl");
+        let (_d, s) = tree(&[
+            ("Cargo.toml", "[package]\nname = \"s\"\n[lib]\npath = \"src/real.rs\"\n"),
+            ("src/lib.rs", "impl Kernel for Decoy {}\n"),
+            ("src/real.rs", "impl Kernel for Real {}\n"),
+        ]);
+        let impls = s.impls_of("Kernel");
+        assert_eq!(impls.len(), 1);
+        assert!(impls[0].file.ends_with("real.rs"));
     }
 
     #[test]

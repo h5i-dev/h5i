@@ -36,6 +36,13 @@ fn check_recorded(
     if !proofs.join("lakefile.lean").is_file() && !proofs.join("lakefile.toml").is_file() {
         bail!("{} is not a Lake project", proofs.display());
     }
+    // What this run requires, recorded before anything can fail, so the
+    // web view never shows an older run's list as this one's.
+    let authz = authz_theorems(p)?;
+    let mut theorems = p.manifest.check.theorems.clone();
+    theorems.extend(authz.iter().cloned());
+    record.run.required_theorems = theorems.clone();
+    record.save()?;
     // Held through the build, so another `h5i app` cannot discard the
     // packages under it.
     let _packages = crate::report::step(record, "packages", out, |log| {
@@ -51,7 +58,6 @@ fn check_recorded(
     // `[authz]`: build the generated module itself, so the gate below never
     // reads an `Authz.olean` left from an earlier build (a lakefile whose
     // default roots miss it would otherwise pass on a stale one).
-    let authz = authz_theorems(p)?;
     if !authz.is_empty() {
         let mut build = Command::new("lake");
         build.args(["build", crate::extract::AUTHZ_MODULE]).current_dir(&proofs);
@@ -74,24 +80,21 @@ fn check_recorded(
             "note: {m} is not built by `lake build`, so its theorems are not gated"
         ));
     }
-    let mut theorems = p.manifest.check.theorems.clone();
     // `[authz]`: the generated module is gated like a hand-written one, and
     // each guarded function's theorem must exist.
     if !authz.is_empty() {
         built.push(crate::extract::AUTHZ_MODULE.to_string());
-        theorems.extend(authz);
     }
     let theorems = &theorems;
-    // What this run required, so the web view shows the same list.
-    record.run.required_theorems = theorems.clone();
     if built.is_empty() && theorems.is_empty() {
         out.note("note: no hand-written modules built; nothing to gate");
     } else {
         let (issues, declarations) = crate::report::step(record, "axiom_gate", out, |log| {
             gate(&proofs, &built, theorems, log)
         })?;
-        record.run.declarations = declarations;
         problems.extend(issues);
+        problems.extend(storage_problems(p, &declarations, out)?);
+        record.run.declarations = declarations;
     }
     if !problems.is_empty() {
         bail!(
@@ -114,21 +117,14 @@ pub fn authz_theorems(p: &Project) -> Result<Vec<String>> {
     if guarded.is_empty() {
         return Ok(Vec::new());
     }
-    let Some(ex) = &p.manifest.extract else {
-        bail!("{}: `[authz] guarded` needs an [extract] section", p.display());
-    };
-    let krate = p.root.join(&ex.krate);
-    let meta = util::metadata(&krate, false)?;
-    let ns = util::ident(&meta.package_at(&krate)?.name);
+    let ns = kernel_ns(p)?;
     let mut out: Vec<String> = guarded
         .iter()
         .flat_map(|g| [format!("{ns}.{g}.authorized"), format!("{ns}.{g}.kernel_apply_eq")])
         .collect();
-    // The engine skips locks for `read_only` commands on the strength of
-    // `ReadOnly.Sound`; for a guarded kernel that is the framework's.
-    if crate::lint::overrides_read_only(p) && !has_read_only_proof(p) {
-        out.extend(guarded.iter().map(|g| format!("{ns}.{g}.read_only_sound")));
-    }
+    // `Authz<T>` declares the view's read-only commands, which the engine
+    // runs without locks on the strength of `ReadOnly.Sound`.
+    out.extend(guarded.iter().map(|g| format!("{ns}.{g}.read_only_sound")));
     // A4 for the app: the generated storage theorems, or the one the app
     // names. Never silently neither.
     match &p.manifest.authz.storage {
@@ -136,6 +132,40 @@ pub fn authz_theorems(p: &Project) -> Result<Vec<String>> {
         None => out.extend(crate::extract::STORAGE_THEOREMS.iter().map(|t| format!("{ns}.{t}"))),
     }
     Ok(out)
+}
+
+/// `[authz] storage` names the app's own A4 theorem: it must be a theorem of
+/// the kernel's namespace (not a library fact or a type), and its statement
+/// is printed, since `check` cannot tell what it says. Reviewing that
+/// statement is on the app (docs/app/AUTHZ.md, "What stays trusted").
+fn storage_problems(p: &Project, decls: &[h5i_app_report::Declaration], out: &Out) -> Result<Vec<String>> {
+    let Some(name) = &p.manifest.authz.storage else { return Ok(Vec::new()) };
+    if p.manifest.authz.guarded.is_empty() {
+        return Ok(Vec::new());
+    }
+    let ns = kernel_ns(p)?;
+    let Some(d) = decls.iter().find(|d| &d.name == name) else {
+        return Ok(vec![format!("[authz] storage: {name} was not found among the gated declarations")]);
+    };
+    let mut bad = Vec::new();
+    if d.kind != "theorem" {
+        bad.push(format!("[authz] storage: {name} is a {}, not a theorem", d.kind));
+    }
+    if !name.starts_with(&format!("{ns}.")) {
+        bad.push(format!("[authz] storage: {name} is not in the kernel's namespace `{ns}`"));
+    }
+    out.note(&format!("[authz] storage, to review: {name} : {}", d.signature));
+    Ok(bad)
+}
+
+/// The kernel's Lean namespace: its crate's name, `-` as `_`.
+fn kernel_ns(p: &Project) -> Result<String> {
+    let Some(ex) = &p.manifest.extract else {
+        bail!("{}: `[authz] guarded` needs an [extract] section", p.display());
+    };
+    let krate = p.root.join(&ex.krate);
+    let meta = util::metadata(&krate, false)?;
+    Ok(util::ident(&meta.package_at(&krate)?.name))
 }
 
 /// A hand-written proof states `ReadOnly.Sound` in code, not in a comment.

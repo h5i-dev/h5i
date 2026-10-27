@@ -242,9 +242,10 @@ pub fn detail(root: &Path, id: &str) -> Result<Detail, String> {
     let (runs, runs_total, run_issues) = read_runs(&root, &p);
     // The latest check's own list: for `[authz]` it holds generated theorems
     // the manifest does not name, and it is exactly what that check gated.
-    if let Some(recorded) = runs
-        .iter()
-        .find(|v| v.run.kind == "check" && !v.run.required_theorems.is_empty())
+    // The latest check records its list before it can fail; a run recorded
+    // before the field existed has none, and then the manifest's stands.
+    if let Some(recorded) = runs.iter().find(|v| v.run.kind == "check")
+        && !recorded.run.required_theorems.is_empty()
     {
         required_theorems = recorded.run.required_theorems.clone();
     }

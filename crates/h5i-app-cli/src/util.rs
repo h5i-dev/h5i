@@ -237,6 +237,12 @@ pub fn lean_module(ident: &str) -> String {
         .collect()
 }
 
+/// The `[package] name` in `<krate>/Cargo.toml`.
+pub fn package_name(krate: &Path) -> Option<String> {
+    let t: toml::Table = std::fs::read_to_string(krate.join("Cargo.toml")).ok()?.parse().ok()?;
+    t.get("package")?.get("name")?.as_str().map(str::to_string)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

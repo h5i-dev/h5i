@@ -111,7 +111,7 @@
       <p class="crumbs"><a href="/">h5i</a><i>/</i><a href="/guides/">docs</a><i>/</i><span>manual</span></p>
       <p class="post-eyebrow">CLI reference</p>
       <h1>h5i Manual</h1>
-      <p class="manual-meta"><span>Updated <time datetime="2026-10-26">2026-10-26</time></span><i>|</i><span>56 min read</span><i>|</i><span class="ok">21 chapters</span></p>
+      <p class="manual-meta"><span>Updated <time datetime="2026-10-27">2026-10-27</time></span><i>|</i><span>56 min read</span><i>|</i><span class="ok">21 chapters</span></p>
       <details class="manual-mobile-toc"><summary>Chapters</summary>
 <div class="mn-group"><p class="mn-head">Start here</p>
 <a href="#what-h5i-is"><span class="mn-n">01</span><span>What h5i is</span></a>
@@ -1584,9 +1584,11 @@ mutants generated from the kernel's syntax: comparison boundaries, <code>==</cod
 <code>!=</code>, <code>&amp;&amp;</code> and <code>||</code>, dropped <code>!</code>, and <code>if</code> conditions forced to <code>true</code> or
 <code>false</code>.</p>
 <p><code>[authz] guarded</code> opts a kernel into framework-proven authorization
-(<a href="https://github.com/h5i-dev/h5i/blob/main/docs/app/AUTHZ.md"><code>docs/app/AUTHZ.md</code></a>). Each listed function must be defined as
-<code>h5i_app_std::authz::guard</code> or <code>guard_viewed</code> of the app's <code>Transition</code>,
-<code>Policy</code>, <code>Disclose</code> (and <code>View</code>) impls. <code>extract</code> then writes
+(<a href="https://github.com/h5i-dev/h5i/blob/main/docs/app/AUTHZ.md"><code>docs/app/AUTHZ.md</code></a>). The kernel invokes
+<code>h5i_app_std::authz_kernel!</code>, which writes <code>guarded_transition</code> and <code>App</code>
+(<code>h5i_app_core::Authz&lt;_&gt;</code>, whose <code>Kernel::transition</code> is the guard), and the
+server runs <code>App</code> on the store its mapping macro generates
+(<code>&lt;mapping&gt;!(App, store Name)</code>), writing no <code>Kernel</code> or <code>Store</code> itself. <code>extract</code> then writes
 <code>proofs/generated/Authz.lean</code>, which proves <code>&lt;kernel&gt;.&lt;fn&gt;.authorized</code> by
 instantiating the framework's theorem, with no hand-written Lean,
 <code>&lt;fn&gt;.kernel_apply_eq</code> (the policy is checked against the kernel's own
@@ -1594,12 +1596,11 @@ instantiating the framework's theorem, with no hand-written Lean,
 store and load what that <code>apply</code> computes). If <code>sql_write</code> is not a plain
 list of <code>schema!</code> table writes, <code>extract</code> fails unless
 <code>[authz] storage = "&lt;theorem&gt;"</code> names a hand-written storage proof. <code>check</code>
-builds <code>Authz</code> itself and gates these (and <code>&lt;fn&gt;.read_only_sound</code> when the
-server overrides <code>Kernel::read_only</code>). <code>lint</code> parses the server with <code>syn</code>
-and fails unless every <code>impl Kernel</code> outside tests runs a listed function as
-<code>transition</code> and the kernel's <code>apply</code> as <code>apply</code>, and every <code>impl Store</code>
-writes and loads with the generated <code>schema_store</code>/<code>schema_load</code> and keeps
-the default <code>load_for</code>. An app without <code>[authz]</code> is unaffected.</p>
+builds <code>Authz</code> itself and gates these and <code>&lt;fn&gt;.read_only_sound</code>. <code>lint</code>
+flags a hand-written <code>impl Kernel</code>, <code>impl Store</code> or <code>impl AuthzKernel</code> in an
+<code>[authz]</code> project (hygiene: that the server runs <code>App</code> on the generated
+store is the one fact outside the proofs). An app without <code>[authz]</code> is
+unaffected.</p>
 <p><code>h5i app new</code> requires the h5i-app Lean library from git at this binary's
 release tag; <code>--h5i-path &lt;checkout&gt;</code> uses a local h5i checkout instead.</p>
 <div class="codeblock"><div class="codeblock-head"><span>toml</span><button class="copy-btn" type="button">Copy</button></div><pre><code class="language-toml"># h5i-app.toml
@@ -2291,7 +2292,7 @@ once that session has ended, so group by <code>project</code> or <code>id</code>
     </nav>
     <p class="ma-head">Metadata</p>
     <dl class="ma-meta">
-      <div><dt>Updated</dt><dd>2026-10-26</dd></div>
+      <div><dt>Updated</dt><dd>2026-10-27</dd></div>
       <div><dt>Chapters</dt><dd>21</dd></div>
       <div><dt>Reading</dt><dd>56 min</dd></div>
       <div><dt>Flags</dt><dd><code>--help</code></dd></div>

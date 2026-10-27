@@ -1,76 +1,26 @@
 //! The forum's shell: moves data between the kernel, PostgreSQL and JSON.
-//! It decides nothing, and runs every command through the kernel's
-//! `guarded_transition`, so the framework's authorization theorem is about
-//! what this server commits.
+//! It decides nothing and writes no `Kernel` or `Store`: it runs
+//! `forum_kernel::App` (`h5i_app_core::Authz<forum_kernel::Forum>`, whose
+//! `transition` is the authorization guard) on the `Store` that `schema!`
+//! generates, so the framework's theorems are about what this server commits.
 
 use axum::http::StatusCode;
 use forum_kernel as k;
-use h5i_app_core::{Kernel, TenantId};
 use h5i_app_json::Value as Out;
-use h5i_app_pg::{DbError, ReplyCodec, Store, Tx};
+use h5i_app_pg::ReplyCodec;
 use h5i_app_std::authz::Guarded;
 use serde::{Deserialize, Serialize};
 
-/// Marker type the framework's traits hang off.
-pub struct Forum;
-
-impl Kernel for Forum {
-    type Principal = k::Principal;
-    type Snapshot = k::Snapshot;
-    type Command = k::Command;
-    type WriteSet = Vec<k::Write>;
-    type Reply = k::Reply;
-    type Error = Guarded<k::Error>;
-
-    fn tenant(actor: &k::Principal) -> TenantId {
-        TenantId(actor.org)
-    }
-
-    /// The policy-guarded transition: `forum_kernel.guarded_transition.authorized`.
-    fn transition(
-        actor: &k::Principal,
-        snap: &k::Snapshot,
-        cmd: &k::Command,
-    ) -> Result<(Vec<k::Write>, k::Reply), Guarded<k::Error>> {
-        k::guarded_transition(actor, snap, cmd)
-    }
-
-    fn apply(snap: &k::Snapshot, ws: &Vec<k::Write>) -> k::Snapshot {
-        k::apply(snap, ws)
-    }
-
-    /// Proven `H5iAppLib.ReadOnly.Sound`: `forum_kernel.guarded_transition.read_only_sound`.
-    fn read_only(cmd: &k::Command) -> bool {
-        k::read_only(cmd)
-    }
-}
+/// The kernel behind the guard (`h5i_app_std::authz_kernel!` in the kernel).
+pub type Forum = k::App;
 
 pub fn principal(org: u64, user: u64) -> k::Principal {
     k::Principal { org, user }
 }
 
-// The `users`, `posts` and `counters` tables, from the kernel's `schema!`.
-forum_kernel::forum_tables!(Forum);
-
-pub struct ForumStore;
-
-impl Store<Forum> for ForumStore {
-    fn ddl() -> Vec<String> {
-        schema_ddl()
-    }
-
-    fn tables() -> Vec<&'static str> {
-        schema_tables()
-    }
-
-    async fn load(tx: &Tx<'_>, t: TenantId) -> Result<k::Snapshot, DbError> {
-        schema_load(tx, t).await
-    }
-
-    async fn write(tx: &Tx<'_>, t: TenantId, ws: &Vec<k::Write>) -> Result<(), DbError> {
-        schema_store(tx, t, ws).await
-    }
-}
+// The `users`, `posts` and `counters` tables, from the kernel's `schema!`,
+// and `ForumStore`, their generated `Store`.
+forum_kernel::forum_tables!(Forum, store ForumStore);
 
 /// The JSON a client sends, e.g. `{"cmd":"create_post","title":"hi","body":"…"}`.
 #[derive(Deserialize)]
