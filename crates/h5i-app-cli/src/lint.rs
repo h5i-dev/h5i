@@ -245,6 +245,20 @@ fn guarded_wiring(p: &Project) -> Vec<String> {
                  that `App` runs the guard instantiation `guarded_transition` is proven for",
                 rel(p, &krate)
             ));
+        } else {
+            // At the crate root: `extract` and the theorems are about the
+            // root's `guarded_transition`, and only there does a hand-written
+            // one collide with the macro's. From a module, `App` would run that
+            // module's instantiation while a decoy at the root is proven.
+            let lib = rust::lib_root(&krate);
+            if rust::top_level_macro_calls(&lib, &["h5i_app_std", "authz_kernel"]) != 1 {
+                bad.push(format!(
+                    "{}: `h5i_app_std::authz_kernel!` must be invoked at the top level of the crate root (not in a \
+                     module, not under `cfg`), so that the `guarded_transition` the theorems are about is the one \
+                     it writes",
+                    rel(p, &lib)
+                ));
+            }
         }
     }
     match crate::deps::framework_problems(p) {
@@ -526,6 +540,15 @@ mod tests {
         std::fs::write(kernel.join("src/lib.rs"), "extern crate h5i_app_core;\nextern crate h5i_app_std as std_lib;\n").unwrap();
         assert_eq!(crate::deps::framework_problems(&p).unwrap(), Vec::<String>::new());
         std::fs::write(kernel.join("src/lib.rs"), "").unwrap();
+        // A server in a workspace of its own resolves its own dependencies.
+        let server = d.path().join("server");
+        std::fs::create_dir_all(server.join("src")).unwrap();
+        std::fs::write(server.join("src/main.rs"), "fn main() {}\n").unwrap();
+        let own = kernel_manifest(&format!("h5i-app-sql = {{ path = \"{}\" }}\n", fake.display())).replace("name = \"k\"", "name = \"srv\"");
+        std::fs::write(server.join("Cargo.toml"), own).unwrap();
+        let bad = crate::deps::framework_problems(&p).unwrap();
+        assert!(bad.iter().any(|b| b.starts_with("srv:") && b.contains("comes from")), "{bad:?}");
+        std::fs::remove_dir_all(&server).unwrap();
         // The theorems' subject is fixed.
         std::fs::write(d.path().join("h5i-app.toml"), "[extract]\ncrate = \"kernel\"\n[authz]\nguarded = [\"reviewed_transition\"]\n").unwrap();
         assert!(Project::load(&d.path().join("h5i-app.toml")).is_err());
@@ -555,6 +578,15 @@ mod tests {
         ] {
             std::fs::write(kernel.join("src/lib.rs"), code).unwrap();
             assert_eq!(guarded_wiring(&p).len(), want, "{code}: {:?}", guarded_wiring(&p));
+        }
+        // In a module, or under `cfg`, a decoy at the root would be what is proven.
+        for code in [
+            "pub fn guarded_transition() {}\nmod run { h5i_app_std::authz_kernel! { Forum { } } }\n",
+            "#[cfg(any())]\nh5i_app_std::authz_kernel! { Forum { } }\n",
+        ] {
+            std::fs::write(kernel.join("src/lib.rs"), code).unwrap();
+            let bad = guarded_wiring(&p);
+            assert!(bad.iter().any(|b| b.contains("top level of the crate root")), "{code}: {bad:?}");
         }
         std::fs::write(kernel.join("src/lib.rs"), "h5i_app_std::authz_kernel! { Forum { } }\n").unwrap();
         // Each hand-written impl is flagged, under any path spelling and past a test module.

@@ -136,15 +136,19 @@ Two facts stay outside the proofs:
 - the kernel builds `App` with `authz_kernel!`, once. A kernel that wrote
   `guarded_transition` by hand and an `App` over another type would have its
   theorems about one instantiation and its engine running another. With the
-  macro, coherence and name resolution leave no room: a second `App` at the
-  crate root is a duplicate name, and a second `AuthzKernel` impl for the
-  same type a conflict;
+  macro at the crate root, coherence and name resolution leave no room: a
+  hand-written `guarded_transition` or second `App` there is a duplicate
+  name, and a second `AuthzKernel` impl for the same type a conflict. (From
+  inside a module, the macro's `App` would run that module's instantiation
+  while a decoy `guarded_transition` at the root is the one proven; lint
+  rejects that form, below);
 - the server builds its engine from `forum_kernel::App` and the generated
   store, one line of `main.rs`, rather than from a kernel or store of its
   own.
 
 `h5i app lint` checks the plain form of both: the kernel invokes
-`h5i_app_std::authz_kernel!` (by that path) exactly once, and no crate of the
+`h5i_app_std::authz_kernel!` (by that path) exactly once, at the top level of
+its crate root and not under `cfg`, and no crate of the
 project hand-writes an `impl Kernel`, `impl Store` or `impl AuthzKernel`.
 That is hygiene for the plain mistake, not a guarantee: it reads the source
 with `syn`, so what only a macro or `include!` produces is not seen.
@@ -152,13 +156,17 @@ with `syn`, so what only a macro or `include!` produces is not seen.
 Two things are checked, not trusted:
 
 - **The theorems are about `guarded_transition`.** `[authz] guarded` accepts
-  only `["guarded_transition"]`, the function `authz_kernel!` writes, so the
-  proofs cannot be about another function with a stricter policy while `App`
-  runs `Forum`'s.
+  only `["guarded_transition"]`, the name `authz_kernel!` writes at the crate
+  root, so the proofs cannot be about a function of another name with a
+  stricter policy while `App` runs `Forum`'s. That the root's
+  `guarded_transition` is the macro's rests on the macro being at the root
+  (above), which lint checks in its plain form.
 - **The framework is the framework.** `authz_kernel!`, `Authz<T>` and the
   generated store name `::h5i_app_core`, `::h5i_app_std`, `::h5i_app_pg` and
   `::h5i_app_sql`, which each crate's `Cargo.toml` resolves. `lint` and
-  `check` read Cargo's resolution (`cargo metadata`) and fail unless every
+  `check` read Cargo's resolution (`cargo metadata`) of every crate under
+  the project, the kernel's workspace or not (a server with its own
+  `[workspace]` resolves its own), and fail unless every
   `h5i_app_*` dependency of the project's crates is the package of that name
   (no `package =` rename) and comes from the one place `h5i-app-core` comes
   from (no `[patch]` or path to a look-alike), and that no crate binds a

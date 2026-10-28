@@ -52,7 +52,7 @@ fn has_cfg(attrs: &[syn::Attribute]) -> bool {
 }
 
 /// Crate directories under `root`: a `Cargo.toml` with a `src/`.
-fn crates_under(root: &Path, out: &mut Vec<PathBuf>) {
+pub(crate) fn crates_under(root: &Path, out: &mut Vec<PathBuf>) {
     if root.join("Cargo.toml").is_file() && root.join("src").is_dir() {
         out.push(root.to_path_buf());
     }
@@ -65,6 +65,37 @@ fn crates_under(root: &Path, out: &mut Vec<PathBuf>) {
             crates_under(&d, out);
         }
     }
+}
+
+/// A crate's library root: `[lib] path`, or `src/lib.rs`.
+pub fn lib_root(krate: &Path) -> PathBuf {
+    let manifest = std::fs::read_to_string(krate.join("Cargo.toml"))
+        .ok()
+        .and_then(|t| t.parse::<toml::Table>().ok())
+        .unwrap_or_default();
+    match manifest.get("lib").and_then(|l| l.get("path")).and_then(|p| p.as_str()) {
+        Some(l) => krate.join(l),
+        None => krate.join("src/lib.rs"),
+    }
+}
+
+/// Invocations of the macro at exactly `path` among the top-level items of
+/// `file` (not in a module), with no `cfg` on them.
+pub fn top_level_macro_calls(file: &Path, path: &[&str]) -> usize {
+    let Ok(f) = std::fs::read_to_string(file).map_err(|_| ()).and_then(|t| syn::parse_file(&t).map_err(|_| ())) else {
+        return 0;
+    };
+    f.items
+        .iter()
+        .filter(|i| match i {
+            syn::Item::Macro(m) => {
+                !has_cfg(&m.attrs)
+                    && m.mac.path.segments.len() == path.len()
+                    && m.mac.path.segments.iter().zip(path).all(|(s, want)| s.ident == want)
+            }
+            _ => false,
+        })
+        .count()
 }
 
 impl Sources {
@@ -94,10 +125,9 @@ impl Sources {
             .ok()
             .and_then(|t| t.parse::<toml::Table>().ok())
             .unwrap_or_default();
-        let lib = manifest.get("lib").and_then(|l| l.get("path")).and_then(|p| p.as_str());
-        if let Some(l) = lib {
+        if manifest.get("lib").and_then(|l| l.get("path")).is_some() {
             roots.retain(|r| !r.ends_with("lib.rs"));
-            roots.push(krate.join(l));
+            roots.push(lib_root(krate));
         }
         for b in manifest.get("bin").and_then(|b| b.as_array()).into_iter().flatten() {
             if let Some(p) = b.get("path").and_then(|p| p.as_str()) {

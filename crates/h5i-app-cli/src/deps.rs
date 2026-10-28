@@ -46,9 +46,7 @@ pub fn framework_problems(p: &Project) -> Result<Vec<String>> {
     }
     let Some(krate) = p.krate() else { return Ok(Vec::new()) };
     let meta = util::metadata(&krate, true)?;
-    let by_id: BTreeMap<&str, &util::Package> = meta.packages.iter().map(|q| (q.id.as_str(), q)).collect();
-    let mut bad = Vec::new();
-    let core: Vec<&&util::Package> = by_id.values().filter(|q| q.name == "h5i-app-core").collect();
+    let core: Vec<&util::Package> = meta.packages.iter().filter(|q| q.name == "h5i-app-core").collect();
     let want = match core.as_slice() {
         [one] => origin(one),
         [] => return Ok(vec!["`[authz]`: the kernel does not depend on `h5i-app-core`".into()]),
@@ -57,34 +55,77 @@ pub fn framework_problems(p: &Project) -> Result<Vec<String>> {
             return Ok(vec![format!("`[authz]`: more than one `h5i-app-core` in the build: {}", all.join(", "))]);
         }
     };
-    let Some(resolve) = &meta.resolve else { return Ok(vec!["`cargo metadata` gave no resolution".into()]) };
     let root = p.root.canonicalize().unwrap_or(p.root.clone());
-    for node in &resolve.nodes {
-        let Some(pkg) = by_id.get(node.id.as_str()) else { continue };
-        let mine = pkg.manifest_path.canonicalize().is_ok_and(|m| m.starts_with(&root));
-        if !mine {
-            continue;
+    let kdir = krate.canonicalize().unwrap_or(krate.clone());
+    let mine = |pkg: &util::Package| {
+        pkg.manifest_path.canonicalize().is_ok_and(|m| m.starts_with(&root) || m.parent() == Some(kdir.as_path()))
+    };
+    let mut bad = Vec::new();
+    // Every crate of the project, not only the kernel's workspace: a server
+    // with its own `[workspace]` (or `exclude`d) resolves its own
+    // dependencies. Each crate no resolution read so far covers gets its own.
+    let mut crates = Vec::new();
+    crate::rust::crates_under(&p.root, &mut crates);
+    let mut metas = vec![meta];
+    let mut covered = std::collections::BTreeSet::new();
+    let mut i = 0;
+    loop {
+        // The crates the resolutions read so far include.
+        for m in &metas[i..] {
+            for n in m.resolve.iter().flat_map(|r| &r.nodes) {
+                if let Some(q) = m.packages.iter().find(|q| q.id == n.id)
+                    && let Ok(f) = q.manifest_path.canonicalize()
+                {
+                    covered.insert(f);
+                }
+            }
         }
-        for d in &node.deps {
-            if !d.name.starts_with("h5i_app_") {
+        i = metas.len();
+        let Some(at) = crates.iter().position(|c| c.join("Cargo.toml").canonicalize().is_ok_and(|m| !covered.contains(&m)))
+        else {
+            break;
+        };
+        let next = crates.remove(at);
+        match util::metadata(&next, true) {
+            Ok(m) => metas.push(m),
+            Err(e) => bad.push(format!(
+                "{}: cannot read Cargo's resolution of this crate, so its framework packages are unchecked: {e:#}",
+                next.strip_prefix(&p.root).unwrap_or(&next).display()
+            )),
+        }
+    }
+    for meta in &metas {
+        let by_id: BTreeMap<&str, &util::Package> = meta.packages.iter().map(|q| (q.id.as_str(), q)).collect();
+        let Some(resolve) = &meta.resolve else {
+            bad.push("`cargo metadata` gave no resolution".into());
+            continue;
+        };
+        for node in &resolve.nodes {
+            let Some(pkg) = by_id.get(node.id.as_str()) else { continue };
+            if !mine(pkg) {
                 continue;
             }
-            let Some(dep) = by_id.get(d.pkg.as_str()) else { continue };
-            if dep.name.replace('-', "_") != d.name {
-                bad.push(format!(
-                    "{}: `{}` is the package `{}` (a `package =` rename): with `[authz]` the framework's names must \
-                     be the framework's packages",
-                    pkg.name, d.name, dep.name
-                ));
-            } else if origin(dep) != want {
-                bad.push(format!(
-                    "{}: `{}` comes from {}, not from {} where `h5i-app-core` comes from (a `[patch]` or a path to \
-                     another copy?)",
-                    pkg.name,
-                    dep.name,
-                    origin(dep),
-                    want
-                ));
+            for d in &node.deps {
+                if !d.name.starts_with("h5i_app_") {
+                    continue;
+                }
+                let Some(dep) = by_id.get(d.pkg.as_str()) else { continue };
+                if dep.name.replace('-', "_") != d.name {
+                    bad.push(format!(
+                        "{}: `{}` is the package `{}` (a `package =` rename): with `[authz]` the framework's names \
+                         must be the framework's packages",
+                        pkg.name, d.name, dep.name
+                    ));
+                } else if origin(dep) != want {
+                    bad.push(format!(
+                        "{}: `{}` comes from {}, not from {} where `h5i-app-core` comes from (a `[patch]` or a path \
+                         to another copy?)",
+                        pkg.name,
+                        dep.name,
+                        origin(dep),
+                        want
+                    ));
+                }
             }
         }
     }
