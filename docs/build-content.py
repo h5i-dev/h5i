@@ -41,7 +41,7 @@ PUBLISHED = "2026-08-21"
 PAGE_HISTORY = {
     "": ("2026-10-28", "c14c1fdabcde460a"),
     "features/": ("2026-10-28", "abd7bfe210c0a19f"),
-    "manual/": ("2026-10-28", "b1c15440cab5f22a"),
+    "manual/": ("2026-10-28", "f9b4161f07b6c8af"),
     "pitch/": ("2026-10-23", "e226e08efc54cc1a"),
     "demo/": ("2026-10-22", "9dae5fe7a3dbf01b"),
     "guides/": ("2026-10-23", "7c6c8d7fc6200fbc"),

@@ -24,7 +24,8 @@ These three parts work together:
   browser and cannot tell you what it reached; h5i owns the path every byte
   takes. That is the piece with no equivalent elsewhere.
 
-On 2026-10-19 h5i's own browser engine was removed. Benchmarks showed the proxy
+On 2026-10-19 h5i's own browser engine moved out of h5i, to
+[h5i-browser](https://github.com/h5i-dev/h5i-browser). Benchmarks showed the proxy
 lane finds what the engine found, and a real Chromium renders what the engine
 could not. What made the engine worth having was its network half (the broker,
 the receipt lanes, the message store, resend), and that is kept, now under the
@@ -35,7 +36,7 @@ unchanged.
 
 | part | status | design |
 | --- | --- | --- |
-| browser sessions | Chromium via agent-browser, captured by a per-session proxy (`proxy-observed`); h5i's own engine removed 2026-10-19 | [`docs/MANUAL.md`](MANUAL.md#h5i-browser); the engine's design, superseded, in [`docs/design/design-browser.md`](design/design-browser.md) |
+| browser sessions | Chromium via agent-browser, captured by a per-session proxy (`proxy-observed`); h5i's own engine moved to [h5i-browser](https://github.com/h5i-dev/h5i-browser) 2026-10-19 | [`docs/MANUAL.md`](MANUAL.md#h5i-browser), [`docs/design/design-browser.md`](design/design-browser.md) |
 | in-terminal viewer | shipped, V1 to V8, for box browsers. Keyboard-driven, in the terminal or a browser | [`docs/design/design-interminal-browser.md`](design/design-interminal-browser.md) |
 | policy resolution | P1 shipped; P2 shipped, opt-in; P3 and P4 designed, not built | [`docs/design/design-policy.md`](design/design-policy.md) |
 | HTTP workbench | phases A and B built and benchmarked, plus experiments and findings (W22, W23); installed with `h5i plugin install websec` | [`docs/design/design-websec.md`](design/design-websec.md) |

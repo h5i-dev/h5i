@@ -1111,8 +1111,9 @@ that choice in the policy digest. Both are driven by agent-browser.
 Chromium runs with an isolated profile and the box's policy. Its requests are
 seen at the box's boundary and by h5i's mediator on the agent-browser socket,
 not by a session's capture proxy: inspect the box-level network evidence. An
-older profile that pins `--engine h5i` is refused with that name, because h5i's
-own engine has been removed.
+older profile that pins `--engine h5i` is refused with that name: h5i's own
+engine is no longer part of h5i and now lives in
+[h5i-browser](https://github.com/h5i-dev/h5i-browser).
 
 ### Inspecting what happened
 

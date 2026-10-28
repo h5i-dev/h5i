@@ -1394,8 +1394,9 @@ that choice in the policy digest. Both are driven by agent-browser.</p>
 <p>Chromium runs with an isolated profile and the box's policy. Its requests are
 seen at the box's boundary and by h5i's mediator on the agent-browser socket,
 not by a session's capture proxy: inspect the box-level network evidence. An
-older profile that pins <code>--engine h5i</code> is refused with that name, because h5i's
-own engine has been removed.</p>
+older profile that pins <code>--engine h5i</code> is refused with that name: h5i's own
+engine is no longer part of h5i and now lives in
+<a href="https://github.com/h5i-dev/h5i-browser">h5i-browser</a>.</p>
 <h3 id="inspecting-what-happened">Inspecting what happened</h3>
 <div class="codeblock"><div class="codeblock-head"><span>terminal</span><button class="copy-btn" type="button">Copy</button></div><pre><code class="language-bash">h5i box probe                       # what this host can enforce at all
 h5i box capabilities &lt;name&gt; --json  # what this box actually got

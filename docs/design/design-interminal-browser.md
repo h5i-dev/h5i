@@ -10,7 +10,8 @@ viewer; `h5i browser view` went with h5i's own engine.
 Several keys are bound only when the stream advertises the matching feature.
 A Chromium screencast advertises none of them, so with today's engines the
 hint and history keys stay unbound. The viewer side is built and tested; the
-engine side that served it was removed.
+engine side that served it moved out with the old engine, now
+[h5i-browser](https://github.com/h5i-dev/h5i-browser).
 
 ## V1. Keys, not a pointer
 
@@ -84,7 +85,7 @@ out again and a frame encoded. Three rules keep that cheap:
    while it is away ride out together in the next. Batched, never coalesced: a
    keystroke is a delta, and dropping one loses a character. A lost batch is
    abandoned rather than retried, since a repeat could type the word twice.
-   (Measured against the removed engine: 25 characters went from 869 ms
+   (Measured against the old in-house engine, now h5i-browser: 25 characters went from 869 ms
    behind to 88 ms.)
 2. Render only for a viewer that can take a frame under ack pacing, instead of
    rendering one to throw away.

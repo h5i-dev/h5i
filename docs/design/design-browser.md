@@ -7,8 +7,8 @@ network layer behind it (`crates/h5i-browser`) and the session record
 The commands are in [`MANUAL.md`](../MANUAL.md#h5i-browser); this file covers
 how the parts fit and what each one guarantees.
 
-h5i's own page engine (Blitz, Stylo, Boa) was removed on 2026-10-19; its
-design is in git history.
+h5i's own page engine (Blitz, Stylo, Boa) moved out of h5i on 2026-10-19
+and lives on as [h5i-browser](https://github.com/h5i-dev/h5i-browser).
 
 ## Architecture
 
