@@ -281,7 +281,7 @@ request into the command the client meant, although, since every theorem holds
 for all commands, a wrong decoding can only produce a command the client could
 have sent directly. The store must write what `apply` says, which the test
 checks here. Finally, the tools (Charon, Aeneas, Lean and rustc) and PostgreSQL
-are trusted. [`docs/app/TRUST.md`](../../../docs/app/TRUST.md) lists the trusted parts
+are trusted. [`docs/design/design-app-trust.md`](../../../docs/design/design-app-trust.md) lists the trusted parts
 of the framework in full.
 
 ## See the guarantees in `h5i ui`

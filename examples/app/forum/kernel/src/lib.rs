@@ -584,7 +584,7 @@ mod tests {
     /// into a write the caller may make. Here a user's edit of their own post
     /// carries another user's draft. The guard sees a permitted write and no
     /// disclosed row; only read-only commands are confined to the view
-    /// (`docs/app/AUTHZ.md`, "What is not covered").
+    /// (`docs/design/design-app-authz.md`, "What is not covered").
     #[test]
     fn writes_can_carry_what_the_caller_cannot_see() {
         struct CopyDraft;
@@ -626,7 +626,7 @@ mod tests {
 
     /// The guard's cost per command against `transition` alone, on a tenant
     /// of `users` users and `posts` posts. `cargo test --release -- --ignored
-    /// guard_overhead --nocapture`; `docs/app/NUMBERS.md` records a run.
+    /// guard_overhead --nocapture`; `docs/design/design-app-numbers.md` records a run.
     #[test]
     #[ignore]
     fn guard_overhead() {

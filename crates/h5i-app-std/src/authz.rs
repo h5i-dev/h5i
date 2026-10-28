@@ -6,7 +6,7 @@
 //! rows a reply contains), then runs commands through [`guard`]. The guard's
 //! spec, `h5i_app_std.Specs.authz.guard_authorized` in `proofs/AuthzSpecs.lean`,
 //! never looks inside `transition`: it holds for every kernel, so an app gets
-//! its authorization theorem by instantiating it (`docs/design/design-authz.md`).
+//! its authorization theorem by instantiating it (`docs/design/design-app-authz.md`).
 //!
 //! Write `i` is checked in the state `apply(s, ws[..i])`, the kernel's own
 //! commit semantics, so a command may create a row and then act on it. A

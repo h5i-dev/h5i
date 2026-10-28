@@ -1296,7 +1296,7 @@ mutants generated from the kernel's syntax: comparison boundaries, `==` and
 `false`.
 
 `[authz] guarded` opts a kernel into framework-proven authorization
-([`docs/app/AUTHZ.md`](app/AUTHZ.md)). The kernel invokes
+([`docs/design/design-app-authz.md`](design/design-app-authz.md)). The kernel invokes
 `h5i_app_std::authz_kernel!`, which writes `guarded_transition` (the only
 value `guarded` accepts) and `App`
 (`h5i_app_core::Authz<_>`, whose `Kernel::transition` is the guard), and the

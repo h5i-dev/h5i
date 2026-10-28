@@ -26,7 +26,7 @@ check_batch(&mut candidate, &[8, 10], NonZeroUsize::new(1).unwrap()).unwrap();
 PTX, entry point ABI and semantics; only their launch shell uses unsafe CUDA.
 The search/push adapters live in `examples/app/parallel/gpu`; the integer pricing
 example in `examples/app/discount-gpu` exercises a different ABI with shared
-host/device logic. See `docs/app/GPU.md` for toolchain and reproduction commands.
+host/device logic. See `docs/design/design-app-executors.md` for toolchain and reproduction commands.
 
 GPU computations must not commit application state. Validate errors and domain
 invariants before the existing application transition/commit. Shared source and

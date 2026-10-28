@@ -29,7 +29,7 @@ authorization is still proven, for every request sequence.
   reads without locks), and `Committed.pg_stored` (PostgreSQL holds and loads
   back what that `apply` computes).
 
-What is proven and what stays trusted: [`docs/app/AUTHZ.md`](../../../docs/app/AUTHZ.md).
+What is proven and what stays trusted: [`docs/design/design-app-authz.md`](../../../docs/design/design-app-authz.md).
 To review the forum's authorization, read its `Policy`, `View` and `Disclose`
 impls with `Write` and `apply_write`, the `authz_kernel!` call, the principal
 function `HmacAuth` is given (`principal`) and `ReplyCodec::scope` in

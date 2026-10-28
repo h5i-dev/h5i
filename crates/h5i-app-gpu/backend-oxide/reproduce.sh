@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Expected to fail in upstream device codegen; see docs/app/GPU.md.
+# Expected to fail in upstream device codegen; see docs/design/design-app-executors.md.
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/../../.." && pwd)
 export CARGO_HOME=/var/tmp/h5i-gpu-cargo-home

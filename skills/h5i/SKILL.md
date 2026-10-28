@@ -54,7 +54,7 @@ Only call a property formally verified after its theorem passed the proof gate
 for the current extracted kernel. Review the statement and its hypotheses:
 the gate cannot decide whether a specification is meaningful or an assumption
 is justified. Identify which HTTP, storage, deployment, and tool behavior lies
-outside the theorem; consult `docs/app/TRUST.md` when working in this repository.
+outside the theorem; consult `docs/design/design-app-trust.md` when working in this repository.
 
 ## Use the development tools
 

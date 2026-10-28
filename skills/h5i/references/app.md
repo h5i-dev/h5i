@@ -77,7 +77,7 @@ property is proven:
   the spec or explain why that behavior is outside the intended property.
 
 State the result precisely: which theorem passed, on which extracted kernel,
-under which hypotheses and trusted components. Consult `docs/app/TRUST.md`
+under which hypotheses and trusted components. Consult `docs/design/design-app-trust.md`
 for this repository's boundaries. Authentication inputs, clocks, parts of
 HTTP/JSON integration, PostgreSQL semantics and engine behavior, deployment,
 and the Charon/Aeneas/Lean toolchain need separate scrutiny. Optional GPU

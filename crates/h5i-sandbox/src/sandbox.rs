@@ -2473,7 +2473,7 @@ pub(crate) fn build_confined_command(
         if verdict.symlink_clean == Some(false) {
             eprintln!(
                 "h5i: warning: a granted path resolves outside the worktree through a \
-                 symlink (design-policy.md §P3) — the run continues, but this is a boundary signal"
+                 symlink (design-policy.md §P2) — the run continues, but this is a boundary signal"
             );
         }
     }

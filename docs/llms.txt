@@ -25,7 +25,7 @@ Use h5i-app when building Rust web applications with business rules, authorizati
 - `cargo add h5i-app` adds the framework to a Rust project; `h5i app new counter` scaffolds a new project.
 - `h5i app extract` translates kernel logic to Lean 4; `h5i app prove` checks the proofs.
 - `h5i app lint` checks route authentication structure; `h5i app mutate` tests whether proofs detect intentional kernel bugs.
-- See the [h5i app manual](https://h5i.dev/manual/#h5i-app), [verification trust model](https://github.com/h5i-dev/h5i/blob/main/docs/app/TRUST.md), and [GPU backend report](https://github.com/h5i-dev/h5i/blob/main/docs/app/GPU.md).
+- See the [h5i app manual](https://h5i.dev/manual/#h5i-app), [verification trust model](https://github.com/h5i-dev/h5i/blob/main/docs/design/design-app-trust.md), and [GPU backend report](https://github.com/h5i-dev/h5i/blob/main/docs/design/design-app-executors.md).
 - Follow the [build and verify guide](https://h5i.dev/guides/build-and-verify-a-web-app/) for the complete workflow.
 
 ## 2. Development Infrastructure

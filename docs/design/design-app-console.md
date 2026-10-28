@@ -1,199 +1,159 @@
-# Apps in the console
+# Reviewing an app in `h5i ui`
 
-Status: initial implementation, 2026-10-06. The sections below describe the
-design; the implementation notes at the end identify the current boundaries.
+Start `h5i ui` in the repository and open Apps. Projects are discovered by their
+`h5i-app.toml`. The console only reads files and Git objects: opening a project
+never runs its build scripts or checks out an old revision.
 
-The entry point is a user-visible guarantee, such as “bookings never overlap”,
-not a count of Lean declarations. A reviewer should be able to answer:
+The console starts from a user-visible guarantee ("bookings never overlap"),
+not a list of Lean declarations. Each project has three views:
 
-1. What behavior does this application promise?
-2. Which implementation, specification and theorem support that promise?
-3. What must be true for it to apply, and what changed since the version I reviewed?
-4. Which deliberately introduced bugs were detected, and which survived?
+- Guarantees: a list of behavior, conditions, exclusions and evidence.
+  Selecting a guarantee opens its local graph and a source inspector. Nodes take
+  keyboard focus and Enter/Space; Fit and zoom control the graph. The
+  application-flow lens shows authored call and data relationships separately.
+- Changes: compares the working tree with HEAD, a branch or a commit, and shows
+  earlier changes along first-parent history. A warning means "review this",
+  not that a guarantee got weaker or stronger.
+- Mutations: recorded experiments with their edits, baseline, stages,
+  diagnostics and input identity.
 
-## Workspace
+## Produce evidence
 
-Add **Apps** to the existing rail. Discover projects through `h5i-app.toml`,
-including framework projects. Keep the existing dark surfaces, typography,
-resizable panes and hash navigation. Mutant failures and changed assumptions
-use text and amber markers; filled red retains its existing refusal meaning.
+```sh
+h5i app check examples/app/booking
+h5i app mutate examples/app/booking
+h5i app mutate examples/app/booking --auto --limit 20
+```
 
-The project list shows the name, purpose and concrete review reasons. Selecting
-a project opens three views: **Guarantees**, **Changes**, **Mutations**. Source
-inspection is a contextual pane, not a fourth place to rediscover the selection.
+Each run writes a record to `.h5i/app/runs/<id>/run.json` in the project
+(`cargo app check`/`cargo app mutate` in the h5i repository do the same). The
+console reads the newest 20 and refreshes every 30 seconds. Missing tools,
+failed baselines and missing records are never shown as passes.
 
-Guarantees opens on a readable list of behavior, conditions, exclusions and
-available evidence. Selecting a guarantee opens its local relationship graph
-and source inspector. An application flow is an alternative graph lens. Avoid
-opening on a graph of every helper lemma in the repository.
+`h5i app check` records its build and gate stages and a catalog from Lean's
+elaborated environment: types, definition bodies, direct dependencies and
+axioms, for built hand-written modules as well as manifest-required names. A
+check does not establish extraction freshness; run
+`h5i app extract <project> --check` for that.
 
-Graph nodes have stable IDs and typed edges. A selected node exposes incoming
-and outgoing relations, its description, source references and evidence. Rust
-calls, data flow, extraction, proof dependencies and agent-described application
-relationships are different edge kinds; an arrow must explain its meaning.
-Support keyboard selection, search, fit, zoom, and a readable relationship list.
+`h5i app mutate` records each mutant's edit, origin (declared or generated)
+and stages: baseline, edit, Rust check, extraction, Lean build. A failing
+`lake build` alone does not identify the theorem that rejected a mutant, and
+none is named without diagnostics saying so. A survivor needs review; an
+equivalent change or unspecified behavior can survive too. A kill rate is not
+proof coverage, so the tested selection and invalid/unexecuted counts are
+shown beside it.
 
-## Explanation and evidence
+## Author an explanation
 
-An agent-authored, versioned companion file describes guarantees, specification
-clauses, theorem IDs, assumptions, exclusions, source anchors and graph views.
-Agents choose the useful level of abstraction; a general Lean source parser
-must not decide what the application promises.
+Place `h5i-app.ui.json` next to the manifest. The map is written by hand (by an
+agent or reviewer), not generated from the code, and the console says so. Start
+from `examples/app/booking/h5i-app.ui.json` or this minimal example:
 
-Use structured nodes and edges as the canonical interactive graph. Mermaid is
-a useful optional authored illustration, but is insufficient as the sole data
-model: a node must link to a theorem, source, history and mutation evidence.
+```json
+{
+  "version": 1,
+  "title": "My application",
+  "description": "A short description of the behavior under review.",
+  "author": "Agent or reviewer attribution",
+  "exclusions": ["Authentication of external callers is a shell condition."],
+  "nodes": [
+    {
+      "id": "balance-nonnegative",
+      "kind": "guarantee",
+      "title": "Balances stay nonnegative",
+      "description": "In every state reachable from the initial state."
+    },
+    {
+      "id": "balance-theorem",
+      "kind": "theorem",
+      "title": "Reachable balance invariant",
+      "description": "State the hypotheses and conclusion in readable terms.",
+      "symbol": "MyApp.balance_nonnegative",
+      "sources": [{"path": "proofs/Theorems.lean", "anchor": "theorem balance_nonnegative"}]
+    }
+  ],
+  "edges": [{"from": "balance-nonnegative", "to": "balance-theorem", "kind": "proved by", "view": "proof"}]
+}
+```
 
-Descriptions and authored edges are explicitly attributed. Verification status
-comes from tool records associated with specific inputs, never an agent's
-`verified: true`. Missing descriptions, missing records and stale descriptions
-remain visible. Projects without companion files still show manifest entries,
-source files and recorded runs.
+Nodes:
 
-The CLI's existing Lean environment traversal in `check::gate_program` is the
-natural source of theorem identity, elaborated type, axioms and declaration
-dependencies. Extend this producer instead of parsing arbitrary Lean syntax in
-the HTTP server. The catalog must cover built hand-written declarations as
-well as manifest-required names; the manifest's theorem list is not exhaustive.
+- Required: `id`, `kind`, `title`, `description`. Optional: `symbol`,
+  `sources`, `excludes`. Keep ids stable when titles or symbols change.
+- Kinds: `guarantee`, `theorem`, `specification`, `assumption`,
+  `implementation`, `counterexample`, `boundary`.
+- Limits: 200 nodes, 600 edges, 12 sources per node. Unknown fields (including
+  invented status fields such as `verified`) and dangling edges are rejected.
+  Verification status comes only from tool records.
 
-Separate these three kinds of condition:
+Sources have a repository-relative `path`, an optional `anchor` (line text that
+must occur once) and an optional `digest` (SHA-256 of the whole file at the
+version you reviewed). The console warns when an anchor no longer resolves
+uniquely or a digest no longer matches, and counts such nodes above the graph.
+It shows up to 160 lines around the anchor, labels missing or ambiguous
+anchors instead of guessing a line, and never follows a path outside the
+repository. Update a digest only after rereading the explanation against the
+changed source.
 
-- Logical hypotheses, including section variables and typeclass parameters.
-- Definitions and dependencies that give those hypotheses and conclusions meaning.
-- Conditions on the real system: authentication, clocks, database semantics and deployment.
+Edges have `from`, `to`, `kind` (readable text) and `view` (`proof`, the
+default, or `flow`). A proof edge means `from` depends on `to`: if `to`
+changes, `from` needs review, and Changes uses exactly this to find affected
+guarantees. Out-of-scope behavior goes in a node's `excludes` or in
+`exclusions`, not in an edge. Point a boundary at the code that realizes it
+through its `sources`.
 
-The last category cannot be established merely by elaborating a theorem.
-Descriptions carry source references and scope, and UI wording preserves that
-distinction.
+Lean-to-Lean proof edges come from the latest check's catalog. Authored proof
+edges between two Lean-symbol nodes (`theorem`, `specification`, `assumption`,
+`counterexample`) are ignored, even with no catalog. Write guarantee-to-theorem,
+Rust, flow and deployment edges, and attach counterexamples to a guarantee.
+Authored nodes are matched to catalog declarations by exact `symbol`;
+unmapped declarations get generated nodes, and constants outside the catalog
+are labeled leaves with no invented signature.
 
-## Change review
+Keep logical hypotheses, the definitions that give them meaning, and
+real-world conditions (authentication, clocks, database, deployment) apart;
+elaborating a theorem cannot establish the last kind. Show acceptance next to
+safety, since a service that rejects everything is safe. Booking pairs
+`Theorems.no_double_booking` with `Theorems.book_accepted` and
+`Clock.started_stays` with the `Clock.clock_back_cancels` counterexample.
 
-Compare the working tree with HEAD, a chosen baseline, and historical versions.
-Walk Git history for the same stable theorem/guarantee ID; do not limit the UI
-to HEAD versus its parent. Renames need an explicit identity mapping; uncertain
-matches should be presented for review, not silently equated.
+With no map and no recorded declarations, the console offers a prompt for
+asking a coding agent to write one.
 
-Report additions, removals and changes to hypotheses, conclusions, referenced
-definitions, application conditions and source anchors. Propagate changed
-shared dependencies to the affected guarantees. Preserve before/after text,
-commit identity and the relationship path explaining each warning.
+## Reading the graph
 
-For example, `booking_kernel.Theorems.no_double_booking` takes `Reachable s`.
-A change to `Reachable` can change its meaning without changing the theorem's
-signature. Watching only the theorem header or the companion file misses this.
+Solid cyan edges are tool-recorded dependencies; dashed gray edges are
+authored. The proof lens draws arrows from a dependency to its dependent, the
+reverse of the JSON direction. The graph shows the check's date, status and
+input freshness. A stale or failed record stays labeled as such, and a newer check with no
+catalog does not fall back to an older one. Neighborhoods show up to 80 nodes;
+Focus dependencies moves further. Dependency edges merge references in types
+and bodies, so they do not tell a hypothesis from a proof helper. Projects
+without a map can still browse recorded theorems and sources.
 
-“Changed” is an observation; “stronger assumption” or “weaker guarantee” needs
-a semantic argument. An agent may propose such an interpretation, alongside
-the source diff, but the UI must not present it as a mechanically established
-ordering. Formatting-only changes should be distinguished where tool-derived
-declaration data permits it. No historical catalog means unknown semantic
-comparison, not unchanged assumptions.
+## Limits of the evidence
 
-Reading the UI never checks out revisions or executes old build scripts.
-Historical tool records can supply exact semantic comparisons; absent those,
-show source changes with their limits. State shallow-history and scan limits.
+- History: at most 120 first-parent commits; shallow history and scan limits
+  are shown. Old build scripts are never run.
+- Source comparison is per referenced file, with a 50-line excerpt around the
+  first difference, so an unrelated edit in the same file raises a review item.
+  Shared authored dependencies propagate to guarantees. Without historical maps
+  the current one is used, and renamed symbols are not matched.
+- Declaration comparison needs a passing record on the clean baseline commit
+  and one matching the current inputs; otherwise it is unknown, even if no
+  watched file changed. It compares printed types and definitions and
+  propagates recorded dependencies. It does not infer equivalence,
+  strengthening or weakening.
+- Input freshness covers the repository's Rust, Lean, TOML, lockfiles, JSON and
+  Lean toolchain files, excluding build output, the map and web assets. It does
+  not cover external path packages, installed tool binaries or deployment. A
+  matching check record says the Lean build and gate passed, not that
+  extraction was rechecked.
+- A killed process can leave a record marked running/unfinished. Logs keep the
+  last 16 KiB. Corrupt, unsupported or oversized records are reported.
+- Records are local files, not attested results. Keep the source revision and
+  input identity with any report you share.
 
-## Mutation evidence
-
-Persist a run as it proceeds, including interrupted and failed runs. Each run
-records its identity, timestamps, requested selection, baseline outcome,
-toolchain, source revision and input digests. Each mutant records its actual
-edit, origin (declared/generated), file location, stage results, duration and
-diagnostics. Preserve bounded logs after temporary mutation directories vanish.
-
-Display baseline → edit → Rust check → extraction → Lean build, with the
-stopping stage visible. Distinguish survived, proof-stage failure, invalid,
-infrastructure failure, skipped, cancelled and running. A nonzero `lake build`
-alone does not identify a theorem that rejected the mutation. Only associate
-a failed theorem when diagnostics provide that evidence; keep agent-authored
-expected associations separately labeled.
-
-Survival is a review candidate, not automatically a missing requirement: an
-equivalent mutant or behavior intentionally outside the spec may survive.
-Likewise, a killed-mutant percentage is not a proof-coverage percentage. Always
-show the tested selection and invalid/unexecuted counts alongside any rate.
-
-Records refer to their inputs. A past pass is not a current pass after the Rust,
-proofs, extraction, manifest, local dependencies or relevant tool pins change.
-No run is “not run”, not a green empty state. Concurrent runs need independent
-records; a single mutable latest.json cannot be the history store.
-
-## Booking as the first complete example
-
-Use real declarations to exercise the interface:
-
-- No double booking: `Theorems.no_double_booking`, `Spec.Reachable`,
-  `Spec.Inv.compatible`, `Spec.Compatible`, `Spec.Apart`.
-- Valid bookings are accepted: `Theorems.book_accepted`. The current declared
-  touching-interval mutant exercises acceptance at the boundary; it should not
-  be described automatically as a failure of the non-overlap theorem.
-- Started bookings remain for runs by non-admins: `Clock.started_stays`, with
-  monotonic time, and `Clock.clock_back_cancels` as the counterexample when
-  that condition is removed.
-- Persistence: `Storage.db_inv`, the generated storage bridge, and the trusted
-  engine/PostgreSQL conditions documented in `docs/app/TRUST.md`.
-
-Show preservation and acceptance together. A service that rejects every
-request can satisfy a safety property while being useless to its users.
-
-## Delivery order
-
-1. Review the guarantee workspace using booking's actual source and a clear
-   distinction between descriptions and measured evidence.
-2. Define and validate the authored model and tool-produced records; add
-   producers to `h5i app check` and `h5i app mutate`.
-3. Connect the read-only Apps API, source inspector and evidence views.
-4. Add historical comparison, changed-dependency propagation and graph lenses.
-
-Port useful ideas from `improve-ui`, not its entire patch: discovery, the CLI
-workflow and the example layout have changed on main. Test stale records,
-changed indirect dependencies, missing history, invalid mutations, failed
-baselines and incomplete runs, as well as the successful path.
-
-## Implementation notes
-
-The console now discovers `h5i-app.toml` projects and provides Guarantees,
-Changes and Mutations. The booking project includes a source-fingerprinted
-explanation of four guarantees, their conditions and the clock counterexample.
-Lean dependency edges now come from the latest check catalog, reusing authored
-nodes by symbol and generating missing declaration/dependency nodes. Solid cyan
-lines identify recorded dependencies; dashed gray lines identify authored
-relationships. Without a catalog, authored Lean-to-Lean proof edges are not
-used as substitutes. The run's status, date and freshness stay visible. A
-neighborhood is bounded to 80 nodes and can be refocused on any selected
-declaration. Projects without an explanation can explore recorded declarations.
-Other projects remain usable through their manifest theorem names and source
-inventory, without inferring an explanation from Lean syntax.
-
-`h5i app check` records its build/gate stages and a catalog from Lean's
-elaborated environment: types, definition bodies, direct declaration dependencies
-and axioms. `h5i app mutate` records its requested mutants, edits, baseline and
-each execution stage. Records are local, under each project's
-`.h5i/app/runs/<id>/run.json`; concurrent runs have separate IDs. The console
-reads the newest 20 records. Existing terminal output is not imported.
-
-Changes compares a working tree with a selected Git revision and scans up to
-120 first-parent commits. Source changes are deliberately conservative,
-file-level warnings, with 50-line excerpts around the first difference. Shared
-authored dependencies propagate to guarantees. Historical explanations supply
-stable identities when present; otherwise the current source map is used.
-Missing/ambiguous anchors and mismatched authored source digests are reported.
-Declaration comparison additionally needs a passing record on the clean
-baseline commit and a passing record matching the current repository inputs.
-It compares printed types/definitions and propagates recorded dependencies; it
-does not prove logical strengthening, weakening, or equivalence.
-
-Input freshness covers repository Rust, Lean, TOML, lockfiles, JSON and Lean
-toolchain files, excluding build output, the authored UI description and web
-assets. This is conservative and does not certify external path packages,
-mutable installed tools, or deployed conditions. A matching check record says
-that the recorded Lean build/gate passed, not that Rust extraction was freshly
-checked. Logs retain their final 16 KiB. A force-killed process may leave a
-running record; the UI labels it running/unfinished instead of asserting that
-the process is live. No recorded proof-stage failure is automatically assigned
-to a named theorem.
-
-The authored format and workflow are documented in
-[`app-console.md`](../app/app-console.md). Arbitrary Mermaid rendering, automatic
-symbol-rename matching, historical rebuilds and deployment attestation are not
-part of this implementation.
+Not implemented: Mermaid rendering, automatic matching of renamed symbols,
+historical rebuilds, deployment attestation.

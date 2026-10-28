@@ -155,7 +155,7 @@ pub fn authz_theorems(p: &Project) -> Result<Vec<String>> {
 /// `[authz] storage` names the app's own A4 theorem: it must be a theorem of
 /// the kernel's namespace (not a library fact or a type), and its statement
 /// is printed, since `check` cannot tell what it says. Reviewing that
-/// statement is on the app (docs/app/AUTHZ.md, "What stays trusted").
+/// statement is on the app (docs/design/design-app-authz.md, "What stays trusted").
 fn storage_problems(p: &Project, decls: &[h5i_app_report::Declaration], out: &Out) -> Result<Vec<String>> {
     let Some(name) = &p.manifest.authz.storage else { return Ok(Vec::new()) };
     if p.manifest.authz.guarded.is_empty() {

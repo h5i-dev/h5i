@@ -41,7 +41,7 @@ and stopping the browser, not arbitrary agent termination or policy editing.
 Slide 7 shows an October 21, 2026 snapshot: 2.1k+ release downloads and
 790+ GitHub stars. These are conservative interest signals, not
 customer numbers. The dashboard uses a static DOM/CSS snapshot of the real `h5i ui`, captured
-from a local demonstration session. It is not a screenshot or a UI mockup. Product boundaries follow `docs/app/TRUST.md` and
+from a local demonstration session. It is not a screenshot or a UI mockup. Product boundaries follow `docs/design/design-app-trust.md` and
 the box policy guide. Design partners and paid pilots are future steps.
 
 For an investor-specific version, add founder credentials, the funding ask

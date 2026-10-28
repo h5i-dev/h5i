@@ -8,7 +8,7 @@ proofs, GPU adapters, CLI, and testing tools are welcome.
 Check the [roadmap](docs/ROADMAP.md) before proposing a new feature. The root
 Cargo workspace contains the CLI and libraries in `crates/`; application
 examples live in the separate `examples/app` workspace. See the
-[framework guide](crates/h5i-app/README.md), [GPU guide](docs/app/GPU.md), and
+[framework guide](crates/h5i-app/README.md), [GPU guide](docs/design/design-app-executors.md), and
 [manual](docs/MANUAL.md) for details.
 
 ## Build and test
@@ -36,7 +36,7 @@ say so in the pull request.
 
 - Keep the Rust implementation, Lean proofs, tests, and docs in sync when an
   application guarantee changes. State clearly which properties are proved,
-  tested, or assumed; use [the trust model](docs/app/TRUST.md) as the reference.
+  tested, or assumed; use [the trust model](docs/design/design-app-trust.md) as the reference.
 - Keep GPU execution optional. Compare its results with the CPU path and keep
   application state changes on the established kernel path.
 - For security-sensitive code, follow [SECURITY.md](SECURITY.md). Refuse

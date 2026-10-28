@@ -12,4 +12,4 @@ example from the examples/app workspace. It installs its own schema. The
 `ram` integration test additionally checks accepted writes, refusals,
 idempotent replay and cancellation, using `H5I_APP_TEST_DATABASE_URL`.
 
-Recorded results and trust obligations: [MEMORY.md](../../../../../docs/app/MEMORY.md).
+Recorded results and trust obligations: [MEMORY.md](../../../../../docs/design/design-app-executors.md).

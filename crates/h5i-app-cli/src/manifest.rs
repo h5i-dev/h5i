@@ -23,7 +23,7 @@ pub struct Manifest {
     pub proofs: Proofs,
     #[serde(default)]
     pub check: Check,
-    /// Framework-proven authorization (`docs/design/design-authz.md`).
+    /// Framework-proven authorization (`docs/design/design-app-authz.md`).
     #[serde(default)]
     pub authz: Authz,
     #[serde(default)]

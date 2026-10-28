@@ -303,7 +303,7 @@ fn actor_paths(p: &Project) -> (Vec<String>, Vec<String>) {
             format!(
                 "{}: `{n}` outside tests: with `[authz]`, handlers act only through `H5iApp` with the request's \
                  `Actor`, since the policy is judged for whatever principal the engine is given and `snapshot` \
-                 skips the guard (docs/app/AUTHZ.md, \"Who this is for\")",
+                 skips the guard (docs/design/design-app-authz.md, \"Who this is for\")",
                 at(&f, l)
             )
         })

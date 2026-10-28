@@ -13,7 +13,7 @@ cargo test --release --manifest-path examples/app/discount-gpu/Cargo.toml -p dis
 cargo run --release --manifest-path examples/app/discount-gpu/Cargo.toml -p discount-gpu-example
 ```
 
-With the pinned Rust-CUDA environment from `docs/app/GPU.md` installed:
+With the pinned Rust-CUDA environment from `docs/design/design-app-executors.md` installed:
 
 ```sh
 bash examples/app/discount-gpu/build-device.sh

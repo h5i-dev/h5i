@@ -27,7 +27,7 @@
         "name": "h5i"
       },
       "datePublished": "2026-10-21",
-      "dateModified": "2026-10-21",
+      "dateModified": "2026-10-28",
       "image": "https://h5i.dev/_static/social-card.png",
       "inLanguage": "en",
       "isPartOf": {
@@ -106,7 +106,7 @@ Command::Get =&gt; Ok((
   unfold transition
   cases c &lt;;&gt; step* &lt;;&gt; (try split) &lt;;&gt; simp_all</code></pre>
 <p>The quantified command matters: this is a claim over all successful kernel commands under the model, not a handful of sample requests. It still says nothing by itself about whether an HTTP route supplied the right principal, whether a separate read route skipped the kernel, or whether a GPU executes equivalent code.</p>
-<p>Kernel proofs describe a proposed write. Storage proofs address the modeled effect of applying and compiling writes. For tenant isolation, both are needed: a kernel unable to name another tenant would not excuse an SQL statement that omitted its tenant scope. The <a href="https://github.com/h5i-dev/h5i/blob/main/docs/app/TRUST.md">trust model</a names the proven components and the assumptions between them.</p>
+<p>Kernel proofs describe a proposed write. Storage proofs address the modeled effect of applying and compiling writes. For tenant isolation, both are needed: a kernel unable to name another tenant would not excuse an SQL statement that omitted its tenant scope. The <a href="https://github.com/h5i-dev/h5i/blob/main/docs/design/design-app-trust.md">trust model</a names the proven components and the assumptions between them.</p>
 <h2 id="running-app">Returning to the running web app</h2>
 <p>The server connects that decision path to Axum. In the calculator example, the application engine is passed to <code>H5iApp</code>, and the resulting router is merged with the ordinary health route:</p>
 <pre><code class="language-rust">let app = H5iApp::new(engine, auth);

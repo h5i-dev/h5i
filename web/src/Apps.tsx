@@ -970,7 +970,7 @@ export function MapPrompt({ project }: { project: string }) {
         conditions. Try this prompt in your coding agent:
       </p>
       <pre className="app-code">{`Create h5i-app.ui.json next to the manifest for ${project}.
-Use docs/app/app-console.md and examples/app/booking/h5i-app.ui.json as references.
+Use docs/design/design-app-console.md and examples/app/booking/h5i-app.ui.json as references.
 Read the Rust and Lean code. Explain the user-visible guarantees, their assumptions
 and exclusions, and connect them to the implemented specifications, theorems and
 Rust code. A proof edge means "from depends on to"; put out-of-scope behavior
