@@ -236,15 +236,16 @@ pub fn run(cmd: AppCommands, cx: &Context) -> Result<()> {
             Ok(())
         }),
         AppCommands::Check { targets: t, fetch } => each(&t, |p| {
-            check::check(p, refetch(p, &fetch)?, &out)?;
+            check::check(p, refetch(p, &fetch)?, false, &out)?;
             eprintln!("{}: proofs ok", p.display());
             Ok(())
         }),
         AppCommands::Prove { targets: t, fetch } => each(&t, |p| {
-            if p.manifest.extract.is_some() {
+            let extracted = p.manifest.extract.is_some();
+            if extracted {
                 extract::extract(p, &out)?;
             }
-            check::check(p, refetch(p, &fetch)?, &out)?;
+            check::check(p, refetch(p, &fetch)?, extracted, &out)?;
             eprintln!("{}: proofs ok", p.display());
             Ok(())
         }),

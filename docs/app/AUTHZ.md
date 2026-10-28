@@ -161,10 +161,13 @@ Two things are checked, not trusted:
   `check` read Cargo's resolution (`cargo metadata`) and fail unless every
   `h5i_app_*` dependency of the project's crates is the package of that name
   (no `package =` rename) and comes from the one place `h5i-app-core` comes
-  from (no `[patch]` or path to a look-alike). Otherwise a stand-in
-  `h5i_app_core` could supply an `Authz<T>` that skips the guard, with the
-  Rust and the extracted Lean unchanged. A fork of the whole framework is out
-  of scope, like a modified compiler.
+  from (no `[patch]` or path to a look-alike), and that no crate binds a
+  framework name to another crate with `extern crate <other> as h5i_app_core;`
+  (or `self as …`), which Cargo's resolution does not show; that part reads
+  the source, so an `extern crate` only a macro or `include!` produces is not
+  seen. Otherwise a stand-in `h5i_app_core` could supply an `Authz<T>` that
+  skips the guard, with the Rust and the extracted Lean unchanged. A fork of
+  the whole framework is out of scope, like a modified compiler.
 
 The store form needs `writes` and a snapshot in `schema!`; without them it
 does not compile, since its `schema_store` and `schema_load` would otherwise
@@ -249,8 +252,13 @@ does: `Pg.Valid ts`, `Pg.klOf ts = kl` and `ts.length = n` for the server's
 `h5i_app_pgsql::valid`) and by the generated `schema_is_valid` test, not
 proven (TRUST.md, "Schema description").
 
-`h5i app check` builds the `Authz` module itself, so it never gates a stale
-`.olean`, and gates `g.authorized`, `g.kernel_apply_eq`, `g.read_only_sound`
+`h5i app check` first re-extracts the kernel and fails unless
+`proofs/generated/` is exactly what it extracts to (`extract --check`;
+`prove`, which has just extracted, skips this). The gate checks theorem names
+and axioms, not statements, so without this a hand-edited `Authz.lean`
+(`theorem ….authorized : True`), `AuthzSpecs.lean` or extracted kernel would
+pass. An `[authz]` check therefore needs Charon and Aeneas. It then builds the
+`Authz` module itself, so it never gates a stale `.olean`, and gates `g.authorized`, `g.kernel_apply_eq`, `g.read_only_sound`
 (`App` declares the view's read-only commands) and the storage theorems (or
 `[authz] storage`). `Authz`, `AuthzSpecs` and `Schema` must be in some
 `lean_lib`'s roots: otherwise lake has no `Authz` target and `check` fails

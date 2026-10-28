@@ -515,6 +515,17 @@ mod tests {
         std::fs::write(kernel.join("Cargo.toml"), swapped).unwrap();
         let bad = crate::deps::framework_problems(&p).unwrap();
         assert!(bad.iter().any(|b| b.contains("h5i-app-sql") && b.contains("comes from")), "{bad:?}");
+        // `extern crate` binds a framework name to another crate, the kernel
+        // itself included, with Cargo's resolution unchanged.
+        std::fs::write(kernel.join("Cargo.toml"), kernel_manifest("")).unwrap();
+        for code in ["extern crate fake as h5i_app_core;\n", "mod m { extern crate self as h5i_app_std; }\n"] {
+            std::fs::write(kernel.join("src/lib.rs"), code).unwrap();
+            let bad = crate::deps::framework_problems(&p).unwrap();
+            assert!(bad.len() == 1 && bad[0].contains("extern crate"), "{code}: {bad:?}");
+        }
+        std::fs::write(kernel.join("src/lib.rs"), "extern crate h5i_app_core;\nextern crate h5i_app_std as std_lib;\n").unwrap();
+        assert_eq!(crate::deps::framework_problems(&p).unwrap(), Vec::<String>::new());
+        std::fs::write(kernel.join("src/lib.rs"), "").unwrap();
         // The theorems' subject is fixed.
         std::fs::write(d.path().join("h5i-app.toml"), "[extract]\ncrate = \"kernel\"\n[authz]\nguarded = [\"reviewed_transition\"]\n").unwrap();
         assert!(Project::load(&d.path().join("h5i-app.toml")).is_err());

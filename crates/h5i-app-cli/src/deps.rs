@@ -11,6 +11,12 @@
 //! all of them must come from the one place `h5i-app-core` comes from (the
 //! same checkout, registry or git source). A fork of the whole framework is
 //! out of scope, like a modified compiler.
+//!
+//! The one way source puts another crate behind a framework name is
+//! `extern crate <other> as h5i_app_core;` (or `self as …`): at a crate root
+//! it binds `::h5i_app_core` for the whole crate, macro expansions included,
+//! while `cargo metadata` still lists the real package. That is read from the
+//! source, so what only a macro or `include!` produces is not seen.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -82,7 +88,31 @@ pub fn framework_problems(p: &Project) -> Result<Vec<String>> {
             }
         }
     }
+    bad.extend(extern_aliases(p, &krate));
     bad.sort();
     bad.dedup();
     Ok(bad)
+}
+
+/// `extern crate <other> as h5i_app_*;` anywhere in the project's crates or
+/// the kernel's.
+fn extern_aliases(p: &Project, krate: &Path) -> Vec<String> {
+    let mut s = crate::rust::Sources::under(&p.root);
+    if !krate.canonicalize().is_ok_and(|k| k.starts_with(p.root.canonicalize().unwrap_or(p.root.clone()))) {
+        let k = crate::rust::Sources::of_crate(krate);
+        s.files.extend(k.files);
+        s.errors.extend(k.errors);
+    }
+    // A file that does not parse could hold one.
+    let mut bad = s.errors.clone();
+    for (file, line, name, alias) in s.extern_crates() {
+        if alias.starts_with("h5i_app_") && name != alias {
+            bad.push(format!(
+                "{}:{line}: `extern crate {name} as {alias}` puts `{name}` behind the framework's name `::{alias}`: \
+                 with `[authz]` the framework's names must be the framework's packages",
+                file.strip_prefix(&p.root).unwrap_or(&file).display()
+            ));
+        }
+    }
+    bad
 }

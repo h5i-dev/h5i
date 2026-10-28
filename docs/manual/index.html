@@ -1572,7 +1572,9 @@ h5i app mutate --auto --list   # mutants generated from the kernel's syntax
 </code></pre></div>
 <p>For CI, <code>h5i app extract --check</code> changes nothing and fails if
 <code>proofs/generated/</code> is not what the kernel extracts to, and <code>--all</code> runs a verb
-on every project under a directory.</p>
+on every project under a directory. For an <code>[authz]</code> project, <code>check</code> runs
+that comparison itself (so it needs Charon and Aeneas), since its generated
+theorems are only about the kernel when the generated Lean is fresh.</p>
 <p><code>check</code> (and <code>prove</code>) fail on <code>sorry</code> or <code>native_decide</code> in hand-written Lean,
 on any <code>axiom</code> declaration, and on any theorem of a hand-written module that
 depends on an axiom other than <code>propext</code>, <code>Classical.choice</code> and <code>Quot.sound</code>.</p>

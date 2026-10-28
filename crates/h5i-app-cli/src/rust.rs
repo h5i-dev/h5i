@@ -331,6 +331,21 @@ impl Sources {
         out
     }
 
+    /// Every `extern crate <name> as <alias>;`, as `(file, line, name,
+    /// alias)`; the alias is the name when there is none.
+    pub fn extern_crates(&self) -> Vec<(PathBuf, usize, String, String)> {
+        let mut out = Vec::new();
+        for (file, _, items) in &self.files {
+            for i in items {
+                let syn::Item::ExternCrate(e) = i else { continue };
+                let name = e.ident.to_string();
+                let alias = e.rename.as_ref().map(|(_, a)| a.to_string()).unwrap_or_else(|| name.clone());
+                out.push((file.clone(), e.extern_token.span.start().line, name, alias));
+            }
+        }
+        out
+    }
+
     /// Item-position invocations of the macro at exactly `path`
     /// (`h5i_app_std::authz_kernel!`, with or without a leading `::`), so a
     /// local macro of the same name does not count.

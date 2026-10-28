@@ -15,10 +15,12 @@ use crate::util::{self, Out};
 pub const STANDARD_AXIOMS: [&str; 3] = ["propext", "Classical.choice", "Quot.sound"];
 
 /// `refetch` discards the Lake packages and fetches them again
-/// ([`crate::packages`]).
-pub fn check(p: &Project, refetch: bool, out: &Out) -> Result<()> {
+/// ([`crate::packages`]). `extracted`: `proofs/generated/` was just written
+/// by `extract` (as `prove` does), so an `[authz]` project need not
+/// re-extract it to know it is fresh.
+pub fn check(p: &Project, refetch: bool, extracted: bool, out: &Out) -> Result<()> {
     let mut record = crate::report::start(p, "check", p.manifest.check.targets.clone())?;
-    let result = check_recorded(p, refetch, out, &mut record);
+    let result = check_recorded(p, refetch, extracted, out, &mut record);
     if let Err(e) = &result {
         record.run.error = Some(format!("{e:#}"));
     }
@@ -29,6 +31,7 @@ pub fn check(p: &Project, refetch: bool, out: &Out) -> Result<()> {
 fn check_recorded(
     p: &Project,
     refetch: bool,
+    extracted: bool,
     out: &Out,
     record: &mut h5i_app_report::Recorder,
 ) -> Result<()> {
@@ -43,6 +46,19 @@ fn check_recorded(
     theorems.extend(authz.iter().cloned());
     record.run.required_theorems = theorems.clone();
     record.save()?;
+    // `[authz]`: the gated theorems are only about the kernel if
+    // `proofs/generated/` is what it extracts to. The gate checks names and
+    // axioms, not statements, so a hand-edited `Authz.lean` (`theorem
+    // ….authorized : True`), `AuthzSpecs.lean` or extracted kernel would
+    // otherwise pass. Re-extract and compare, as `extract --check` does.
+    if !authz.is_empty() && !extracted {
+        crate::report::step(record, "extraction_fresh", out, |log| {
+            crate::extract::check_fresh(p, log).context(
+                "with `[authz]`, `check` re-extracts the kernel (Charon and Aeneas, see `h5i app doctor`) \
+                 to confirm proofs/generated/ is what it extracts to; `h5i app prove` extracts and checks",
+            )
+        })?;
+    }
     // Held through the build, so another `h5i app` cannot discard the
     // packages under it.
     let _packages = crate::report::step(record, "packages", out, |log| {
