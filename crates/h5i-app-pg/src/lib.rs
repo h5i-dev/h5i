@@ -344,8 +344,12 @@ pub struct Engine<K: Kernel, S: Store<K>> {
 
 /// `url` with the app's tables in PostgreSQL schema `schema`, so apps sharing a
 /// database share no tables. Pass the same schema in `lockdown`'s admin URL.
+/// The name must be lowercase: `search_path` folds an unquoted name to
+/// lowercase, while `install_schema` creates the schema as written.
 pub fn with_schema(url: &str, schema: &str) -> Result<String, DbError> {
-    roles::ident(schema)?;
+    if schema.is_empty() || !schema.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_') {
+        return Err(DbError::Decode(format!("schema name {schema:?} must be [a-z0-9_]+")));
+    }
     let sep = if url.contains('?') { '&' } else { '?' };
     Ok(format!("{url}{sep}options=-c%20search_path%3D{schema}"))
 }
@@ -767,5 +771,34 @@ mod lock_tests {
         // Two servers must agree on a key, so it may not depend on the process.
         assert_eq!(Lock::key("article", b"hello"), 0xe58c_2868_5d42_b9e9);
         assert_ne!(Lock::key("article", b"x"), Lock::key("articlex", b""));
+    }
+}
+
+#[cfg(test)]
+mod schema_tests {
+    use super::*;
+
+    #[test]
+    fn with_schema_sets_the_search_path() {
+        let url = "postgres://u@localhost/db";
+        assert_eq!(with_schema(url, "board").unwrap(), "postgres://u@localhost/db?options=-c%20search_path%3Dboard");
+        assert_eq!(with_schema("postgres://localhost/db?sslmode=disable", "app_2").unwrap(),
+                   "postgres://localhost/db?sslmode=disable&options=-c%20search_path%3Dapp_2");
+    }
+
+    #[test]
+    fn with_schema_refuses_names_postgres_would_fold() {
+        // `search_path=Board` names schema `board`, but `install_schema` would
+        // create `"Board"` and then fail with "no schema has been selected".
+        for bad in ["Board", "APP", "myApp"] {
+            assert!(with_schema("postgres://localhost/db", bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn with_schema_refuses_other_names() {
+        for bad in ["a b", "a;b", "a-b", ""] {
+            assert!(with_schema("postgres://localhost/db", bad).is_err(), "{bad:?}");
+        }
     }
 }
