@@ -111,7 +111,7 @@
       <p class="crumbs"><a href="/">h5i</a><i>/</i><a href="/guides/">docs</a><i>/</i><span>manual</span></p>
       <p class="post-eyebrow">CLI reference</p>
       <h1>h5i Manual</h1>
-      <p class="manual-meta"><span>Updated <time datetime="2026-10-21">2026-10-21</time></span><i>|</i><span>55 min read</span><i>|</i><span class="ok">21 chapters</span></p>
+      <p class="manual-meta"><span>Updated <time datetime="2026-10-28">2026-10-28</time></span><i>|</i><span>56 min read</span><i>|</i><span class="ok">21 chapters</span></p>
       <details class="manual-mobile-toc"><summary>Chapters</summary>
 <div class="mn-group"><p class="mn-head">Start here</p>
 <a href="#what-h5i-is"><span class="mn-n">01</span><span>What h5i is</span></a>
@@ -1394,8 +1394,9 @@ that choice in the policy digest. Both are driven by agent-browser.</p>
 <p>Chromium runs with an isolated profile and the box's policy. Its requests are
 seen at the box's boundary and by h5i's mediator on the agent-browser socket,
 not by a session's capture proxy: inspect the box-level network evidence. An
-older profile that pins <code>--engine h5i</code> is refused with that name, because h5i's
-own engine has been removed.</p>
+older profile that pins <code>--engine h5i</code> is refused with that name: h5i's own
+engine is no longer part of h5i and now lives in
+<a href="https://github.com/h5i-dev/h5i-browser">h5i-browser</a>.</p>
 <h3 id="inspecting-what-happened">Inspecting what happened</h3>
 <div class="codeblock"><div class="codeblock-head"><span>terminal</span><button class="copy-btn" type="button">Copy</button></div><pre><code class="language-bash">h5i box probe                       # what this host can enforce at all
 h5i box capabilities &lt;name&gt; --json  # what this box actually got
@@ -1572,7 +1573,9 @@ h5i app mutate --auto --list   # mutants generated from the kernel's syntax
 </code></pre></div>
 <p>For CI, <code>h5i app extract --check</code> changes nothing and fails if
 <code>proofs/generated/</code> is not what the kernel extracts to, and <code>--all</code> runs a verb
-on every project under a directory.</p>
+on every project under a directory. For an <code>[authz]</code> project, <code>check</code> runs
+that comparison itself (so it needs Charon and Aeneas), since its generated
+theorems are only about the kernel when the generated Lean is fresh.</p>
 <p><code>check</code> (and <code>prove</code>) fail on <code>sorry</code> or <code>native_decide</code> in hand-written Lean,
 on any <code>axiom</code> declaration, and on any theorem of a hand-written module that
 depends on an axiom other than <code>propext</code>, <code>Classical.choice</code> and <code>Quot.sound</code>.</p>
@@ -1583,6 +1586,27 @@ a theorem that holds because the kernel refuses everything. <code>--auto</code> 
 mutants generated from the kernel's syntax: comparison boundaries, <code>==</code> and
 <code>!=</code>, <code>&amp;&amp;</code> and <code>||</code>, dropped <code>!</code>, and <code>if</code> conditions forced to <code>true</code> or
 <code>false</code>.</p>
+<p><code>[authz] guarded</code> opts a kernel into framework-proven authorization
+(<a href="https://github.com/h5i-dev/h5i/blob/main/docs/design/design-app-authz.md"><code>docs/design/design-app-authz.md</code></a>). The kernel invokes
+<code>h5i_app_std::authz_kernel!</code>, which writes <code>guarded_transition</code> (the only
+value <code>guarded</code> accepts) and <code>App</code>
+(<code>h5i_app_core::Authz&lt;_&gt;</code>, whose <code>Kernel::transition</code> is the guard), and the
+server runs <code>App</code> on the store its mapping macro generates
+(<code>&lt;mapping&gt;!(App, store Name)</code>), writing no <code>Kernel</code> or <code>Store</code> itself. <code>extract</code> then writes
+<code>proofs/generated/Authz.lean</code>, which proves <code>&lt;kernel&gt;.&lt;fn&gt;.authorized</code> by
+instantiating the framework's theorem, with no hand-written Lean,
+<code>&lt;fn&gt;.kernel_apply_eq</code> (the policy is checked against the kernel's own
+<code>apply</code>) and <code>Committed.pg_stored</code> (the kernel's <code>sql_writes</code> and <code>decode</code>
+store and load what that <code>apply</code> computes). If <code>sql_write</code> is not a plain
+list of <code>schema!</code> table writes, <code>extract</code> fails unless
+<code>[authz] storage = "&lt;theorem&gt;"</code> names a hand-written storage proof. <code>check</code>
+builds <code>Authz</code> itself and gates these and <code>&lt;fn&gt;.read_only_sound</code>. <code>lint</code>
+flags a hand-written <code>impl Kernel</code>, <code>impl Store</code> or <code>impl AuthzKernel</code> and a
+kernel without exactly one <code>h5i_app_std::authz_kernel!</code> (hygiene: those two
+pieces of wiring are what stays outside the proofs), and <code>lint</code> and <code>check</code>
+both fail unless every <code>h5i_app_*</code> dependency is the framework's own package
+(<code>cargo metadata</code>: no <code>package =</code> renames, no copy from elsewhere). An app without <code>[authz]</code> is
+unaffected.</p>
 <p><code>h5i app new</code> requires the h5i-app Lean library from git at this binary's
 release tag; <code>--h5i-path &lt;checkout&gt;</code> uses a local h5i checkout instead.</p>
 <div class="codeblock"><div class="codeblock-head"><span>toml</span><button class="copy-btn" type="button">Copy</button></div><pre><code class="language-toml"># h5i-app.toml
@@ -1592,6 +1616,10 @@ start-from = [&quot;transition&quot;]   # Charon start points, inside the crate
 include = [&quot;h5i_app_sql&quot;]     # crates extracted with the kernel
 schema = true                 # also start from what schema! generates, and write its lean &quot;...&quot; file
 std-specs = true              # copy h5i-app-std's specs next to the extraction
+
+[authz]
+guarded = [&quot;guarded_transition&quot;]   # written by h5i_app_std::authz_kernel! (guard_viewed)
+# storage = &quot;my_kernel.Storage.db_inv&quot;   # only if the storage proof cannot be generated
 
 [check]
 theorems = [&quot;my_kernel.inv_preserved&quot;]   # must exist and pass the gate
@@ -2270,9 +2298,9 @@ once that session has ended, so group by <code>project</code> or <code>id</code>
     </nav>
     <p class="ma-head">Metadata</p>
     <dl class="ma-meta">
-      <div><dt>Updated</dt><dd>2026-10-21</dd></div>
+      <div><dt>Updated</dt><dd>2026-10-28</dd></div>
       <div><dt>Chapters</dt><dd>21</dd></div>
-      <div><dt>Reading</dt><dd>55 min</dd></div>
+      <div><dt>Reading</dt><dd>56 min</dd></div>
       <div><dt>Flags</dt><dd><code>--help</code></dd></div>
       <div><dt>Source</dt><dd><a href="https://github.com/h5i-dev/h5i/blob/main/docs/MANUAL.md">MANUAL.md &#8599;</a></dd></div>
     </dl>

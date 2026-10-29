@@ -23,6 +23,9 @@ pub struct Manifest {
     pub proofs: Proofs,
     #[serde(default)]
     pub check: Check,
+    /// Framework-proven authorization (`docs/design/design-app-authz.md`).
+    #[serde(default)]
+    pub authz: Authz,
     #[serde(default)]
     pub mutate: Mutate,
     /// Bugs the proofs must reject: `[[mutant]]`.
@@ -49,7 +52,8 @@ pub struct Extract {
     #[serde(default)]
     pub include: Vec<String>,
     /// Copy h5i-app-std's specs next to the extraction as `StdSpecs.lean`,
-    /// importing it. For kernels that include `h5i_app_std`.
+    /// importing it, and `AuthzSpecs.lean` when the kernel calls the
+    /// authorization guard. For kernels that include `h5i_app_std`.
     #[serde(default)]
     pub std_specs: bool,
     /// Further arguments for `charon cargo`, before `--dest-file`.
@@ -94,6 +98,23 @@ pub struct Check {
     /// theorems that live in a library.
     #[serde(default)]
     pub theorems: Vec<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Authz {
+    /// The kernel's guarded function: `guarded_transition`, which
+    /// `h5i_app_std::authz_kernel!` defines as `guard_viewed` of the app's
+    /// instances. `h5i app extract` writes `generated/Authz.lean`, which proves
+    /// `<kernel>.<fn>.authorized`, `.kernel_apply_eq` and `.read_only_sound`
+    /// by instantiating the framework's theorem; `h5i app check` gates them.
+    #[serde(default)]
+    pub guarded: Vec<String>,
+    /// The app's own storage theorem (A4: the store commits what `apply`
+    /// computes), when `extract` cannot generate one. Absent, the generated
+    /// `Committed.*` theorems are required, and `extract` fails if it cannot
+    /// write them.
+    pub storage: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -170,6 +191,16 @@ impl Project {
         let root = root
             .canonicalize()
             .with_context(|| format!("resolving {}", root.display()))?;
+        // The theorems must be about the function `authz_kernel!` writes,
+        // the instantiation `h5i_app_core::Authz<T>` runs, not another one.
+        let g = &manifest.authz.guarded;
+        if !g.is_empty() && g.as_slice() != ["guarded_transition"] {
+            bail!(
+                "{}: `[authz] guarded` must be [\"guarded_transition\"], the function `h5i_app_std::authz_kernel!` \
+                 writes: the theorems are about it because `App` runs the same guard instantiation",
+                file.display()
+            );
+        }
         let mut names = std::collections::HashSet::new();
         for m in &manifest.mutants {
             m.edits()?;

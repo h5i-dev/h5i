@@ -1,0 +1,20 @@
+# Read by `h5i app` (extract, check, prove, mutate, doctor).
+
+[extract]
+start-from = ["guarded_transition", "read_only"]
+schema = true
+include = ["h5i_app_sql", "h5i_app_std"]
+std-specs = true
+
+[authz]
+# `guarded_transition`, written by `h5i_app_std::authz_kernel!` in the kernel
+# (`guard_viewed` of its instances). `h5i app extract` writes
+# `proofs/generated/Authz.lean`, which proves it `AuthorizedViewed`,
+# `ViewNoninterference` and `ReadOnly.Sound`, and the storage theorems, by
+# instantiating the framework's theorems.
+guarded = ["guarded_transition"]
+
+[check]
+# Must exist and use only the standard axioms. The `[authz]` theorems are
+# checked as well, without being listed here.
+theorems = []

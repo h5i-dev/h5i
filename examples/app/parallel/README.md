@@ -2,7 +2,7 @@
 
 Small ASCII bookmark-search and push-rule models, designed to expose per-row
 compute independently of a real application's storage and API. The kernel is
-under 150 lines and allocates nothing during a decision. See [GPU experiment](../../../docs/app/GPU.md)
+under 150 lines and allocates nothing during a decision. See [GPU experiment](../../../docs/design/design-app-executors.md)
 for semantics, proofs, fixed-capacity layouts, CPU measurements and the device
 compiler failure. This is not a linkding or Matrix implementation.
 

@@ -201,7 +201,7 @@ pub fn detail(root: &Path, id: &str) -> Result<Detail, String> {
     let model = model(&root, &p).unwrap_or(None);
     let text = report::read_text(&p.join("h5i-app.toml")).map_err(|e| e.to_string())?;
     let manifest = text.parse::<toml::Value>().map_err(|e| e.to_string())?;
-    let required_theorems = manifest
+    let mut required_theorems: Vec<String> = manifest
         .get("check")
         .and_then(|v| v.get("theorems"))
         .and_then(|v| v.as_array())
@@ -240,6 +240,15 @@ pub fn detail(root: &Path, id: &str) -> Result<Detail, String> {
         }
     }
     let (runs, runs_total, run_issues) = read_runs(&root, &p);
+    // The latest check's own list: for `[authz]` it holds generated theorems
+    // the manifest does not name, and it is exactly what that check gated.
+    // The latest check records its list before it can fail; a run recorded
+    // before the field existed has none, and then the manifest's stands.
+    if let Some(recorded) = runs.iter().find(|v| v.run.kind == "check")
+        && !recorded.run.required_theorems.is_empty()
+    {
+        required_theorems = recorded.run.required_theorems.clone();
+    }
     issues.extend(run_issues);
     let head = git2::Repository::discover(&root).ok().and_then(|r| {
         r.head()
@@ -685,6 +694,8 @@ pub fn history(root: &Path, id: &str, baseline: &str) -> Result<History, String>
 
 #[cfg(test)]
 mod tests {
+
+
     use super::*;
     fn model_fixture() -> Model {
         serde_json::from_str(r#"{"version":1,"title":"Booking","description":"","author":"agent","nodes":[{"id":"g","kind":"guarantee","title":"No overlap","description":""},{"id":"t","kind":"theorem","title":"Invariant","description":""},{"id":"a","kind":"assumption","title":"Reachable","description":"","sources":[{"path":"Spec.lean"}]}],"edges":[{"from":"g","to":"t","kind":"proved by"},{"from":"t","to":"a","kind":"assumes"}]}"#).unwrap()
@@ -765,6 +776,17 @@ mod tests {
             assert_eq!(view.anchor_line, None);
             assert_eq!(view.anchor_found, anchor.is_empty());
         }
+    }
+
+    #[test]
+    fn required_theorems_come_from_the_latest_check() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("h5i-app.toml"), "[check]\ntheorems = [\"k.named\"]\n").unwrap();
+        assert_eq!(detail(d.path(), ".").unwrap().required_theorems, ["k.named"], "no run yet: the manifest's");
+        let mut r = report::Recorder::start(d.path(), d.path(), "check", vec![]).unwrap();
+        r.run.required_theorems = vec!["k.named".into(), "k.g.authorized".into()];
+        r.finish("passed").unwrap();
+        assert_eq!(detail(d.path(), ".").unwrap().required_theorems, ["k.named", "k.g.authorized"]);
     }
 
     #[test]

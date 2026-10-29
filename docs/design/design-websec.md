@@ -1,744 +1,400 @@
 # Design: the HTTP workbench, sections W1 to W23
 
-Status: proposed, 2026-09-02. This design turns h5i's HTTP records into an
-agent-callable workbench. Sections marked "built" describe later progress.
+`h5i websec` lets an agent read what a session sent, change part of a request,
+send it again, and compare the answers. h5i owns the deterministic half: exact
+capture, stable ids, cookie state, structured edits, resend, diff, timing,
+scope, rate and audit. The agent owns the judgement: which request matters,
+what to bend, what a difference means. Scanning, payload generation, wordlists
+and vulnerability verdicts stay with the agent.
 
-## In one screen
+The workbench is a plugin (`h5i plugin install websec`, W21). The engine it
+builds on is [`design-browser.md`](design-browser.md); discovery is
+[`design-recon.md`](design-recon.md); the roadmap is
+[`ROADMAP.md`](../ROADMAP.md).
 
-> Burp Suite is an HTTP workbench for humans. h5i is an HTTP workbench for
-> agents.
+## W1. The claim
 
-- The engine is the HTTP client, so it needs no MITM proxy, CA certificate,
-  proxy setting, or manual history-to-replay handoff.
-- h5i owns the deterministic half: exact capture,
-  stable ids, session and cookie state, structured edit, resend, structural
-  diff, timing, scope, rate limit, audit. The agent owns the judgement half:
-  which request matters, which parameter to bend, what a difference means, what
-  to try next.
-- Scanning, payload generation, wordlists, and vulnerability verdicts remain
-  the agent's responsibility.
-- The CLI is Bash-first and designed for a later thin Python wrapper (W10).
-- **Not in the default binary.** `h5i websec` arrives with
-  `h5i plugin install websec` and is a separate executable that holds no
-  privilege of its own. W21 is the packaging design.
-- The message store (W5) remains separate because receipts are export-safe but
-  workbench data may contain bodies and credentials.
+> Every HTTP message a session's capture proxy forwarded or the session sent
+> itself has a stable id, and `h5i websec replay <id>` re-sends that message,
+> with the edits named on the command line and nothing else changed, through
+> the same policy, cookie jar and receipts as the session.
 
-Part of the h5i design set. The roadmap, and what is next, is
-[`ROADMAP.md`](../ROADMAP.md); the engine it builds on is
-[`design-browser.md`](design-browser.md).
+h5i does not find vulnerabilities and does not promise TLS-level byte
+identity. Connection reuse, client header order and current cookies may differ,
+and replay reports what it changed so a caller can explain a divergent result.
 
----
+## W2. Where the messages come from
 
-## W1. What is being claimed
+A session is h5i's capture proxy (`h5i __capture-proxy`) plus a Chromium run
+by agent-browser and pointed at it. The proxy writes a per-session CA (`0600`)
+to decrypt HTTPS; agent-browser is launched with `--ignore-https-errors`. Every
+request is checked against policy and recorded before it is forwarded, and
+refused when the record cannot be written. Workbench sends (`resend`,
+`sequence`, `socket`, `grpc`) go through the same broker, so browser traffic
+and replays share one sequence and one timeline.
 
-> For a session run with capture on, every HTTP message the engine sent or
-> received has a stable id, and `h5i websec replay <id>` re-sends that exact
-> message, with the edits named on the command line and nothing else changed,
-> through the same policy, the same cookie jar and the same identity that
-> produced it.
+The receipt's `Initiator` separates the application from the tester:
+proxy-observed browser traffic is `subresource`, workbench sends are `replay`.
+The receipt lane is `proxy-observed`; agent-browser and Chromium are ordinary
+host processes. Use a box when the browser itself must be confined.
 
-h5i does not find vulnerabilities or promise TLS-level byte identity. Connection
-reuse, client header ordering, and current cookies may differ. It reports replay
-changes explicitly so callers can explain divergent results.
+## W3. Where the code lives
 
-## W2. Why this belongs in h5i and not in a proxy
+| piece | where |
+|---|---|
+| capture proxy | `src/cli/capture_proxy.rs` |
+| broker, policy, budget, jar, receipts, message store | `crates/h5i-browser/src/` (`broker.rs`, `net.rs`, `policy.rs`, `budget.rs`, `cookies.rs`, `receipt.rs`, `capture.rs`) |
+| edit language, multipart | `edits.rs`, `multipart.rs` |
+| raw sends, WebSocket | `rawsock.rs`, `wsclient.rs` |
+| receipt and message types, readers, triage | `crates/h5i-wire` |
+| session verbs that send | `src/cli/browser.rs` (`requests`, `resend`, `sequence`, `socket`, `grpc`, `rpc`) |
+| the plugin | `crates/h5i-websec` (`read.rs`, `view.rs`, `experiment.rs`, `matrix.rs`, `finding.rs`, `dom.rs`, `grpc.rs`, `nuclei.rs`) |
+| plugin install and dispatch | `src/cli/plugin.rs` |
 
-Because Burp does not own the browser, it requires interception, proxy setup,
-and often a CA certificate. It also cannot directly know why a request occurred.
+## W4. The send path
 
-h5i already funnels requests through one `Fetch` in
-`crates/h5i-browser/src/broker.rs`, while
-`crates/h5i-browser/src/receipt.rs` already records the decision before the wire
-and the outcome after it. Three things follow that a proxy cannot have:
+`Fetch` carries the caller's headers. The three framing headers
+(`Content-Length`, `Transfer-Encoding`, `Connection`) are recomputed, and an
+attempt to set them is refused and named in the receipt. Credentials stop at
+an origin boundary. Edits (`edits.rs`) are applied in the broker process, and
+`show` and `diff` read the store from disk on h5i's side rather than through a
+session verb, so no stored `Authorization` header is relayed through the page
+side.
 
-1. **Provenance.** The receipt carries an `Initiator` (`navigation`,
-   `subresource`, `frame`, `redirect`, `replay`), and the action log beside it
-   carries the verb the agent asked for. `replay` is the workbench's own: a
-   reviewer separating what the application did from what the tester did is
-   asking that field, and a resend recorded as a navigation said the browser
-   had gone somewhere it never went. A proxy sees a GET; h5i knows it was the third
-   redirect hop of a click on "Export".
-2. **No interception gap.** There is nothing to bypass. A request that is not in
-   the log did not happen, which is the guarantee the whole product already
-   leads with.
-3. **Existing state.** Replay reuses the session's jar, identity, policy, and
-   budget.
+## W5. The message store
 
-## W3. What already exists
+Receipts and the message store are separate artifacts.
 
-The workbench is mostly a matter of exposing machinery that is shipped.
+- Receipts are append-only JSONL with cookie counts, not values. They are safe
+  to paste, ship in exports, and are fail-closed: no writable log, no fetch.
+- The message store holds both directions of every message, headers and bodies,
+  in `<session>/messages/`, mode `0600`: one JSON file per phase per receipt
+  sequence number, bodies content-addressed under `bodies/<sha256>`. It is
+  never in an export, share or bug report unless named, and
+  `h5i browser close --capture-drop` deletes it.
 
-| piece | where | what it gives |
-|---|---|---|
-| named sessions, cookie jars, `--restore` | `src/cli/browser.rs` | multiple logged-in identities on one machine (feature 9) |
-| request log | `crates/h5i-browser/src/receipt.rs` | seq, time, method, url, initiator, allowed, status, decoded and wire bytes, duration, cookie counts (part of features 1, 2) |
-| action log and `h5i browser audit` | `receipt.rs`, `src/cli/browser.rs` | one ordered timeline of verbs and fetches, lane-labelled (feature 3) |
-| single fetch entry point | `broker.rs` | one place to add capture and one place to police a replay |
-| policy, budget, CORS, identity | `policy.rs`, `budget.rs`, `cors.rs`, `identity.rs` | scope and rate limiting already exist and already refuse (W16) |
-| `extract`, `snapshot`, `markdown`, `find` | `extract.rs`, `snapshot.rs`, `markdown.rs` | response reading primitives to reuse rather than reinvent (feature 14) |
-| `session script --save` and `browser replay` | `replay.rs` | the *page-level* replay layer, which W11 keeps distinct from the HTTP-level one |
+Limits: 8 MiB per body, 512 MiB per session counting header sidecars as well as
+bodies, and fonts, audio and video skipped. Truncated and skipped bodies carry
+an explicit state. A full store refuses the new body (`store-full`) rather
+than evicting old evidence. Writes are best-effort: a fetch is never refused
+because the store could not be written, since the receipt still records it, and
+failures are counted and reported.
 
-## W4. What is missing, precisely
-
-1. ~~**Bodies and headers are not stored.**~~ Built 2026-09-02; see W5. The
-   engine now records both directions of every hop when a session is opened
-   with `--capture`, including the hops a redirect chain passes through and the
-   header set as the client built it rather than as the caller asked for it.
-2. **No stable message id.** `seq` is per session and per process. Feature 2
-   needs an id that survives a session restart and names a request in a
-   filename, a diff and a finding.
-3. ~~**No way to send an arbitrary request.**~~ Built 2026-09-02. `Fetch`
-   carries the caller's headers (W16's rules enforced: the three framing
-   headers are refused and named in the receipt, credentials stop at an origin
-   boundary), `crates/h5i-browser/src/edits.rs` is the edit language, and the
-   `resend` session verb applies edits to a stored request and sends it through
-   the same broker, policy, budget and receipt path as everything else. The
-   edits are applied *in the broker process*, so the renderer never holds the
-   credential a stored request carries.
-4. **No timing detail, parallelism, site map, sequence engine, DOM taint or
-   OAST.** Features 11, 12, 15 to 20. Experiments and findings (21, 22) were
-   built 2026-09-10; see W22 and W23. Match and extract (feature 14) were built
-   2026-09-03: `h5i websec match` takes regex, substring, JSON path, header,
-   status and length conditions, ANDs them, hands back what each captured, and
-   keeps three answers apart in its exit code (matched, did not match, could not
-   look). Comparison (feature 13) and the raw and
-   typed views (feature 5) were built 2026-09-03 in `src/cli/websec.rs`, reached
-   by `h5i websec show` and `h5i websec diff`. Both read the store from
-   disk on h5i's side rather than through a session verb: a verb's reply travels
-   out through the renderer, and asking the untrusted parser to relay a stored
-   `Authorization` header would undo on request exactly what the broker split
-   is for.
-
-## W5. The message store, and the credential problem
-
-Receipts store cookie counts so they remain safe to share. A workbench needs
-exact bytes and headers, including credentials, so the artifacts stay separate.
-
-- **Receipts** stay exactly as they are. Append-only JSONL, safe to paste,
-  shipped in exports, fail-closed (no writable log, no fetch). Nothing in this
-  design adds a value to them.
-- **The message store** is new, opt-in, and separate. `h5i browser open
-  --capture` (off by default) writes each request and response into
-  `<session-dir>/messages/`, mode 0600, as a header sidecar plus a
-  content-addressed body blob so that fifty identical 2 MB responses cost one.
-  It is never included in an export, a share or a bug report unless the caller
-  names it, and `h5i browser close` can drop it with `--capture-drop`.
-
-The format enforces an 8 MiB per-message cap, a 512 MiB session cap, and a MIME
-skip list for fonts and media. Truncated or skipped bodies have explicit states.
-The session cap counts the header sidecars as well as the bodies: a message
-file is not small, since the raw sender accepts a response head as large as the
-whole response cap, and counting only bodies left the directory unbounded in
-the one case the cap exists for.
-
-Built, 2026-09-02: `crates/h5i-browser/src/capture.rs`, reached by
-`h5i browser open --capture`. Messages land in `<session>/messages/` as one JSON
-file per phase per receipt sequence number, with bodies content-addressed under
-`bodies/<sha256>` so a loop that gets the same answer a hundred times stores it
-once. Two deviations from the paragraph above, both deliberate. The store
-*refuses* rather than evicts when it fills, recording `store-full` against the
-body, because eviction wants the pin that `websec pin` has not built yet and
-dropping the oldest evidence silently is worse than refusing the newest loudly.
-And writing is best-effort where the receipt is fail-closed: a fetch is never
-refused because the store could not be written, since the receipt still records
-that the request happened. Failures are counted and reported.
-
-Benchmarking added a lossy preview beside non-UTF-8 bodies' authoritative length
-and digest, allowing `match` and `diff` to inspect mixed content. `h5i browser
-message --body-to PATH` writes the exact bytes.
-
-All store content is untrusted target input, like snapshots.
+Non-UTF-8 bodies keep their authoritative length and digest plus a lossy text
+preview, so `match` and `diff` can read mixed content. `show --body-to PATH`
+writes the exact bytes (`-` is stdout). All store content is untrusted target
+input.
 
 ## W6. Ids
 
-`req_<n>` and `res_<n>`, where `<n>` is the receipt `seq`, scoped to a session
-and stable for its life. Fully qualified as `<session>/req_42` when a command
-spans sessions, which cross-session replay and diff both do.
-
-The qualified form is written but not yet parsed: `websec show` and
-`websec show` takes a bare id plus `--session`, and recon's `merge` records
-cross-session evidence as `<session>/req_n` and says so. Accepting the
-qualified form wherever an id is taken is a small piece of work and is not
-done.
-
+`req_<n>` and `res_<n>`, where `<n>` is the receipt `seq`, scoped to a session.
 A request and its response share a number because they are two phases of one
-receipt row, which is already how `RequestRecord` models them. `res_42` is the
-response to `req_42` and no other numbering is introduced.
+receipt row. Verbs also accept a bare `42`.
+
+The cross-session form `<session>/req_42` is written (recon's `merge` records
+evidence that way) but not yet parsed by any verb; `show` takes a bare id plus
+`--session`.
 
 ## W7. The command surface
 
-One noun, `websec`, under the existing `h5i` binary, with the engine-side work
-reached over the control channel a resident session already listens on. Every
-verb takes `--session`, defaults to the default session, and takes `--json`.
+Every verb takes `--session` and `--json`. Sending verbs live in the default
+binary as `h5i browser`; reading and composing verbs live in the plugin.
 
 ```
-h5i websec requests   [--filter EXPR] [--since SEQ] [--limit N]
-h5i websec show       <req_42> [--raw | --json] [--part request|response|both]
-h5i websec replay     <req_42> [--set K=V]... [--edits-file PATH|-] [--as SESSION]
-h5i websec diff       <res_42> <res_43> [--body-mode auto|json|dom|text|none]
-h5i websec match      <res_43> [--regex RE] [--jsonpath P] [--css SEL] [--header H]
-h5i websec sitemap    [--origin ORIGIN]
-h5i websec sequence   run <file.json> [--var K=V]...
-h5i websec finding    create --from req_42,res_43 [--note TEXT]
-h5i websec rpc        --stdio
+h5i websec requests   [--method M] [--url-contains TEXT] [--status N] [--initiator K]
+                      [--denied-only] [--limit N]
+h5i websec show       <id> [--raw] [--body-to PATH|-]
+h5i websec replay     <id> [--set T=V]... [--set-file T=PATH] [--unset T] [--create]
+                           [--as SESSION [--keep-credentials]] [--repeat N [--race]]
+                           [--no-follow] [--reset-budget] [--set-each T=PATH]
+                           [--raw-target T | --raw-headers | --raw-request PATH|-] [--body | --raw]
+h5i websec diff       <id> <id>
+h5i websec match      <id>|--all [--regex RE] [--contains TEXT] [--json-path P[=V]]
+                           [--header H[=V]] [--status N] [--longer-than B] [--shorter-than B]
+h5i websec socket     <ws-url> [--send TEXT]... [--wait-ms MS]
+h5i websec sitemap
+h5i websec experiment <plan.json>
+h5i websec matrix     <id> --as a,b,c
+h5i websec sequence   <file.json> [--var K=V]... [--keep-going]
+h5i websec finding    create|list|show|update
+h5i websec grpc       describe|call
+h5i websec dom        scan|node
+h5i websec import-nuclei <template.yaml>
+h5i browser rpc --stdio
 ```
 
-`replay` always creates a new receipt and a new pair of ids, so a replay is
-itself replayable and a chain of five attempts is five rows in the audit
-timeline. There is no hidden buffer that the next command implicitly acts on:
-every verb names its inputs, because an agent's turns are not a session in the
-shell sense and "the last response" is exactly the state that breaks when two
-agents share a box.
+`replay` always creates a new receipt and new ids, so a replay is itself
+replayable. There is no implicit "last response"; every verb names its inputs.
+
+`import-nuclei` sends nothing; it prints an `h5i test` file whose verdict is
+data ([`design-flow-and-verdict.md`](design-flow-and-verdict.md)). `grpc`
+compiles descriptors in the plugin and sends through `h5i browser grpc`, so
+each call is policed, recorded and citable by id.
 
 ## W8. The edit language
 
-Structured edits, not string surgery, because the point of owning the client is
-that nobody has to hand-maintain `Content-Length`.
-
 ```
---set path=/api/v2/users/456
---set query.user_id=456
---set header.X-Forwarded-For=127.0.0.1
---set cookie.session=<value>
---set json.$.user.role=admin
---set form.username=admin
---set body.raw=@payload.bin
---set multipart.avatar.filename=../../etc/passwd
---set multipart.avatar.content_type=image/png
---unset header.Origin
+--set path=/api/v2/users/456        --set query.user_id=456
+--set header.X-Forwarded-For=1.2.3.4 --set cookie.session=<value>
+--set json.user.role=admin          --set form.username=admin
+--set body.raw=<bytes>              --set method=POST
+--set-file multipart.avatar=./a.jpg --unset header.Origin
 ```
 
-Rules that have to be settled once:
+Rules:
 
-- **Order is applied, then recomputed.** Edits apply in the order given, then
-  `Content-Length` and multipart boundaries are recomputed. `Host` follows the
-  URL unless explicitly set, because overriding it is a real test.
-- **Nothing is silently corrected.** A JSON edit against a body that is not JSON
-  is an error naming the actual content type, not a coerced string. An edit
-  whose path does not exist is an error unless `--set-create` is given, since a
-  typo that silently no-ops is a wrong answer that looks right.
-- **An edit changes what it names and nothing else.** A `query.`, `form.` or
-  `cookie.` edit rewrites one piece of the string it lives in and leaves the
-  other pieces byte for byte, rather than decoding the whole thing and encoding
-  it again: `?debug` is not `?debug=`, `x[]=1` is not `x%5B%5D=1`, and a `Cookie`
-  header carrying a bare token still carries it afterwards. A `json.` edit is
-  the one that cannot manage that, because a structured JSON edit reserialises
-  the document; field order survives (`serde_json` is built with
-  `preserve_order` for exactly this) but whitespace does not, so a body whose
-  exact bytes are signed wants `body.raw` rather than `json.`.
-- **Raw is available and honest.** `--edits-file` accepts a `raw` key holding a
-  whole request, in which case h5i sends the bytes given and reports which of
-  its own invariants it had to break to do so.
-- **Binary is a path or base64, never a shell argument.** Built 2026-09-03 as
-  a separate flag rather than an `@` prefix: `--set-file TARGET=PATH`. The
-  prefix form makes a value that *begins* with `@` ambiguous, and a payload
-  that begins with `@` is not unusual. The file's bytes go through unaltered —
-  a magic-number check wants a real `ff d8`, which is not text in any encoding
-  and so cannot survive argv or the JSON control message. `--set-file` edits
-  apply after every `--set`, in the order given.
-- **Multipart is parsed, edited and rebuilt, never patched as text.** Built
-  2026-09-03 (`crates/h5i-browser/src/multipart.rs`). `multipart.<field>`,
-  `.filename` and `.content_type` are three separate targets because a server
-  checks them separately: the filter reads the declared type and the store uses
-  the filename. With `--set-create` an upload is built from nothing, which is
-  the usual case rather than the exception, since this engine never posts a file
-  itself and so records no upload to start from. The boundary is always the
-  engine's own: re-using the incoming one lets a caller who puts that string in
-  a part's data split the message and send something other than what was asked
-  for.
-- **`--edits-file -` reads stdin.** This exists from day one, because shell
-  quoting is where a Bash-driven agent loop actually breaks:
+- Edits apply in order, then `Content-Length` and multipart boundaries are
+  recomputed. `Host` follows the URL unless set explicitly.
+- Nothing is silently corrected. A JSON edit against a non-JSON body is an
+  error naming the content type. An edit to an absent target is an error unless
+  `--create` is given or that one target is prefixed with `+`
+  (`--set +query.debug=1`); headers always upsert.
+- An edit changes what it names and nothing else. `query.`, `form.` and
+  `cookie.` edits rewrite one piece and leave the rest byte for byte (`?debug`
+  stays `?debug`, `x[]=1` stays unencoded). `json.` reserialises the document:
+  field order survives (`preserve_order`), whitespace does not, so a signed body
+  needs `body.raw`.
+- `json.` values are typed the way they read (`json.id=99` is a number); quote
+  to insist on a string. When the encoded value differs from the text, the reply
+  names it in `encoded`. An integer past `2^53` is refused, naming the quoted
+  form and `body.raw`.
+- Binary goes through `--set-file TARGET=PATH`, applied after every `--set`,
+  bytes unaltered. A separate flag rather than an `@` prefix, because payloads
+  often start with `@`.
+- Multipart is parsed, edited and rebuilt, never patched as text.
+  `multipart.<field>`, `.filename` and `.content_type` are separate targets.
+  With `--create` an upload is built from nothing. The boundary is always the
+  engine's own, so a part's data cannot split the message.
 
-```bash
-jq -n --arg p "$PAYLOAD" '{set: {"query.username": $p}}' |
-  h5i websec replay req_42 --edits-file - --json
-```
-
-The reply echoes the edits as applied, so the log of an exploit is the log of
-what was sent rather than of what was requested.
+The reply echoes the edits as applied, so the log of an exploit is what was
+sent rather than what was requested.
 
 ## W9. The JSON contract
 
-This section is what makes W10 cheap later, so it is a phase A requirement, not
-a polish item.
-
-- `--json` on every verb, including errors. An error is
-  `{"error": {"code": "...", "message": "...", "hint": "..."}}` on stdout with a
-  nonzero exit, never a bare string on stderr.
-- Exit codes are stable and few, and they follow what the tools around them
-  already use rather than a scheme invented here. `match` is a grep, so it uses
-  grep's: 0 matched, 1 did not match, 2 could not look (a pattern that does not
-  compile, a body that was never stored). A verb that cannot reach its session
-  exits 69, which is what `browser_session::EXIT_SESSION_GONE` has always been.
-  The rule that matters is that "no" and "could not ask" are never the same
-  code.
-- stdout carries machine-readable results only. Progress, timing chatter and
-  warnings go to stderr.
+- Text is the default output: the HTTP message under one line of ids, status,
+  size and time, body cut at 4 KiB, control characters made inert.
+  `--repeat`, `--race` and `--set-each` print one row per send. `--json` gives
+  the envelope on every verb; `--human` is accepted and does nothing.
+- An error under `--json` is `{"error": {"code", "message", "hint"}}` on stdout
+  with a nonzero exit.
+- Exit codes are few and borrowed. `match` uses grep's: 0 matched, 1 did not
+  match, 2 could not look. A verb that cannot reach its session exits 69
+  (`browser_session::EXIT_SESSION_GONE`). "No" and "could not ask" never share a
+  code. Exit codes pass through the plugin dispatch unchanged.
+- stdout carries results; progress and warnings go to stderr.
 - Every payload carries `"schema": "websec/1"`. Fields are added, never
   repurposed; a removal is a new major.
 - Time is RFC3339 with microseconds, matching `receipt.rs`.
 
-## W10. Bash now, RPC later, Python last
+## W10. Bash first, then RPC
 
-Finish the CLI and JSON, validate them with Bash, then add a client only where
-loops prove costly.
+Bash loops over `replay --json | jq` cover most work. They stop at adaptive
+payloads, character-by-character blind extraction, timing statistics and
+anything past a few hundred sends, where process startup dominates. On
+XBEN-037-24, a 64-character flag through a one-bit oracle was 256 probes and 23
+seconds, almost all of it startup; each request was 45 ms.
 
-Bash covers more than expected:
+`h5i browser rpc --stdio` is the long-lived form: one JSON object per line in,
+one per line out, ids matched, each request through the same `ask_session` a
+typed verb uses. On 200 path probes against a local target it took 6.1 s
+against 10.1 s spawning `h5i` per request. Each call still resolves the session
+and opens the control channel; holding that connection open is not built.
 
-```bash
-for id in $(seq 100 200); do
-  h5i websec replay req_42 --set "query.user_id=$id" --json |
-    jq -c '{id: .request.edits, status: .response.status, len: .response.bytes}'
-done
-```
+A client library, if written, wraps that pipe and holds no security logic.
 
-It stops covering it at adaptive payloads, blind extraction character by
-character, timing statistics, race windows, multipart and crypto, and anything
-past a few hundred replays where process startup dominates.
+## W11. Sequences, cross-session replay, redirects
 
-Measured, 2026-09-03, on XBEN-037-24: recovering a 64-character flag through a
-one-bit oracle is 256 probes, and each probe is two `h5i` processes (send, then
-ask about the answer). That run takes 23 seconds, of which almost all is process
-startup; the requests themselves are 45 ms each. It works, and it is the
-clearest argument yet for the RPC below. Two other things that run cost: a
-payload that made the target's own `ping` wait three seconds turned the same
-extraction into ten minutes, and the page's network budget ran out partway
-through, which is why `resend --reset-budget` exists. The answer to the
-last one is not a Python library, it is a long-lived process:
-
-```
-h5i websec rpc --stdio
-{"id":1,"method":"replay","request":"req_42","set":{"query.id":123}}
-{"id":2,"method":"replay","request":"req_42","set":{"query.id":124}}
-```
-
-Built 2026-09-07 as `h5i browser rpc --stdio`, engine-side, speaking `ping` and
-`resend`: one JSON object per line in, one per line out, ids matched, every
-request through the same `ask_session` a typed verb uses, so the control lock,
-the policy and the receipts see no difference. Measured on 200 path probes
-against a local target: 6.1s through the loop against 10.1s spawning `h5i` per
-request. Less than the startup cost alone predicts, because each call still
-resolves the session and opens the control channel; holding that connection
-open across a run is the next saving and is not built.
-
-One JSONL request per line, one reply per line, ids for correlation, and the
-same schema as `--json`. A Python client is then roughly 150 lines wrapping that
-pipe, with `requests()`, `inspect()`, `replay()`, `compare()` and nothing else.
-No `scan_sqli()`, no `find_idor()`, no `exploit_ssrf()`: the moment security
-logic enters the client, h5i owns a payload database and the product changes
-shape. Keeping the RPC language-neutral also means Node, Rust or Bash get the
-same surface for free.
-
-## W11. Two replay layers, and why both
-
-h5i will have `h5i browser replay` (a recorded *page* script: click, type,
-submit) and `h5i websec replay` (a recorded *HTTP message*). They are not
-redundant and neither can be built from the other.
-
-The page layer reproduces a human path through an application, including
-JavaScript that computes a nonce. The HTTP layer reproduces one message with a
-field bent, which is what a test needs and what the page layer cannot express.
-The workflow uses both: drive the browser to reach state, then work at the HTTP
-layer from the requests that state produced.
-
-`h5i websec sequence` is the join. A sequence is an ordered list of steps, each
-either a page verb or an HTTP replay, with `extract` bindings between them
-(feature 11, feature 12):
+`websec sequence` (and `h5i browser sequence`) runs ordered `resend` steps with
+named bindings between them:
 
 ```json
-{
-  "steps": [
-    {"replay": "req_login", "extract": {"csrf": "jsonpath:$.csrf"}},
-    {"replay": "req_update",
-     "set": {"header.X-CSRF-Token": "${csrf}", "json.$.role": "admin"}}
-  ]
-}
+{"steps": [
+  {"resend": 3, "extract": {"csrf": "regex:value=\"([^\"]+)\""}},
+  {"resend": 5, "set": ["header.X-CSRF-Token=${csrf}", "json.role=admin"],
+   "expect": {"all": [{"status": 200}, {"body": "regex:role.*admin"}]}}
+]}
 ```
 
-Bindings are named, typed by their extractor prefix (`jsonpath:`, `regex:`,
-`css:`, `header:`, `cookie:`), and a binding that fails stops the sequence by
-default, because a step acting on a token the previous step failed to produce is
-acting somewhere the sequence never described. That is the same rule
-`browser replay` already applies to its steps.
+Bindings are typed by extractor prefix. A failed binding or step stops the run
+unless `--keep-going` is given, because a step acting on a token the previous
+step failed to produce is acting somewhere the file never described. A step's
+`expect` that does not hold exits 1, distinct from 2 (could not look). Reaching
+page state (logging in, clicking through) is done with the page verbs, which
+drive Chromium; there is no recorded page-script replay.
 
-### Cross-session replay, and what `--as` means
+`resend --as <session>` means the other session makes the request: its jar,
+policy and receipts. The source's `Cookie`, `Authorization` and
+`Proxy-Authorization` are dropped and reported in `credentials_dropped`.
+`--keep-credentials` carries them, for the test where that is the question. A
+replay of a stored request never takes cookies from the jar, so
+`--unset header.cookie` stays unauthenticated.
 
-Built 2026-09-03. `h5i browser resend <seq> --as <session>` reads the message
-out of one session's store and sends it from another, and the meaning of that
-had to be settled before it could be built.
-
-"Send Alice's request as Bob" means *Bob's session makes it*: Bob's cookies,
-Bob's identity, Bob's policy, Bob's receipts. So the source session's `Cookie`,
-`Authorization` and `Proxy-Authorization` are dropped on the way across, and the
-receiving session's jar supplies its own. Carrying Alice's cookie along would
-send a request that is neither Alice's (it went through Bob's session) nor
-Bob's (it carried Alice's credential), and the answer would settle nothing.
-`--keep-credentials` sends them anyway, for the test where that *is* the
-question, and a caller who wants one exact header can read it with `message` and
-set it with `--set`, which is a deliberate act rather than a default.
-
-The dropped names are reported, because a silent strip is a different request
-than the caller thinks they sent. In the reply as `credentials_dropped` and
-not only on the terminal: `--json` is how an agent reads this verb, and a
-note printed in the human view is a note the one reader who needs it cannot
-see.
-
-### Stopping at a redirect
-
-Built 2026-09-03. `resend --no-follow` sets this request's hop limit to zero:
-the engine reports the 302 with its headers instead of following it. That is
-where an authentication flow names you, where an open redirect proves it accepts
-anything, and where the `Set-Cookie` that logs you in rides.
-
-Two rules. Stopping where the caller asked to stop is not an error, so the
-outcome carries a status and no error; only running out of hops somebody wanted
-is a failure. And the per-request limit can lower the session's policy limit,
-never raise it: a request able to raise its own ceiling would be a request
-setting its own policy.
+`--no-follow` sets the request's hop limit to zero and reports the redirect
+with its headers. Stopping where asked is not an error. The per-request limit
+can lower the session's policy limit, never raise it.
 
 ## W12. Structural diff
 
-`h5i websec diff res_42 res_43` is Comparer for programs. The reply has three
-layers so an agent can branch cheaply and read expensively only when it must:
+`websec diff` returns layers an agent can branch on before reading:
 
-1. **Verdict fields**: `same`, `status_changed`, `length_delta`,
-   `time_delta_ms`, `similarity` (0.0 to 1.0).
-2. **Header diff**: added, removed, changed, with a stable order and cookie
-   values redacted by default (`--reveal-cookies` to override, since the whole
-   point of some tests is the cookie).
-3. **Body diff**, typed by content type: JSON gets a structural diff keyed by
-   JSON pointer; HTML is diffed as a DOM shape through the machinery
-   `snapshot.rs` and the read IR already have, so a re-ordered ad slot does not
-   read as a difference; anything else is line-based. `--body-mode` forces it.
+1. Verdict fields: `same`, `status_changed`, `length_delta`, `similarity`
+   (0.0 to 1.0, meaningful only when `bodies_compared` is true; an unstored body
+   would otherwise compare as identical).
+2. Header names added, removed and changed.
+3. Body changes: keyed by dotted JSON path when both bodies are JSON, otherwise
+   line-based. Lists are capped and the full count is reported beside them.
 
-The `similarity` number matters more than it looks: boolean-based blind
-injection is a loop over "is this response the true page or the false page", and
-a single float an agent can threshold is the difference between a five-line loop
-and a model reading two HTML pages per candidate character.
+`similarity` is what a boolean-blind loop thresholds on instead of a model
+reading two pages per candidate character. A DOM-shape body mode and a
+`--body-mode` override are designed, not built.
 
-## W13. Match and extract on responses
+## W13. Match
 
-Intruder's grep-match and grep-extract, without Intruder. `h5i websec match`
-takes any number of conditions (`--regex`, `--jsonpath`, `--css`, `--header`,
-`--status`, `--length-gt`, `--time-gt`), returns each one's boolean and its
-captures, and sets exit code 5 when the combined expression is false. That makes
-the common CTF loop a shell conditional with no `jq` in it, while the same call
-with `--json` gives a script the captures.
-
-This is an executor for someone else's conditions. h5i ships no conditions of
-its own.
+`websec match` takes `--regex`, `--contains`, `--json-path`, `--header`,
+`--status`, `--longer-than` and `--shorter-than`, ANDs them, and returns each
+condition's result and captures. Exit 0, 1 or 2 as W9 says. `--all` asks every
+stored response and lists those that hold; exit 0 means at least one did. h5i
+executes the caller's conditions and ships none of its own.
 
 ## W14. Timing
 
-`duration_ms` on the receipt is a page-load number. Blind injection needs a
-better one, so replay reports the clock per send, plus `--repeat N` returning
-median and median absolute deviation rather than a mean that one scheduling
-hiccup ruins.
+Each send reports `ttfb_ms` (to the response headers: the server's decision)
+and `total_ms` (to the body in hand). Both come from the receipt the fetch
+wrote, off the same start time. `connect_ms` and `tls_ms` are not reported:
+they would need a custom connector, and a wall-clock guess is not a
+measurement.
 
-The honest caveat belongs in the reply, not in a footnote: a session inside a
-box pays a proxy hop and a namespace, so absolute latency is not the host's.
-Comparisons within one session are sound, comparisons across placements are not,
-and the reply says so.
+`--repeat N` runs inside the broker, since starting a process costs more than
+the thing measured, and returns every sample with a median and median absolute
+deviation. Each send is its own receipt. The count is clamped. A session in a
+box pays a proxy hop, so comparisons within one session are sound and absolute
+numbers across placements are not.
 
-Built 2026-09-03, with one honest narrowing. Two numbers are reported, not four:
-`ttfb_ms` (to the response's headers, which is the server's *decision*) and
-`total_ms` (to the body in hand). `connect_ms` and `tls_ms` would need a custom
-connector under `reqwest`, and inventing them from a wall clock around the call
-would be a guess wearing a measurement's name. The split that was actually
-needed is the one that shipped: a server that decides slowly and streams a large
-body answers late with a fast total, so collapsing the two would hide a
-time-based injection under the size of the page.
+## W15. Parallel replay and rate
 
-`--repeat` runs inside the broker rather than in a shell loop, because the thing
-being measured is milliseconds and starting a process costs tens of them: a loop
-outside the engine measures the loop. Each send is a receipt of its own, so a
-repeated replay is as auditable as a single one. The count is clamped rather
-than trusted, since a caller asking for a million sends is asking the session to
-spend its whole budget on one verb.
+`--repeat N --race` starts N threads that meet at a barrier and then send.
+It is a burst, not a single-packet attack: requests leave within the cost of
+waking a thread. `scripts/websec/smoke.sh` redeems a one-use coupon twelve
+times out of twenty against a server that sleeps between check and act. A
+panicked sender fails the whole call, since a burst that sent fewer requests
+than asked would make a race look absent.
 
-## W15. Parallel replay
+Parallel sends spend from the same `budget.rs` limits as everything else.
+`--rate R` on `resend` and `experiment` is measured from the last send and is
+refused together with `--race`. Payloads come from the caller; h5i never
+generates one.
 
-Built 2026-09-03 as `--repeat N --race`: N threads that meet at a barrier and
-then send. The barrier is the point. Without it the first thread is already
-waiting on the network before the last has been spawned, and a check-then-act
-window measured in milliseconds closes in between.
+## W16. Scope, policy and audit
 
-Named a burst rather than a single-packet attack, because that is what it is:
-the requests leave within the cost of waking a thread, not with their last bytes
-held back and released together. Ordinary check-then-act windows do not need
-that, and claiming the stronger thing would be claiming a capability the code
-does not have. `scripts/websec/smoke.sh` redeems a one-use coupon twelve times
-out of twenty against a server that sleeps between its check and its act.
-
-A panicked sender fails the whole call rather than being skipped: a burst that
-quietly sent fewer requests than it was asked for would make a race that did not
-reproduce look like a race that does not exist.
-
-Two things have to be right:
-
-- It composes with `budget.rs`. A parallel replay spends from the same
-  `Limits`, so a runaway loop hits `max_requests` exactly as a runaway page
-  does. Rate limiting is a first-class flag (`--rate R`) because a CTF target
-  and an authorised engagement both have someone who will notice. This
-  paragraph described `--rate` as built for a week in which it was not: the
-  flag arrived 2026-09-10 with W22, on `resend` and on `experiment` both,
-  measured from the last send rather than as a sleep between them, and refused
-  together with `--race`, which releases at one moment by definition.
-- It is not a fuzzer. The payloads come from the caller, one per line on stdin
-  or as a list in an edits file. h5i sends them efficiently, records each, and
-  returns a table. It never generates one.
-
-## W16. Scope, policy and authorisation
-
-Replay does not get a new path to the network. It goes through `Broker::fetch`
-like everything else, which means the session's policy decides, the receipt is
-written first, and an off-scope replay is refused with a reason rather than
-sent. A replay cannot widen its session's allowlist; changing scope means a new
-session with a new policy, which is a visible act.
-
-Adding a header map to `Fetch` (W4) is the one place this could go wrong. The
-rule: headers are carried, recorded and sent, and the policy checks the request
-by URL as it does now, with the header set included in the recorded decision.
-Hop-by-hop headers the client owns (`Content-Length`, `Transfer-Encoding`,
-`Connection`) are recomputed, and an attempt to set them is reported as
-overridden rather than accepted silently, since request smuggling is a real test
-and pretending to support it is worse than declining.
-
-The audit posture is the product's, not an afterthought: every payload an agent
-sent is in the timeline with the verb that sent it, so a session is reproducible
-by someone who was not there. That is what makes this usable in an engagement
-rather than only in a CTF.
+Replay has no new path to the network. The session's policy decides, the
+receipt is written first, and an off-scope replay is refused with a reason. A
+replay cannot widen the allowlist; changing scope means a new session. Every
+payload is in the timeline with the verb that sent it, so a session is
+reproducible by someone who was not there.
 
 ## W17. Site map
 
-Fold the request log into a tree by origin, then path, carrying methods seen,
-status codes seen, parameter names observed, content types, and whether each
-node was reached by navigation or by script (feature 18). Add endpoint
-candidates the pages themselves disclose: form actions, `fetch` targets found in
-loaded JavaScript, `link` and `script` sources, WebSocket URLs from
-`wsclient.rs`, and Structured metadata from `structured.rs`.
-
-Candidates are labelled as candidates. A URL scraped from a bundle was not
-visited, and the map must not blur the two, because "what did this session
-reach" is the question the receipts exist to answer.
-
-Built 2026-09-03, with deliberately narrower scope:
-`h5i websec sitemap` folds the *receipts* into origins and endpoints, with
-methods, statuses, parameter names, hit counts, a mark for what was navigated to
-rather than pulled in, and the refused URLs listed apart. The disclosed-but-
-unvisited half is not built. The verb reports only observed endpoints; bundle
-scraping belongs in a separately named command.
+`websec sitemap` folds the receipts into origins and endpoints: methods,
+statuses, parameter names, hit counts, a navigation mark, and refused URLs
+listed apart. It reports only what the session reached. Disclosed but
+unvisited endpoints are recon's (`design-recon.md`), labelled as candidates.
 
 ## W18. DOM instrumentation
 
-The DOM Invader analogue, and the first feature that is a plugin rather than
-core. With `--script` on, instrument the sources (`location`, `name`,
-`document.referrer`, `postMessage` data, storage) and the sinks (`innerHTML`,
-`eval`, `document.write`, `setAttribute` on URL attributes, `Function`), and
-report reachability from source to sink with the path taken. Add a
-`postMessage` log and a prototype pollution probe.
-
-It sits last but one because it is engine-invasive, it only pays off on
-client-side problems, and everything before it pays off on every problem.
+`websec dom` is the DOM Invader analogue. `h5i browser proxy <url>
+--dom-instrument` makes the proxy inject an instrument into HTML pages, which
+beacons source-to-sink reports back to the proxy (`dom-report.jsonl`; the
+beacon is answered before policy and never stored). `dom scan` builds probe
+URLs from a prototype-pollution corpus, opens them in the proxied Chromium and
+folds what reached a sink into findings. `dom node` runs a Node target inside a
+box once per candidate `Object.prototype` property and reports which reach a
+dangerous sink; it refuses to run outside a box. The corpus is the one built-in
+payload set in the workbench.
 
 ## W19. OAST
 
-Out-of-band detection needs a callback receiver, which means a service, which
-means an operating cost and a privacy story. The design here stops short of
-running one:
+Not built. The design: `websec oast token` mints a correlation id and a
+hostname to embed, `oast poll` returns interactions. Backends are the
+operator's (own domain, webhook or self-hosted receiver; a local listener for
+lab targets). Nothing goes to an h5i-operated service, because a payload URL in
+a target is data about someone else's system.
 
-- A neutral interface: `h5i websec oast token` mints a correlation id and
-  returns a hostname and URL to embed; `h5i websec oast poll <token>` returns
-  the interactions seen, with type, source address and time.
-- Backends are pluggable and none ships hosted. Bring your own domain, your own
-  webhook endpoint, or a self-hosted receiver; a lab backend that binds a local
-  listener covers CTF targets that can reach the host.
-- Nothing is sent to an h5i-operated service, because a payload URL in a target
-  application is data about someone else's system.
+## W20. Feature status and benchmarks
 
-## W20. Order, and what each phase buys
-
-The twenty features, ranked, with the phase that carries them.
-
-| # | feature | Burp analogue | phase |
+| # | feature | Burp analogue | status |
 |---|---|---|---|
-| 1 | full request and response capture | Proxy history, Logger | A, built |
-| 2 | stable message id | Proxy history | A, partly built |
-| 3 | action to request provenance | Logger, site map | A, partly built |
-| 4 | history search and filter | Proxy history | A, built |
-| 5 | raw and typed views | Message editor, Inspector | A, built |
-| 6 | same-session replay | Repeater | A, built |
-| 7 | structured request edit | Repeater, Inspector | A, built |
-| 9 | multiple sessions and jars | browser sessions | A, built |
-| 13 | machine-readable response diff | Comparer | A, built |
-| 14 | match and extract primitives | Intruder grep | A, built |
-| 8 | multipart and upload editing | Repeater | B, built |
-| 10 | replay as another session | Repeater plus session rules | B, built |
-| 11 | extract and bind | macros, session rules | B, built |
-| 12 | multi-request sequences | Repeater sequences | B, built |
-| 15 | precise timing | Repeater, Intruder | B, built |
-| 16 | controlled parallel replay | Intruder, race testing | B, built |
-| 17 | redirect chain observation and control | Proxy, Repeater | B, built |
-| 18 | site map and inventory | Target site map | B, built |
-| 19 | DOM instrumentation | DOM Invader | C |
-| 20 | OAST callbacks | Collaborator | C |
-| 21 | multi-position experiments | Intruder, Caido Automate | B, built |
-| 22 | findings | none: Burp's is a report | B, built |
+| 1 | full request and response capture | Proxy history, Logger | built |
+| 2 | stable message id | Proxy history | built per session; qualified form not parsed |
+| 3 | action to request provenance | Logger | partly: `replay` vs proxy-observed |
+| 4 | history search and filter | Proxy history | built |
+| 5 | raw and typed views | Message editor | built |
+| 6, 7 | replay with structured edits | Repeater | built |
+| 8 | multipart and upload editing | Repeater | built |
+| 9 | multiple sessions and jars | session handling | built |
+| 10 | replay as another session | session rules | built |
+| 11, 12 | extract, bind, sequences | macros | built |
+| 13 | response diff | Comparer | built, no DOM mode |
+| 14 | match and extract | Intruder grep | built |
+| 15 | timing | Repeater | built |
+| 16 | parallel replay | race testing | built |
+| 17 | redirect control | Repeater | built |
+| 18 | site map | Target | observed half built |
+| 19 | DOM instrumentation | DOM Invader | built (`dom`) |
+| 20 | OAST | Collaborator | not built |
+| 21 | multi-position experiments | Intruder | built |
+| 22 | findings | none | built |
 
-**Phase A, the workbench.** Features 1 to 7, 9, 13, 14, plus W9's JSON contract
-and the plugin packaging of W21. The engine work is the message store, the
-header field on `Fetch`, the replay path and the diff. This alone covers IDOR, authentication bypass, basic
-injection, reflected XSS, SSRF against a named target, path traversal, header
-and cookie manipulation, and a useful slice of business logic. The acceptance
-test is a person driving an agent through easy and medium CTF web problems with
-Bash and no Python.
+Benchmarks, run by an agent with these verbs; runners and notes are in the
+separate `h5i-benchmark` repository:
 
-**Phase B, the harder half.** Features 8, 10, 11, 12, 15 to 18. This is what
-CSRF-protected multi-step flows, blind and time-based injection, race
-conditions, upload chains, OAuth and session problems, and SSRF pivots need. The
-RPC of W10 lands here, driven by whichever loop first proves too slow, and the
-Python client lands after that, extracted from scripts that already exist rather
-than designed in advance.
+| corpus | result |
+|---|---|
+| XBOW validation set | 100 of 104 |
+| Argus | 54 of the first 60 (71 total) |
+| Cybench web tasks | 8 of 8 |
 
-**Phase C, the long tail.** Features 19 and 20. Client-side and blind classes.
+These runs predate the move from the in-house engine to the capture proxy and
+have not been repeated since. `scripts/websec/smoke.sh` drives every verb end
+to end against `scripts/websec/server.py`; it covers the seams between CLI,
+control channel, proxy and store that unit tests miss.
 
-**The benchmark.** Each phase's claim is a measured one: a corpus of web CTF
-problems, run by an agent with only these verbs, scored on solved and on how
-many turns and requests it took. A feature that does not move that number is not
-finished, whatever its tests say. The corpus belongs in `docs/benchmarks/`
-beside the environment ones, with the same rule that the harness is committed.
-
-The first piece of it exists: `scripts/websec/smoke.sh` drives every verb end to
-end against `scripts/websec/server.py`, and it is committed because it keeps
-earning its place. Four bugs so far were invisible to the unit suite and obvious
-on the first real run: a verb missing from `Verb::ALL` (wired everywhere, refused
-at the session), a duplicated `accept-encoding` on every replay, two exit codes
-collapsed into one, and a `null` read as a composed request, which broke plain
-`resend` between two commits. Unit tests cover the pieces. This covers the seams
-between the CLI, the control channel, the engine and the store, which is where
-every one of those lived.
-
-## W21. Packaging: a plugin, not a part of the binary
-
-`h5i websec` is not in the default build and is not a cargo feature someone
-turns on at compile time. It is installed, after the fact, into an h5i that is
-already on the machine:
+## W21. Packaging: a plugin
 
 ```
-h5i plugin install websec
+h5i plugin install websec --from <path>
 h5i plugin list
 h5i plugin remove websec
 ```
 
-Nothing like this exists today. `h5i` has cargo features (`web`, `browser`,
-`ytdlp`, `identity`) and no runtime install path at all, so
-W21 is the section that has to be built before phase A can ship the way this
-file describes.
+`h5i-websec` is a separate executable in its own release archive, copied into
+a per-user plugin directory. `h5i websec <verb>` execs it with the arguments
+and session environment forwarded. Installing by name or download is not
+built: a downloaded executable needs a provenance story this does not have.
+Only names on `plugin::KNOWN` install, so a plugin directory cannot turn
+`h5i <anything>` into an execution. A build without the plugin still answers
+`h5i websec` with what it is and how to install it.
 
-### What is built, 2026-09-03
+The split: what sends stays in the binary (`requests`, `resend`, `sequence`,
+`socket`, `grpc`, `rpc`), because it needs the session's control channel and a
+plugin must have no other route to the network. What reads is in the plugin
+(`show`, `diff`, `match`, `sitemap` and the rest), reading the store through
+`crates/h5i-wire`, which holds the record and message types without linking
+the engine. The old `h5i browser message|diff|match|sitemap` names are kept
+hidden only to say where they went.
 
-`h5i plugin install|list|remove`, and `h5i websec` dispatching to an installed
-`h5i-websec` (`src/cli/plugin.rs`, `crates/h5i-websec`). The release ships
-`h5i-websec` as its own archive per target, so `--from` has a file to point at
-without a source tree; `install` still takes a path rather than fetching one,
-because a downloaded executable needs a provenance story this does not have. A name h5i knows but
-does not have answers with what the capability is and how to install it, rather
-than "unknown command". Installs are refused for names not on the known list,
-because a plugin directory anything can add a name to is a directory where
-`h5i <anything>` becomes an execution. Exit codes pass through both hops
-unchanged, so `websec match` still exits 1 for a miss and 2 for "could not
-look".
+A plugin is a separate process, not a `dlopen`ed library. The h5i process
+resolves policy and writes the receipt before bytes move; code loaded into it
+would sit inside the boundary it is meant to be subject to. As a separate
+process the plugin's sends are the engine's fetches, policed, budgeted and
+recorded, and an audit reads the same as one of a hand-driven session.
 
-Two honest limits, both since removed (see below). The plugin composed `h5i
-browser` verbs in a subprocess rather than reading the message store itself,
-because the store's types lived in `h5i-browser` and a plugin depending on that
-crate would link Blitz, Stylo and Boa into a second binary. And so the workbench
-verbs were still in the default build, which left the posture argument above
-undelivered: an install *did* include them.
-
-### What moved, 2026-09-07
-
-Both limits above are gone. `crates/h5i-wire` holds the store's types and its
-readers, so the plugin reads the bytes itself, and the four reading verbs moved
-into it: `show`, `diff`, `match` and `sitemap` are no longer in the default
-build. `h5i browser message|diff|match|sitemap` do not exist; the capability
-arrives with `h5i plugin install websec`, which is what the posture argument
-above claimed and did not deliver.
-
-What stays in the binary is what sends: `requests`, `resend`, `sequence` and
-`rpc`. They need the engine's control channel, and a plugin reaching the
-network by any path other than the engine's is the thing this design refuses.
-The binary still reads the store for its own two cases, `resend --as` carrying
-a request and `sequence` binding a value out of a response, through the same
-`h5i-wire` readers rather than a second copy.
-
-Recon depends on the same split: it sends through `h5i browser resend` and
-`h5i browser rpc`, and reads through `h5i-wire` (`docs/design/design-recon.md`
-N19).
-
-### What a plugin is
-
-A separate executable, discovered by name the way `git` finds its subcommands.
-`h5i plugin install websec --from <path>` copies `h5i-websec` into a per-user
-plugin directory, and `h5i websec <verb>` execs it with the arguments forwarded
-and the environment that names the session. The release publishes the
-executable; fetching it by name is not built. A build without the
-plugin still knows the name: `h5i websec` prints what it is and how to install
-it, rather than an unknown-subcommand error, so the feature is discoverable
-without being present.
-
-Not a dynamically loaded library, and the reason is the product's whole claim.
-The h5i process is the one that resolves policy, writes the receipt before the
-bytes move and refuses the fetch when the record cannot be written. Code
-`dlopen`ed into that process sits *inside* the boundary it is supposed to be
-subject to, and every guarantee in `ROADMAP.md` would then rest on the good
-behaviour of whatever was installed last.
-
-A plugin as a separate process is subject to the boundary instead. The websec
-plugin reaches a session over the same control channel `h5i browser snapshot`
-uses, and it has no other route to the network. Its replays are the engine's
-fetches, checked by the engine's policy, spent from the engine's budget and
-written into the engine's receipts. An audit of a session driven by a plugin
-reads exactly like an audit of a session driven by hand, which is the property
-worth protecting.
-
-### What still has to live in the binary
-
-A plugin cannot add a field to `Fetch` or write the message store, so phase A's
-engine work (W5, and the header map of W4) ships in the engine regardless.
-Correctly, it is *capability without behaviour*: capture is off unless a session
-is opened with `--capture`, and a build that has never had the plugin installed
-behaves exactly as it does today.
-
-The two halves negotiate through the verb that already exists for this.
-`h5i browser capabilities` reports what an engine can do, as JSON, so h5i can
-route by capability rather than by version number. The plugin reads it, and an
-engine too old to capture gets a named refusal naming the build, not a confusing
-empty result.
-
-### Why opt in
-
-Dependency weight is the small reason. The real one is posture. A browser for
-agents that ships an HTTP attack workbench in every install is a different
-product to defend, to a security review and to a user who wanted a page reader.
-Making the workbench a deliberate act by the operator keeps the default install
-honest about what it is, and costs an authorised user one command.
-
-It is worth being precise about what this does not do: it is not a security
-control. Anyone who can install a plugin can install any tool. What it buys is
-that the capability is *named* at install time and visible in `h5i plugin list`,
-which is the same stance the rest of h5i takes toward capability, and none of
-the enforcement in W16 depends on it.
+Opt-in is posture, not a security control: anyone who can install a plugin can
+install any tool. None of W16's enforcement depends on it.
 
 ## W22. Experiments
 
-Built 2026-09-10. Feature 21: Intruder's shape for a caller that is not looking
-at a screen.
-
-`replay --set-each` walks one target over a file of values, which covers a
-surprising amount and stops exactly where two things vary at once. `h5i websec
-experiment <plan.json>` is the general form:
+`websec experiment <plan.json>` is the multi-position form of
+`replay --set-each`:
 
 ```json
 {"request": "req_42",
@@ -751,293 +407,84 @@ experiment <plan.json>` is the general form:
  "rate": 4}
 ```
 
-Three decisions worth defending.
+- `product` sends every combination; `zip` takes the nth value of each
+  position. Relative paths are read beside the plan.
+- The plugin expands the combinations and hands them to
+  `h5i browser resend --walk -`; the engine sends. `--set-each` is the
+  one-target case of the same path.
+- The answer is clusters. The fold is `h5i-wire::triage` with
+  `By::ShapeAndWords`: status, type, redirect target, size and what the body
+  says, so "same length, different answer" stays apart. Every row names every
+  message it folded.
+- No transforms. Encodings beyond what an edit needs to be correct (W8) are the
+  caller's, in the values.
+- `"as": "other-session"` sends under another identity, and results are read
+  from that session's store.
+- An incomplete walk is not a negative result. The report counts `planned`,
+  `answered` and `read`, carries the engine's error, and `ok` is true only when
+  they agree. The usual cause is the 500-request allowance;
+  `"reset_budget": true` raises it, off by default.
+- The ceiling is 1000 sends per experiment. There is no concurrency option,
+  which keeps receipts in request order; `--race` and `--rate` cover the rest.
 
-**The plugin expands, the engine sends.** The combinations are computed here
-and handed to `h5i browser resend --walk -` as one walk on standard input; a
-step is a label and a list of `target=value` edits, and the engine applies them
-after the shared ones. So an experiment is still the engine's fetches, checked
-by its policy, spent from its budget and written into its receipts (W21), and
-`--set-each` became the one-target case of the same code path rather than a
-second one beside it.
-
-**The answer is clusters, not responses.** The fold is `h5i-wire::triage`, the
-same one recon uses, with one knob: recon groups by shape, because two
-renderings of one template are the noise it came to fold away, and an
-experiment groups by shape *and by what the body says*, because "same status,
-same length, different answer" is precisely the result it came for. Five
-hundred sends come back as a handful of rows, and every row still names every
-message it folded, so `h5i websec show` reads any of them.
-
-**No transforms.** The obvious next field is `"transforms": ["urlencode"]`, and
-it is not built, because the edit language already encodes what an edit needs
-to be correct (W8) and anything past that is the caller's own encoding of the
-caller's own value. A payload list that needs double-encoding is a payload list
-with double-encoded values in it. Wordlists are input, never cargo, and so are
-their encodings.
-
-Identity is a position like any other: `"as": "other-session"` sends under
-another session's credentials, and the results are then read from *that*
-session's store. Reading the calling session's was the one bug the live run
-found, and it did not fail loudly. It answered with whatever message happened
-to hold the same number.
-
-**An incomplete walk is not a negative result.** The page's allowance bounds
-page code at 500 requests per navigation, and a walk of a thousand steps runs
-into it halfway: the engine answers `budget-exceeded` and the samples past that
-point carry no status. Folding those into a quieter table would make "the
-experiment found nothing" and "the experiment did not run" identical, which is
-the same mistake W15 refuses for a burst that sent fewer requests than it was
-asked for. The report counts `planned`, `answered` and `read` apart, carries the
-engine's error, and `ok` is true only when the three agree. `"reset_budget":
-true` is the way past it, off by default because a ceiling nobody can see is
-worse than one that stops a walk and names itself.
-
-What is deliberately absent is concurrency. `"concurrency": 8` would send the
-walk from a pool, and the receipts would stop being in request order for the
-first time in this engine — the property `h5i browser`'s own comments call the
-reason its client is serial. A race already has `--race`, which is honest about
-being a burst; a walk that wants to be faster can raise `--rate`.
-
-### The identity axis, as its own verb
-
-Built 2026-09-25. Identity is a position an experiment can vary, but IDOR, BOLA
-and BFLA are identity-against-identity and read better with their own shape.
-`h5i websec matrix req_42 --as anon,userB,admin` sends the one request under each
-named session, folds with the experiment's `By::ShapeAndWords`, and reports in
-identity order: a row per identity with its class, and the classes with the
-identities in each. Two identities in one class saw the same answer — the missing
-boundary made observable; the verdict stays the agent's. Identities are sessions
-the operator already holds (h5i ships none), each read from its own store, and a
-refused identity is a row with its reason, not a gap.
+`websec matrix req_42 --as anon,userB,admin` sends one request under each named
+session, folds with `By::ShapeAndWords`, and reports a row per identity with
+its class, and the identities in each class. Two identities in one class saw
+the same answer; whether that is a missing boundary is the agent's call.
+Identities are sessions the operator holds, each read from its own store, and a
+refused identity is a row with its reason.
 
 ## W23. Findings
 
-Built 2026-09-10. Feature 22, and the first thing here with no Burp analogue
-worth naming: Burp's findings are a scanner's output and a report generator's
-input, and this is neither.
+`websec finding create|list|show|update` keeps an append-only log beside the
+message store: title, state, notes, cited message ids, and a repro file. Title,
+state and repro replace; notes and evidence accumulate. Owner-only, never in an
+export, dropped with the capture. To keep one, promote it into a project, which
+copies the finding and the messages it cites with credentials removed.
 
-`h5i websec finding create|list|show|update` keeps an append-only log beside
-the message store: a title, a state, notes, the message ids it rests on, and a
-file that reproduces it. Owner-only, never in an export, dropped with the
-capture, for the reason W5 gives about the store and N5 about the ledger.
-
-**The state is free text, deliberately.** In the ledger a state is an enum
-because the fold reads it and a wrong one changes an inventory (N5). Nothing
-reads a finding's state, so nothing restricts it: an agent that has to pick the
-nearest of five words spends a turn on vocabulary rather than on the target,
-and `filter-bypass-worked?` is a better note to its future self than
-`candidate`.
-
-**h5i asserts exactly one thing:** that every message id cited is a message
-this session holds. A finding whose evidence names nothing reads exactly like
-one whose evidence is real, so it is refused at write time rather than
-discovered at the end of an engagement. Everything else in the record is the
-agent's claim, which is the same boundary the rest of this file keeps: h5i
-reports differences, and calling one a vulnerability is the agent's to sign.
-
-**There is no `check` verb, and that is not an omission.** Re-running a repro
-is `sequence` or `experiment`, and asking whether the answer still holds is
-`match`, which already exits 0, 1 and 2 for held, did not hold and could not
-look. A `check finding_7` would add a path lookup and a write-back, and the
-property it looks like it adds — that a re-verification cannot be fabricated —
-is already carried by the receipts: a state of "fixed" beside `--evidence
-req_1204` is checkable by anyone who can read the store. If it returns it will
-be as a batch over every finding, for a repository that has actually wired
-findings into CI.
-
-## What is deliberately not built
-
-Each of these is a decision to be defended in review, not a gap to be filled.
-
-- **A scanner.** No crawl-and-flag mode, no severity ratings. Crawling itself
-  moved out rather than staying refused: it belongs to recon
-  ([`design-recon.md`](design-recon.md) N9), which discovers and never flags.
-  The *and-flag* half is what this file still refuses, wherever the crawl lives.
-- **Payload generation.** No SQL injection strings, no XSS vectors, no
-  encoders beyond the ones an edit needs to be correct. Wordlists are input,
-  never cargo: recon's path discovery (N10) takes `--wordlist PATH` and h5i
-  ships no corpus, exactly as W15 takes payloads from the caller and generates
-  none.
-- **Vulnerability verdicts.** h5i reports differences. Calling one a
-  vulnerability is the agent's claim, made in a finding it writes and signs.
-- **An exploit database or plugin marketplace.**
-- **An agent planner.** The loop belongs to whatever is driving h5i.
-
-Parallel replay and match are not exceptions to this. Intruder is not a scanner
-either: both are executors for conditions and payloads that arrive from outside.
-
-## What benchmarking changed
-
-**2026-09-03.** Phases A and B were tested against the 104-benchmark XBOW
-validation corpus. The first pass solved 98. Raw request targets then enabled
-XBEN-026 and XBEN-031, bringing the total to 100. The separate `h5i-benchmark`
-repository contains the runner, solutions, and notes about the remaining cases.
-
-The point of the exercise was not the score. It was to find the places where the
-workbench could not say what a person needed to say, and each of those turned
-into a change:
-
-- **Bytes a command line cannot carry.** A magic-number upload filter wants a
-  file that begins `ff d8`, which is not text in any encoding, and `--set`
-  reaches the broker through argv and then through JSON. `--set-file
-  TARGET=PATH` sends the file's bytes unaltered.
-- **Bytes that came back and could not be read.** A response whose body was not
-  valid UTF-8 was reported as a length and a digest, which hides the answer in
-  exactly the case the store exists for: a secret echoed after a file
-  signature. Bodies now carry a lossy reading too, and `match` and `diff` can
-  see it. `show --body-to PATH` writes the exact bytes out, for the responses
-  that are files rather than text.
-- **Normalized requests.** `resend --raw-target` and `--raw-request` preserve
-  request targets and bytes that URL parsing would change.
-
-Two smaller things the corpus caught: `submit` refused a `<form>` selector with
-"is a an element", and a replay's own sequence number was reported but not
-obviously enough for a caller to read its answer back by name. The rest of what
-the run needed was the corpus's own problem and stayed with it.
-
-**2026-09-04.** A second corpus, the 71-benchmark Argus set, run over its first
-sixty. Different shape from XBOW: current stacks rather than PHP, a randomised
-flag per run, and a third of it not a single request at all but a scenario with
-an admin bot, a mail server, a message broker and an object store. Fifty-four
-solved. The same exercise, and six more changes:
-
-- **A flag that did nothing.** `show --raw` was ignored unless `--human` was
-  also given, which is the shape of silently doing something other than what
-  was asked. It outranks the JSON envelope now: a wire message is bytes, and
-  bytes inside a JSON string are no longer the message.
-- **The plugin could not reach the raw send path.** `--raw-target` and
-  `--raw-request` were on `browser resend` and not on `websec replay`, which is
-  the surface the design leads with. Both are there now, with
-  `--keep-credentials`.
-- **A refusal that named a flag which does not exist.** Editing an absent
-  parameter answered "Pass `--set-create`". The flag is `--create`.
-- **Two raw features that did not compose.** The obvious way to build a file
-  for `--raw-request` is to dump a request that was already sent, and the dump
-  used bare LF. The request half is CRLF now.
-- **A desync with nothing to show for it.** `--raw-request` shipped for request
-  smuggling, and a successful smuggle produces *two* responses on one
-  connection — the second being the smuggled request's answer. The engine read
-  one and closed the socket, so the attack could work and report nothing. What
-  follows a raw response is kept beside it now (`trailing` in the stored
-  message, `trailing_bytes` in the receipt).
-- **A protocol with no verb.** The engine has had a WebSocket client since it
-  had a browser and only page JavaScript could reach it, so an application
-  whose commands travel over a socket was one this workbench could watch
-  connect and never speak to. `websec socket` is `resend` for that protocol.
-
-And one defect characterised, then fixed 2026-09-25: about one send in fifteen
-cost seconds more than the request did, and one `total_ms` read 587 for a
-two-second server. Cause: `send_once` timed `Broker::send` from the outside, so
-the record flush and the locks fell inside `total_ms`. Both numbers now come from
-the receipt the fetch wrote, off the same `started` as `ttfb_ms`.
-
-**2026-09-08.** A third corpus, the eight web tasks in Cybench — competition CTF
-tasks rather than benchmarks, which is a different pressure: a WAF whose
-denylist removes the alphabet an exploit is written in, a cache proxy written
-from scratch in Go with its own framing bugs, a git object store served under
-`autoindex`. All eight solved, and five more changes:
-
-- **A receipt that described a request nobody sent.** `--set json.` types a
-  value the way it reads, which is right and is documented nowhere the caller
-  looks. `json.password=0e830400451993494058024219903391` — a PHP magic hash,
-  and the single most likely thing to be typed at a `==` — is a valid JSON
-  number, so `0.0` went on the wire while `applied` reported the string. The
-  encoding is named in `encoded` now whenever it differs from the text, and the
-  quoting escape is in `--set`'s own help.
-- **An integer that arrived as a different integer.** A JSON number is a double
-  past `2^53`, so `json.id=123456789012345678901234567890` was silently sent as
-  `1.2345678901234568e29`. Refused now, naming the quoted form and `body.raw`.
-- **No way to choose the case of a header name.** The framed sender is an HTTP
-  client and lower-cases them, which is what HTTP/2 requires and what every
-  library does. Chunky's cache proxy reads the body length out of
-  `headers["Content-Length"]` — a Go map, an exact string — so an ordinary
-  `POST /login` through it, with nothing hostile in it, arrived as a request
-  whose body the proxy never read. Not an attack that failed: a sign-up form
-  that could not be filled in. And the same proxy strips `Transfer-Encoding`
-  while forwarding `transfer-encoding`, which *is* the vulnerability, so a
-  workbench that cannot choose the case cannot express either half.
-  `--raw-headers` sends the request the edits produced down the raw path, where
-  the names are written as given. `--raw-request` was the only alternative and
-  costs `--set`, the jar and redirects to buy one capital letter.
-- **Enumeration had no verb.** `--repeat` sends the same request N times; there
-  was nothing for "this request, this target over these values", which is the
-  shape of most of the work. A shell loop pays process startup per request and
-  returns N documents nothing correlates. `--set-each TARGET=PATH` walks one
-  line per send and each sample carries the value that produced it. Values are
-  lines rather than a comma-separated list, because the things worth walking
-  are payloads.
-- **Two conventions for `-` in the same binary.** `replay --raw-request -`
-  reads standard input; `show --body-to -` created a file named `-`. Every
-  binary body had to detour through a temporary file to reach a pipe. `-` is
-  standard output now, and the note that would have gone there goes to stderr.
-
-One thing that was checked and was not a defect: `show --raw` declining to print
-a body that is not text is correct, and `--body-to` was already the answer. The
-undocumented `websec sequence` verb — no help text on the file, `--var` or
-`--keep-going` — was not: an undocumented verb is an absent verb to an agent,
-and it is documented now.
+- `--state` is free text, because nothing reads it.
+- h5i asserts one thing: every cited message id is one this session holds. A
+  finding with no real evidence is refused at write time. Everything else is
+  the agent's claim.
+- There is no `check` verb. Re-running a repro is `sequence` or `experiment`,
+  and asking whether it still holds is `match`; the receipts already make a
+  re-verification checkable.
 
 ## Raw requests
 
-**Added 2026-09-03 after benchmarking.** Normal requests use parsed `Url`s, which
-normalize dot segments and percent encoding. For example,
-`--set path=/cgi-bin/.%2e/.%2e/etc/passwd` sends `/etc/passwd`. `apply` rejects
-such edits (`crates/h5i-browser/src/edits.rs`).
+Parsed URLs normalise dot segments and percent-encoding, so
+`--set path=/cgi-bin/.%2e/.%2e/etc/passwd` would send `/etc/passwd`; `apply`
+rejects such edits. The raw path (`LocalBroker::send_raw`, sharing
+`rawsock.rs` with the WebSocket client) sends HTTP/1.1 without `reqwest`:
 
-The raw send path bypasses `reqwest` so it can preserve those bytes. It shares
-the socket transport in `crates/h5i-browser/src/rawsock.rs` with the WebSocket
-client. `LocalBroker::send_raw` sends raw HTTP/1.1 requests.
+- `--raw-target T` writes the request-target byte for byte and computes `Host`
+  and `Content-Length`.
+- `--raw-headers` sends the edited request with header names in the case given,
+  keeping `--set` and cookies.
+- `--raw-request PATH|-` sends a whole request, framing included, recomputed by
+  nothing. The receipt records which framing invariants were broken. Bytes that
+  follow the first response on the connection are kept (`trailing` in the
+  stored message, `trailing_bytes` in the receipt), so a smuggled second
+  response is visible. A dumped request uses CRLF, so it can be fed back.
 
-`RawRequest` in `broker.rs` supports two forms:
+All forms check policy, pin the address, claim the budget and write a receipt
+before dialling. Proxied sessions allow raw requests only to loopback, as the
+WebSocket client does.
 
-- **Raw target.** `h5i browser resend <seq> --raw-target
-  /cgi-bin/.%2e/.%2e/bin/sh` preserves the target but computes `Host` and
-  `Content-Length`.
-- **Raw headers.** `h5i browser resend <seq> --raw-headers` sends the request
-  the edits produced down this path, keeping its own target and writing header
-  names in the case they were given. The middle ground: `--set` still applies
-  and the cookies still travel, which neither of the other two forms offers.
-- **Raw request.** `h5i browser resend --raw-request <path>` preserves the full
-  request, including framing headers. The receipt records broken framing
-  invariants.
+## Not built, by decision
 
-Both forms check policy, pin the address, claim the budget, and write a receipt
-before dialing. Because raw sockets cannot use the egress proxy, proxied sessions
-allow raw requests only to loopback, as the WebSocket client does.
+- A scanner: no crawl-and-flag mode, no severity ratings. Crawling lives in
+  recon, which discovers and never flags.
+- Payload generation: no injection strings or encoders beyond what an edit
+  needs. Wordlists are input, never shipped. `dom scan`'s prototype-pollution
+  corpus is the one exception (W18).
+- Vulnerability verdicts. h5i reports differences; the agent signs a finding.
+- An exploit database, a plugin marketplace, or an agent planner.
 
-**Now reachable:** `--raw-target` solves XBEN-026 (CVE-2021-42013) and XBEN-031
-(CVE-2021-41773) end to end. Worked scripts are in `h5i-benchmark`.
-
-**Still open:** XBEN-066 can now express arbitrary request framing, but its
-mitmproxy 6.0.2, HAProxy 2.0.5, and Apache stack still needs a working desync
-payload. The front proxy reparses requests and rewrites `Host`; this is now a
-payload problem, not a missing h5i capability.
-
-**2026-09-26.** Text became the default output. The JSON envelope for one
-replay was about 70 lines for a 31-byte answer: the body appeared twice,
-each header took four lines as a pretty-printed pair, and the ids were
-repeated inside `samples`. A model reads an HTTP message more easily than
-the same message escaped into JSON strings, so `show` and `replay` now print
-the message under one line of ids, status, size and time, with the body cut at
-4 KiB and control characters made inert. `--repeat` and `--set-each` print one
-row per send. `--json` returns the envelope on every verb, `--human` is still
-accepted and does nothing, and the exit codes did not change.
 
 ## Open questions
 
-1. **Capture default.** Off is the safe default and also the one that makes a
-   fresh session useless for this workflow. A middle option is capture on for
-   sessions created by `h5i websec` verbs and off for `h5i browser open`.
-2. **Store lifetime across restarts.** Ids are stable per session; a session
-   that is closed and reopened from a restored jar is arguably the same
-   engagement and arguably not.
-3. **Whether `websec` is a noun under `h5i` or a mode of `h5i browser`.** The
-   verbs act on a browser session either way. `h5i websec` reads better in a
-   script and keeps the browser's own verb list from doubling.
-4. **How much of the diff belongs in the read IR.** The DOM-shape body mode
-   wants the IR, and the IR was built for a different consumer.
-5. **Whether plugins are signed, and how they are pinned.** A plugin speaks the
-   `websec/1` schema against an engine that has to be new enough for it, so
-   install needs a compatibility check, and a downloaded executable needs a
-   provenance story that `install.sh` does not currently have.
+1. Store lifetime: whether a session reopened later is the same engagement.
+2. Plugin signing and pinning: install needs a compatibility check against the
+   engine and a provenance story for downloaded executables.
+3. Whether the DOM-shape diff mode is worth building on the proxy design.

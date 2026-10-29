@@ -170,25 +170,36 @@ fn verify(root: PathBuf, full: bool, extract: bool) -> ExitCode {
             other => other,
         }
     });
+    // Projects whose `extract --check` passed: `check` need not re-extract them.
+    let mut fresh = Vec::new();
     if extract {
         let tools = have("charon") && have("aeneas");
-        for p in projects.iter().filter(|p| p.manifest.extract.is_some()) {
+        for (i, p) in projects.iter().enumerate().filter(|(_, p)| p.manifest.extract.is_some()) {
             // A9: the committed Lean is exactly what Aeneas extracts.
             cx.step(&format!("extract --check {}", rel(p)), |_| {
                 if !tools {
                     return Outcome::Skip("charon/aeneas not on PATH".into());
                 }
-                logged(|out| h5i_app_cli::extract::check_fresh(p, out))
+                let o = logged(|out| h5i_app_cli::extract::check_fresh(p, out));
+                if matches!(o, Outcome::Pass) {
+                    fresh.push(i);
+                }
+                o
             });
         }
     }
     let lake = have("lake");
-    for p in &projects {
+    for (i, p) in projects.iter().enumerate() {
         cx.step(&format!("check {}", rel(p)), |_| {
             if !lake {
                 return Outcome::Skip("lake not on PATH".into());
             }
-            logged(|out| h5i_app_cli::check::check(p, false, out))
+            // An `[authz]` check re-extracts unless `extract --check` just did.
+            let extracted = fresh.contains(&i);
+            if !extracted && !p.manifest.authz.guarded.is_empty() && !(have("charon") && have("aeneas")) {
+                return Outcome::Skip("[authz] needs a fresh extraction: charon/aeneas not on PATH".into());
+            }
+            logged(|out| h5i_app_cli::check::check(p, false, extracted, out))
         });
     }
     if full {

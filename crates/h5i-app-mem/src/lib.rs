@@ -12,7 +12,7 @@
 //! If a commit is cancelled or fails its outcome is unknown, so a drop guard
 //! poisons the tenant: reads then fall through to PostgreSQL and a later commit
 //! does not revive the cache, until the executor is recreated (see
-//! docs/app/MEMORY.md). Poisoning is the only state a cancelled future can
+//! docs/design/design-app-executors.md). Poisoning is the only state a cancelled future can
 //! leave, and it is always safe.
 use h5i_app_core::{Executor, Kernel, ReplyCodec, TenantId, Timestamp};
 use h5i_app_pg::{Committed, DbError, Engine, Store};

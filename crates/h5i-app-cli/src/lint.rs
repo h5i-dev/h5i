@@ -9,8 +9,13 @@
 //! - A `Kernel` impl that declares read-only commands (`fn read_only`) comes
 //!   with a proof of `H5iAppLib.ReadOnly.Sound`: the engine skips locks and
 //!   retries for them on the strength of it.
+//! - An `[authz]` app's kernel invokes `h5i_app_std::authz_kernel!` once, no
+//!   crate of it hand-writes an `impl Kernel`, `Store` or `AuthzKernel`, and
+//!   its `h5i_app_*` dependencies are the framework's packages (`deps`).
+//!   Hygiene for the first two (macro output is not seen); the third reads
+//!   Cargo's resolution.
 //! - A report, never a failure: whether the proofs state a universal
-//!   authorization theorem.
+//!   authorization theorem, or the framework proves one.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -18,12 +23,19 @@ use std::path::{Path, PathBuf};
 use anyhow::{Result, bail};
 
 use crate::manifest::Project;
+use crate::rust;
 use crate::util::Out;
 
 pub fn lint(p: &Project, out: &Out) -> Result<()> {
     let mut bad = route_coverage(p);
     bad.extend(command_hygiene(p));
     bad.extend(read_only_proof(p));
+    bad.extend(guarded_wiring(p));
+    let (actor_bad, actor_notes) = actor_paths(p);
+    bad.extend(actor_bad);
+    for n in actor_notes {
+        out.note(&n);
+    }
     if let Some(note) = authz_coverage(p) {
         out.note(&note);
     }
@@ -170,31 +182,138 @@ fn route_coverage(p: &Project) -> Vec<String> {
     bad
 }
 
-/// Every `impl Kernel` that overrides `read_only` has a `ReadOnly.Sound` proof.
+/// Each `impl Kernel` the project's crates build (`crate::rust`: module trees,
+/// `cfg(test)` left out, any spelling of the trait path), and any file that
+/// does not parse.
+fn kernel_impls(p: &Project) -> (Vec<rust::Impl>, Vec<String>) {
+    let s = rust::Sources::under(&p.root);
+    let impls = s.impls_of("Kernel");
+    (impls, s.errors.into_iter().map(|e| rel_str(p, &e)).collect())
+}
+
+fn rel_str(p: &Project, s: &str) -> String {
+    s.replace(&format!("{}/", p.root.display()), "")
+}
+
+/// Every `impl Kernel` that overrides `read_only` has a hand-written
+/// `ReadOnly.Sound` proof. (An `[authz]` app writes no `impl Kernel`:
+/// `Authz<T>` declares the view's read-only commands, and `h5i app check`
+/// requires `<fn>.read_only_sound`.) A source that does not parse fails.
 fn read_only_proof(p: &Project) -> Vec<String> {
-    let mut files = Vec::new();
-    rs_files(&p.root, &mut files);
-    files.sort();
-    let proven = std::fs::read_dir(p.proofs()).into_iter().flatten().flatten().any(|e| {
-        e.path().extension().is_some_and(|x| x == "lean")
-            && std::fs::read_to_string(e.path()).unwrap_or_default().contains("ReadOnly.Sound")
-    });
-    let mut bad = Vec::new();
-    for f in &files {
-        let text = std::fs::read_to_string(f).unwrap_or_default();
-        let Some(at) = text.find("impl Kernel for").or_else(|| text.find("impl h5i_app_core::Kernel for")) else { continue };
-        let Some(brace) = text[at..].find('{') else { continue };
-        let body = balanced_braces(&text[at + brace + 1..]);
-        if body.contains("fn read_only(") && !proven {
-            let line = text[..at].lines().count() + 1;
+    let proven = crate::check::has_read_only_proof(p);
+    let (impls, mut bad) = kernel_impls(p);
+    for i in impls {
+        // h5i-app-core's `Authz<T>`: its `read_only` is the view's, proven
+        // for each app that runs it (`<fn>.read_only_sound`, required by
+        // `h5i app check`), so it carries no proof of its own.
+        let framework = i.self_ty == "Authz" && crate::util::package_name(&i.krate).as_deref() == Some("h5i-app-core");
+        if i.fns.contains("read_only") && !proven && !framework {
             bad.push(format!(
-                "{}:{line}: Kernel::read_only is overridden, but no proof in {} states `H5iAppLib.ReadOnly.Sound`",
-                rel(p, f),
+                "{}:{}: Kernel::read_only is overridden, but no proof in {} states `H5iAppLib.ReadOnly.Sound`",
+                rel(p, &i.file),
+                i.line,
                 p.proofs().display()
             ));
         }
     }
     bad
+}
+
+/// With `[authz] guarded`, the project writes no `Kernel`, `Store` or
+/// `AuthzKernel` impl: the server runs `h5i_app_core::Authz<T>`, whose
+/// `transition` is the guard (framework code), with the `AuthzKernel` impl
+/// `h5i_app_std::authz_kernel!` writes and the `Store` `schema!` generates.
+///
+/// Hygiene, not a guarantee: the theorems hold for `Authz<T>` whatever the
+/// rest of the server does, and this flags the plain way of running something
+/// else instead. Code that only a macro or `include!` produces is not seen.
+fn guarded_wiring(p: &Project) -> Vec<String> {
+    let guarded = &p.manifest.authz.guarded;
+    if guarded.is_empty() {
+        return Vec::new();
+    }
+    let s = rust::Sources::under(&p.root);
+    let mut bad = Vec::new();
+    // The kernel's `App` and `guarded_transition` come from one
+    // `authz_kernel!`, so the engine's guard instantiation is the proven one.
+    if let Some(krate) = p.krate() {
+        let k = rust::Sources::of_crate(&krate);
+        let n = k.macro_calls(&["h5i_app_std", "authz_kernel"]);
+        if n != 1 {
+            bad.push(format!(
+                "{}: the kernel invokes `h5i_app_std::authz_kernel!` (by that path) {n} times; with `[authz]` it must once, so \
+                 that `App` runs the guard instantiation `guarded_transition` is proven for",
+                rel(p, &krate)
+            ));
+        } else {
+            // At the crate root: `extract` and the theorems are about the
+            // root's `guarded_transition`, and only there does a hand-written
+            // one collide with the macro's. From a module, `App` would run that
+            // module's instantiation while a decoy at the root is proven.
+            let lib = rust::lib_root(&krate);
+            if rust::top_level_macro_calls(&lib, &["h5i_app_std", "authz_kernel"]) != 1 {
+                bad.push(format!(
+                    "{}: `h5i_app_std::authz_kernel!` must be invoked at the top level of the crate root (not in a \
+                     module, not under `cfg`), so that the `guarded_transition` the theorems are about is the one \
+                     it writes",
+                    rel(p, &lib)
+                ));
+            }
+        }
+    }
+    match crate::deps::framework_problems(p) {
+        Ok(more) => bad.extend(more),
+        Err(e) => bad.push(format!("reading the framework's packages: {e:#}")),
+    }
+    for (name, from) in [
+        ("Kernel", "`h5i_app_core::Authz<T>` (run the kernel crate's `App`)"),
+        ("Store", "`schema!`'s mapping macro (`<mapping>!(App, store <Name>)`)"),
+        ("AuthzKernel", "`h5i_app_std::authz_kernel!` in the kernel crate"),
+    ] {
+        for i in s.impls_of(name) {
+            bad.push(format!(
+                "{}:{}: a hand-written `impl {name}`: with `[authz]` it comes from {from}, so that what the \
+                 server runs is what the theorems are about",
+                rel(p, &i.file),
+                i.line
+            ));
+        }
+    }
+    bad
+}
+
+/// Under `[authz]`, the policy is judged for the principal the engine is
+/// given, and only commands go through the guard. The handler-facing ways
+/// around that fail: `.engine()` (whose `execute` takes any principal),
+/// `.snapshot()` and `.snapshot_for()` (the tenant's state, unguarded); they
+/// are for `main.rs`'s setup and for tests, and tests are not scanned. The
+/// places that legitimately decide a principal or write outside commands
+/// (`assume_authenticated`, `or_anonymous`, `.migrate()`) are listed as part
+/// of the reviewed surface. Hygiene: what only a macro produces is not seen.
+fn actor_paths(p: &Project) -> (Vec<String>, Vec<String>) {
+    if p.manifest.authz.guarded.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+    let s = rust::Sources::under(&p.root);
+    let at = |f: &Path, l: usize| format!("{}:{l}", rel(p, f));
+    let bad = s
+        .calls_to(&["engine", "snapshot", "snapshot_for"])
+        .into_iter()
+        .map(|(f, l, n)| {
+            format!(
+                "{}: `{n}` outside tests: with `[authz]`, handlers act only through `H5iApp` with the request's \
+                 `Actor`, since the policy is judged for whatever principal the engine is given and `snapshot` \
+                 skips the guard (docs/design/design-app-authz.md, \"Who this is for\")",
+                at(&f, l)
+            )
+        })
+        .collect();
+    let notes = s
+        .calls_to(&["assume_authenticated", "or_anonymous", "migrate"])
+        .into_iter()
+        .map(|(f, l, n)| format!("[authz] reviewed surface: {}: `{n}` (decides a principal, or writes outside the guard)", at(&f, l)))
+        .collect();
+    (bad, notes)
 }
 
 /// The kernel's `Command` carries no client-set identity or privilege field.
@@ -244,6 +363,18 @@ pub fn flagged_command_fields(text: &str) -> Vec<(usize, String)> {
 /// authorization theorem. `None` for a project that has no `Command`.
 pub fn authz_coverage(p: &Project) -> Option<String> {
     let krate = p.krate()?;
+    let guarded = &p.manifest.authz.guarded;
+    if !guarded.is_empty() {
+        let thms: Vec<String> = guarded.iter().map(|g| format!("{g}.authorized")).collect();
+        let storage = match &p.manifest.authz.storage {
+            Some(t) => format!("storage: {t}"),
+            None => "storage: generated".to_string(),
+        };
+        return Some(format!(
+            "authorization: framework-proven ({}; writes and disclosed rows, read-only noninterference; {storage})",
+            thms.join(", ")
+        ));
+    }
     let mut files = Vec::new();
     rs_files(&krate.join("src"), &mut files);
     let has_commands = files.iter().any(|f| {
@@ -325,12 +456,173 @@ mod tests {
         let server = d.path().join("server");
         std::fs::create_dir_all(server.join("src")).unwrap();
         std::fs::create_dir_all(d.path().join("proofs")).unwrap();
-        std::fs::write(server.join("Cargo.toml"), "[package]\nname = \"s\"\n").unwrap();
+        std::fs::write(server.join("Cargo.toml"), "[package]\nname = \"s\"\n[dependencies]\naxum = \"0.8\"\n").unwrap();
         std::fs::write(server.join("src/lib.rs"), "impl Kernel for K {\n    fn read_only(c: &C) -> bool { k::read_only(c) }\n}\n").unwrap();
         let p = Project::load(&d.path().join("h5i-app.toml")).unwrap();
         assert_eq!(read_only_proof(&p).len(), 1);
+        std::fs::write(d.path().join("proofs/ReadOnly.lean"), "-- ReadOnly.Sound, some day\n").unwrap();
+        assert_eq!(read_only_proof(&p).len(), 1, "a comment is not a proof");
         std::fs::write(d.path().join("proofs/ReadOnly.lean"), "theorem ro : H5iAppLib.ReadOnly.Sound k t w := k_sound\n").unwrap();
         assert!(read_only_proof(&p).is_empty());
+    }
+
+    /// A kernel crate on the framework's real packages, with `extra` deps.
+    fn kernel_manifest(extra: &str) -> String {
+        let crates = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().display().to_string();
+        format!(
+            "[package]\nname = \"k\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[workspace]\n[dependencies]\n\
+             h5i-app-core = {{ path = \"{crates}/h5i-app-core\" }}\nh5i-app-std = {{ path = \"{crates}/h5i-app-std\" }}\n{extra}"
+        )
+    }
+
+    #[test]
+    fn handlers_act_only_as_the_request_actor() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("h5i-app.toml"), "[authz]\nguarded = [\"guarded_transition\"]\n").unwrap();
+        let server = d.path().join("server");
+        std::fs::create_dir_all(server.join("src")).unwrap();
+        std::fs::create_dir_all(server.join("tests")).unwrap();
+        std::fs::write(server.join("Cargo.toml"), "[package]\nname = \"s\"\n").unwrap();
+        let p = Project::load(&d.path().join("h5i-app.toml")).unwrap();
+        // The final review's mistakes: a route acting as another user, and an export of the snapshot.
+        std::fs::write(
+            server.join("src/lib.rs"),
+            "async fn posts_of(app: A, actor: Actor<K>, user: u64) { app.engine().execute(&principal(1, user), &ListPosts).await; }\n\
+             async fn export(app: A, a: Actor<K>) { app.engine().snapshot_for(a.principal(), &ListPosts).await; }\n",
+        )
+        .unwrap();
+        let (bad, _) = actor_paths(&p);
+        assert_eq!(bad.len(), 3, "{bad:?}");
+        // Custom auth and migrations are allowed, and listed for review.
+        std::fs::write(server.join("src/lib.rs"), "fn a(p: P) -> Actor<K> { Actor::assume_authenticated(p) }\nasync fn m(e: E) { e.migrate(&[]).await; }\n").unwrap();
+        let (bad, notes) = actor_paths(&p);
+        assert!(bad.is_empty(), "{bad:?}");
+        assert_eq!(notes.len(), 2, "{notes:?}");
+        // Tests may act as anyone.
+        std::fs::write(server.join("src/lib.rs"), "").unwrap();
+        std::fs::write(server.join("tests/t.rs"), "fn t(e: E) { e.snapshot(T(1)); }\n").unwrap();
+        assert!(actor_paths(&p).0.is_empty());
+    }
+
+    #[test]
+    fn framework_packages_are_the_framework() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("h5i-app.toml"), "[extract]\ncrate = \"kernel\"\n[authz]\nguarded = [\"guarded_transition\"]\n").unwrap();
+        let kernel = d.path().join("kernel");
+        std::fs::create_dir_all(kernel.join("src")).unwrap();
+        std::fs::write(kernel.join("src/lib.rs"), "").unwrap();
+        std::fs::write(kernel.join("Cargo.toml"), kernel_manifest("")).unwrap();
+        let p = Project::load(&d.path().join("h5i-app.toml")).unwrap();
+        assert_eq!(crate::deps::framework_problems(&p).unwrap(), Vec::<String>::new());
+        let crates = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().display().to_string();
+        // A `package =` rename puts another package behind the framework's name.
+        let renamed = kernel_manifest(&format!("h5i_app_pg = {{ path = \"{crates}/h5i-app-sql\", package = \"h5i-app-sql\" }}\n"));
+        std::fs::write(kernel.join("Cargo.toml"), renamed).unwrap();
+        let bad = crate::deps::framework_problems(&p).unwrap();
+        assert!(bad.iter().any(|b| b.contains("rename")), "{bad:?}");
+        // A look-alike `h5i-app-sql` from somewhere else than `h5i-app-core`.
+        let fake = d.path().join("fake/h5i-app-sql");
+        std::fs::create_dir_all(fake.join("src")).unwrap();
+        std::fs::write(fake.join("Cargo.toml"), "[package]\nname = \"h5i-app-sql\"\nversion = \"0.1.3\"\nedition = \"2024\"\n").unwrap();
+        std::fs::write(fake.join("src/lib.rs"), "").unwrap();
+        let swapped = kernel_manifest(&format!("h5i-app-sql = {{ path = \"{}\" }}\n", fake.display()));
+        std::fs::write(kernel.join("Cargo.toml"), swapped).unwrap();
+        let bad = crate::deps::framework_problems(&p).unwrap();
+        assert!(bad.iter().any(|b| b.contains("h5i-app-sql") && b.contains("comes from")), "{bad:?}");
+        // `extern crate` binds a framework name to another crate, the kernel
+        // itself included, with Cargo's resolution unchanged.
+        std::fs::write(kernel.join("Cargo.toml"), kernel_manifest("")).unwrap();
+        for code in ["extern crate fake as h5i_app_core;\n", "mod m { extern crate self as h5i_app_std; }\n"] {
+            std::fs::write(kernel.join("src/lib.rs"), code).unwrap();
+            let bad = crate::deps::framework_problems(&p).unwrap();
+            assert!(bad.len() == 1 && bad[0].contains("extern crate"), "{code}: {bad:?}");
+        }
+        std::fs::write(kernel.join("src/lib.rs"), "extern crate h5i_app_core;\nextern crate h5i_app_std as std_lib;\n").unwrap();
+        assert_eq!(crate::deps::framework_problems(&p).unwrap(), Vec::<String>::new());
+        std::fs::write(kernel.join("src/lib.rs"), "").unwrap();
+        // A server in a workspace of its own resolves its own dependencies.
+        let server = d.path().join("server");
+        std::fs::create_dir_all(server.join("src")).unwrap();
+        std::fs::write(server.join("src/main.rs"), "fn main() {}\n").unwrap();
+        let own = kernel_manifest(&format!("h5i-app-sql = {{ path = \"{}\" }}\n", fake.display())).replace("name = \"k\"", "name = \"srv\"");
+        std::fs::write(server.join("Cargo.toml"), own).unwrap();
+        let bad = crate::deps::framework_problems(&p).unwrap();
+        assert!(bad.iter().any(|b| b.starts_with("srv:") && b.contains("comes from")), "{bad:?}");
+        std::fs::remove_dir_all(&server).unwrap();
+        // The theorems' subject is fixed.
+        std::fs::write(d.path().join("h5i-app.toml"), "[extract]\ncrate = \"kernel\"\n[authz]\nguarded = [\"reviewed_transition\"]\n").unwrap();
+        assert!(Project::load(&d.path().join("h5i-app.toml")).is_err());
+    }
+
+    #[test]
+    fn authz_projects_write_no_kernel_or_store() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("h5i-app.toml"), "[authz]\nguarded = [\"guarded_transition\"]\n").unwrap();
+        let server = d.path().join("server");
+        std::fs::create_dir_all(server.join("src")).unwrap();
+        std::fs::write(server.join("Cargo.toml"), "[package]\nname = \"s\"\n").unwrap();
+        let lib = server.join("src/lib.rs");
+        let p = Project::load(&d.path().join("h5i-app.toml")).unwrap();
+        // The intended server: the kernel's `App` and the generated store.
+        std::fs::write(&lib, "pub type Forum = k::App;\nk::forum_tables!(Forum, store ForumStore);\n").unwrap();
+        assert!(guarded_wiring(&p).is_empty(), "{:?}", guarded_wiring(&p));
+        // The kernel must build `App` with `authz_kernel!`, exactly once.
+        std::fs::write(d.path().join("h5i-app.toml"), "[extract]\ncrate = \"kernel\"\n[authz]\nguarded = [\"guarded_transition\"]\n").unwrap();
+        let kernel = d.path().join("kernel");
+        std::fs::create_dir_all(kernel.join("src")).unwrap();
+        std::fs::write(kernel.join("Cargo.toml"), kernel_manifest("")).unwrap();
+        let p = Project::load(&d.path().join("h5i-app.toml")).unwrap();
+        for (code, want) in [
+            ("h5i_app_std::authz_kernel! { Forum { } }\n", 0),
+            ("macro_rules! mine { () => {} }\nmine!();\npub type App = h5i_app_core::Authz<Lax>;\n", 1),
+        ] {
+            std::fs::write(kernel.join("src/lib.rs"), code).unwrap();
+            assert_eq!(guarded_wiring(&p).len(), want, "{code}: {:?}", guarded_wiring(&p));
+        }
+        // In a module, or under `cfg`, a decoy at the root would be what is proven.
+        for code in [
+            "pub fn guarded_transition() {}\nmod run { h5i_app_std::authz_kernel! { Forum { } } }\n",
+            "#[cfg(any())]\nh5i_app_std::authz_kernel! { Forum { } }\n",
+        ] {
+            std::fs::write(kernel.join("src/lib.rs"), code).unwrap();
+            let bad = guarded_wiring(&p);
+            assert!(bad.iter().any(|b| b.contains("top level of the crate root")), "{code}: {bad:?}");
+        }
+        std::fs::write(kernel.join("src/lib.rs"), "h5i_app_std::authz_kernel! { Forum { } }\n").unwrap();
+        // Each hand-written impl is flagged, under any path spelling and past a test module.
+        for (code, what) in [
+            ("#[cfg(test)]\nmod t {}\nimpl ::h5i_app_core::Kernel for Mine {}\n", "Kernel"),
+            ("impl Store<App> for MyStore {}\n", "Store"),
+            ("use h5i_app_core::AuthzKernel as AK;\nimpl AK for Mine {}\n", "AuthzKernel"),
+        ] {
+            std::fs::write(&lib, code).unwrap();
+            let bad = guarded_wiring(&p);
+            assert_eq!(bad.len(), 1, "{what}: {bad:?}");
+            assert!(bad[0].contains(&format!("impl {what}")), "{bad:?}");
+        }
+        // Without `[authz]`, writing them is how an app works.
+        std::fs::write(d.path().join("h5i-app.toml"), "").unwrap();
+        let p = Project::load(&d.path().join("h5i-app.toml")).unwrap();
+        assert!(guarded_wiring(&p).is_empty());
+    }
+
+    #[test]
+    fn read_only_seen_past_a_test_module() {
+        // On main, lint read the whole file; a `cfg(test)` module above the
+        // impl must not hide an unproven `read_only`, with or without [authz].
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("h5i-app.toml"), "").unwrap();
+        let server = d.path().join("server");
+        std::fs::create_dir_all(server.join("src")).unwrap();
+        std::fs::create_dir_all(d.path().join("proofs")).unwrap();
+        std::fs::write(server.join("Cargo.toml"), "[package]\nname = \"s\"\n").unwrap();
+        std::fs::write(server.join("src/lib.rs"), "#[cfg(test)]\nmod t {}\nimpl Kernel for K {\n    fn read_only(c: &C) -> bool { true }\n}\n").unwrap();
+        let p = Project::load(&d.path().join("h5i-app.toml")).unwrap();
+        assert_eq!(read_only_proof(&p).len(), 1);
+        // The exemption for h5i-app-core's `Authz<T>` is not one for a type an
+        // app names `Authz`.
+        std::fs::write(server.join("src/lib.rs"), "impl<T> Kernel for Authz<T> {\n    fn read_only(c: &C) -> bool { true }\n}\n").unwrap();
+        assert_eq!(read_only_proof(&p).len(), 1);
     }
 
     #[test]

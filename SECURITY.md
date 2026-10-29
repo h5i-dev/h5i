@@ -31,12 +31,12 @@ earlier would expose a working exploit.
 - **Verified applications:** A Lean proof applies to extracted Rust code
   and its stated assumptions. Changes to extraction, proof checks, generated
   code, database access, or tenant scoping can invalidate a security claim. See
-  [the trust model](docs/app/TRUST.md) for what is proven, enforced, tested, and
+  [the trust model](docs/design/design-app-trust.md) for what is proven, enforced, tested, and
   assumed.
 - **GPU execution:** The optional GPU adapters are checked through shared
   semantics and differential tests; GPU execution is not formally proved.
   Keep validation and state changes on the verified application path. See
-  [GPU design](docs/app/GPU.md).
+  [GPU design](docs/design/design-app-executors.md).
 - **Red-teaming and CI/CD:** Browser capture, request replay, reconnaissance,
   and security regression tests can handle hostile content and credentials.
   Requests must obey their configured scope and recording policy. Treat page

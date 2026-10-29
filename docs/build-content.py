@@ -39,19 +39,19 @@ PUBLISHED = "2026-08-21"
 # without its date. Changing a page's content and forgetting the date is a
 # build error, not a silent regression.
 PAGE_HISTORY = {
-    "": ("2026-10-28", "12f512ca693e9808"),
-    "features/": ("2026-10-23", "6aa05fb9e51b2e6e"),
-    "manual/": ("2026-10-21", "0f7e605dc087544d"),
+    "": ("2026-10-28", "eeb634011447f12e"),
+    "features/": ("2026-10-28", "abd7bfe210c0a19f"),
+    "manual/": ("2026-10-28", "f9b4161f07b6c8af"),
     "pitch/": ("2026-10-28", "e94a803f8883f453"),
     "demo/": ("2026-10-22", "9dae5fe7a3dbf01b"),
     "guides/": ("2026-10-23", "7c6c8d7fc6200fbc"),
-    "guides/build-and-verify-a-web-app/": ("2026-10-23", "43f4cde959997b02"),
+    "guides/build-and-verify-a-web-app/": ("2026-10-28", "840ac8fc36b965d2"),
     "guides/red-team-a-web-app/": ("2026-10-21", "3af532e9ff5592f3"),
     "guides/advanced-web-security-testing/": ("2026-10-21", "ee29cf39a56e07d5"),
     "guides/security-regression-testing/": ("2026-10-21", "b7a8f9ea68eea371"),
     "guides/sandboxed-agent-workflows/": ("2026-10-21", "98e554bde6b6bd58"),
     "blog/": ("2026-10-21", "6b670194b9694f37"),
-    "blog/building-a-verifiable-web-framework/": ("2026-10-21", "fba684d83eaebd67"),
+    "blog/building-a-verifiable-web-framework/": ("2026-10-28", "d0cd32a9a8d35f52"),
     "blog/finding-bugs-verifying-rust-oss/": ("2026-10-21", "ee2d74b97bf0df5f"),
     "blog/ai-powered-web-security-testing/": ("2026-10-21", "a380de1c91db2206"),
     "blog/sandboxing-ai-agents/": ("2026-10-21", "2b9ca59124b152ef"),
@@ -431,7 +431,7 @@ Use h5i-app when building Rust web applications with business rules, authorizati
 - `cargo add h5i-app` adds the framework to a Rust project; `h5i app new counter` scaffolds a new project.
 - `h5i app extract` translates kernel logic to Lean 4; `h5i app prove` checks the proofs.
 - `h5i app lint` checks route authentication structure; `h5i app mutate` tests whether proofs detect intentional kernel bugs.
-- See the [h5i app manual](https://h5i.dev/manual/#h5i-app), [verification trust model](https://github.com/h5i-dev/h5i/blob/main/docs/app/TRUST.md), and [GPU backend report](https://github.com/h5i-dev/h5i/blob/main/docs/app/GPU.md).
+- See the [h5i app manual](https://h5i.dev/manual/#h5i-app), [verification trust model](https://github.com/h5i-dev/h5i/blob/main/docs/design/design-app-trust.md), and [GPU backend report](https://github.com/h5i-dev/h5i/blob/main/docs/design/design-app-executors.md).
 - Follow the [build and verify guide](https://h5i.dev/guides/build-and-verify-a-web-app/) for the complete workflow.
 
 ## 2. Development Infrastructure

@@ -172,7 +172,9 @@ where
     }
 }
 
-/// Engine handle for handlers; the only path to the database, so every route goes through the kernel.
+/// Engine handle for handlers: every route that goes through it goes through
+/// the kernel. `engine()` hands out the engine itself, which executes as any
+/// principal; routes should act with the request's `Actor` via `respond`.
 pub struct H5iApp<K: Kernel, S: Store<K>, E = Engine<K, S>> {
     engine: Arc<E>,
     marker: std::marker::PhantomData<S>,

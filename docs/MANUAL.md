@@ -1111,8 +1111,9 @@ that choice in the policy digest. Both are driven by agent-browser.
 Chromium runs with an isolated profile and the box's policy. Its requests are
 seen at the box's boundary and by h5i's mediator on the agent-browser socket,
 not by a session's capture proxy: inspect the box-level network evidence. An
-older profile that pins `--engine h5i` is refused with that name, because h5i's
-own engine has been removed.
+older profile that pins `--engine h5i` is refused with that name: h5i's own
+engine is no longer part of h5i and now lives in
+[h5i-browser](https://github.com/h5i-dev/h5i-browser).
 
 ### Inspecting what happened
 
@@ -1279,7 +1280,9 @@ h5i app mutate --auto --list   # mutants generated from the kernel's syntax
 
 For CI, `h5i app extract --check` changes nothing and fails if
 `proofs/generated/` is not what the kernel extracts to, and `--all` runs a verb
-on every project under a directory.
+on every project under a directory. For an `[authz]` project, `check` runs
+that comparison itself (so it needs Charon and Aeneas), since its generated
+theorems are only about the kernel when the generated Lean is fresh.
 
 `check` (and `prove`) fail on `sorry` or `native_decide` in hand-written Lean,
 on any `axiom` declaration, and on any theorem of a hand-written module that
@@ -1293,6 +1296,28 @@ mutants generated from the kernel's syntax: comparison boundaries, `==` and
 `!=`, `&&` and `||`, dropped `!`, and `if` conditions forced to `true` or
 `false`.
 
+`[authz] guarded` opts a kernel into framework-proven authorization
+([`docs/design/design-app-authz.md`](design/design-app-authz.md)). The kernel invokes
+`h5i_app_std::authz_kernel!`, which writes `guarded_transition` (the only
+value `guarded` accepts) and `App`
+(`h5i_app_core::Authz<_>`, whose `Kernel::transition` is the guard), and the
+server runs `App` on the store its mapping macro generates
+(`<mapping>!(App, store Name)`), writing no `Kernel` or `Store` itself. `extract` then writes
+`proofs/generated/Authz.lean`, which proves `<kernel>.<fn>.authorized` by
+instantiating the framework's theorem, with no hand-written Lean,
+`<fn>.kernel_apply_eq` (the policy is checked against the kernel's own
+`apply`) and `Committed.pg_stored` (the kernel's `sql_writes` and `decode`
+store and load what that `apply` computes). If `sql_write` is not a plain
+list of `schema!` table writes, `extract` fails unless
+`[authz] storage = "<theorem>"` names a hand-written storage proof. `check`
+builds `Authz` itself and gates these and `<fn>.read_only_sound`. `lint`
+flags a hand-written `impl Kernel`, `impl Store` or `impl AuthzKernel` and a
+kernel without exactly one `h5i_app_std::authz_kernel!` (hygiene: those two
+pieces of wiring are what stays outside the proofs), and `lint` and `check`
+both fail unless every `h5i_app_*` dependency is the framework's own package
+(`cargo metadata`: no `package =` renames, no copy from elsewhere). An app without `[authz]` is
+unaffected.
+
 `h5i app new` requires the h5i-app Lean library from git at this binary's
 release tag; `--h5i-path <checkout>` uses a local h5i checkout instead.
 
@@ -1304,6 +1329,10 @@ start-from = ["transition"]   # Charon start points, inside the crate
 include = ["h5i_app_sql"]     # crates extracted with the kernel
 schema = true                 # also start from what schema! generates, and write its lean "..." file
 std-specs = true              # copy h5i-app-std's specs next to the extraction
+
+[authz]
+guarded = ["guarded_transition"]   # written by h5i_app_std::authz_kernel! (guard_viewed)
+# storage = "my_kernel.Storage.db_inv"   # only if the storage proof cannot be generated
 
 [check]
 theorems = ["my_kernel.inv_preserved"]   # must exist and pass the gate

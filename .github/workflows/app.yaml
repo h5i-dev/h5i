@@ -95,10 +95,26 @@ jobs:
           key: lake-${{ hashFiles('**/proofs/lean-toolchain', '**/proofs/lakefile.lean', '**/proofs/lake-manifest.json') }}-${{ github.sha }}
           restore-keys: |
             lake-${{ hashFiles('**/proofs/lean-toolchain', '**/proofs/lakefile.lean', '**/proofs/lake-manifest.json') }}-
+      # Before Nix puts Charon's toolchain on PATH.
+      - run: cargo build --release --locked -p h5i-app-xtask
+      # An `[authz]` project's check re-extracts it (its gate is only about
+      # the kernel when proofs/generated/ is fresh), so it needs both tools.
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            extra-substituters = https://hacl.cachix.org
+            extra-trusted-public-keys = hacl.cachix.org-1:FzsZ2xsByOwKwIWNPII7yMOelJNDZ12mDAj3d1eGX0c=
+      - uses: DeterminateSystems/magic-nix-cache-action@v8
+      - name: Build Charon and Aeneas at the pinned commit
+        run: |
+          nix build "github:AeneasVerif/aeneas/$AENEAS_REV" -o "$RUNNER_TEMP/aeneas" -L
+          nix build "github:AeneasVerif/aeneas/$AENEAS_REV#charon" -o "$RUNNER_TEMP/charon" -L
+          echo "$RUNNER_TEMP/aeneas/bin" >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/charon/bin" >> "$GITHUB_PATH"
       # Build every proof project and gate it: no sorry, native_decide or
       # axiom, every theorem of a hand-written module on the standard axioms
       # only, and the theorems each h5i-app.toml names present.
-      - run: cargo app check --all crates examples/app
+      - run: target/release/h5i-app-xtask check --all crates examples/app
   # A9: the committed Lean must be exactly what Aeneas extracts from the kernel.
   extract:
     runs-on: ubuntu-latest

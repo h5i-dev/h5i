@@ -356,7 +356,7 @@ function Guarantees({
     return (
       <div className="app-pad app-scroll">
         <MapPrompt project={data.summary.id} />
-        <Evidence view={latest} project={data.summary.id} />
+        <Evidence view={latest} project={data.summary.id} required={data.required_theorems} />
       </div>
     );
   const drift = explanationDrift(data.model, data.issues);
@@ -650,7 +650,7 @@ function Guarantees({
                       )}
                     </>
                   )}
-                  <Evidence view={latest} project={data.summary.id} />
+                  <Evidence view={latest} project={data.summary.id} required={data.required_theorems} />
                 </>
               )}
             </aside>
@@ -970,7 +970,7 @@ export function MapPrompt({ project }: { project: string }) {
         conditions. Try this prompt in your coding agent:
       </p>
       <pre className="app-code">{`Create h5i-app.ui.json next to the manifest for ${project}.
-Use docs/app/app-console.md and examples/app/booking/h5i-app.ui.json as references.
+Use docs/design/design-app-console.md and examples/app/booking/h5i-app.ui.json as references.
 Read the Rust and Lean code. Explain the user-visible guarantees, their assumptions
 and exclusions, and connect them to the implemented specifications, theorems and
 Rust code. A proof edge means "from depends on to"; put out-of-scope behavior
@@ -1114,7 +1114,15 @@ function Code({
   );
 }
 
-function Evidence({ view, project }: { view?: RunView; project: string }) {
+function Evidence({
+  view,
+  project,
+  required,
+}: {
+  view?: RunView;
+  project: string;
+  required: string[];
+}) {
   return (
     <section className="app-evidence">
       <h3>Check evidence</h3>
@@ -1128,6 +1136,21 @@ function Evidence({ view, project }: { view?: RunView; project: string }) {
           </p>
           {view.run.error && <Note tone="warn">{view.run.error}</Note>}
           <Stages stages={view.run.stages} />
+          {view.run.authorization && (
+            <p className="app-muted">{view.run.authorization}</p>
+          )}
+          {!!required.length && (
+            <details>
+              <summary>Required theorems ({required.length})</summary>
+              <ul>
+                {required.map((t) => (
+                  <li key={t}>
+                    <code>{t}</code>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
           {!!view.run.unbuilt_modules.length && (
             <Note tone="warn">
               Not gated: {view.run.unbuilt_modules.join(", ")}

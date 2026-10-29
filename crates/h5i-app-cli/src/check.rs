@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 
 use crate::manifest::Project;
 use crate::util::{self, Out};
@@ -15,10 +15,12 @@ use crate::util::{self, Out};
 pub const STANDARD_AXIOMS: [&str; 3] = ["propext", "Classical.choice", "Quot.sound"];
 
 /// `refetch` discards the Lake packages and fetches them again
-/// ([`crate::packages`]).
-pub fn check(p: &Project, refetch: bool, out: &Out) -> Result<()> {
+/// ([`crate::packages`]). `extracted`: `proofs/generated/` was just written
+/// by `extract` (as `prove` does), so an `[authz]` project need not
+/// re-extract it to know it is fresh.
+pub fn check(p: &Project, refetch: bool, extracted: bool, out: &Out) -> Result<()> {
     let mut record = crate::report::start(p, "check", p.manifest.check.targets.clone())?;
-    let result = check_recorded(p, refetch, out, &mut record);
+    let result = check_recorded(p, refetch, extracted, out, &mut record);
     if let Err(e) = &result {
         record.run.error = Some(format!("{e:#}"));
     }
@@ -29,12 +31,33 @@ pub fn check(p: &Project, refetch: bool, out: &Out) -> Result<()> {
 fn check_recorded(
     p: &Project,
     refetch: bool,
+    extracted: bool,
     out: &Out,
     record: &mut h5i_app_report::Recorder,
 ) -> Result<()> {
     let proofs = p.proofs();
     if !proofs.join("lakefile.lean").is_file() && !proofs.join("lakefile.toml").is_file() {
         bail!("{} is not a Lake project", proofs.display());
+    }
+    // What this run requires, recorded before anything can fail, so the
+    // web view never shows an older run's list as this one's.
+    let authz = authz_theorems(p)?;
+    let mut theorems = p.manifest.check.theorems.clone();
+    theorems.extend(authz.iter().cloned());
+    record.run.required_theorems = theorems.clone();
+    record.save()?;
+    // `[authz]`: the gated theorems are only about the kernel if
+    // `proofs/generated/` is what it extracts to. The gate checks names and
+    // axioms, not statements, so a hand-edited `Authz.lean` (`theorem
+    // ….authorized : True`), `AuthzSpecs.lean` or extracted kernel would
+    // otherwise pass. Re-extract and compare, as `extract --check` does.
+    if !authz.is_empty() && !extracted {
+        crate::report::step(record, "extraction_fresh", out, |log| {
+            crate::extract::check_fresh(p, log).context(
+                "with `[authz]`, `check` re-extracts the kernel (Charon and Aeneas, see `h5i app doctor`) \
+                 to confirm proofs/generated/ is what it extracts to; `h5i app prove` extracts and checks",
+            )
+        })?;
     }
     // Held through the build, so another `h5i app` cannot discard the
     // packages under it.
@@ -48,23 +71,47 @@ fn check_recorded(
         .current_dir(&proofs);
     crate::report::step(record, "lean_build", out, |log| util::run(&mut build, log))?;
 
+    // `[authz]`: build the generated module itself, so the gate below never
+    // reads an `Authz.olean` left from an earlier build (a lakefile whose
+    // default roots miss it would otherwise pass on a stale one).
+    if !authz.is_empty() {
+        let mut build = Command::new("lake");
+        build.args(["build", crate::extract::AUTHZ_MODULE]).current_dir(&proofs);
+        crate::report::step(record, "authz_build", out, |log| {
+            util::run(&mut build, log).with_context(|| {
+                format!(
+                    "building the generated `{m}` module failed. If lake says unknown target `{m}`, add \
+                     `{m}` (with `AuthzSpecs` and `Schema`) to a `lean_lib`'s roots in {}/lakefile.lean",
+                    proofs.display(),
+                    m = crate::extract::AUTHZ_MODULE
+                )
+            })
+        })?;
+    }
     let mut problems = scan(&proofs)?;
-    let (built, unbuilt) = hand_written_modules(&proofs, &p.manifest.check.targets)?;
+    problems.extend(crate::deps::framework_problems(p)?);
+    let (mut built, unbuilt) = hand_written_modules(&proofs, &p.manifest.check.targets)?;
     record.run.unbuilt_modules = unbuilt.clone();
     for m in &unbuilt {
         out.note(&format!(
             "note: {m} is not built by `lake build`, so its theorems are not gated"
         ));
     }
-    let theorems = &p.manifest.check.theorems;
+    // `[authz]`: the generated module is gated like a hand-written one, and
+    // each guarded function's theorem must exist.
+    if !authz.is_empty() {
+        built.push(crate::extract::AUTHZ_MODULE.to_string());
+    }
+    let theorems = &theorems;
     if built.is_empty() && theorems.is_empty() {
         out.note("note: no hand-written modules built; nothing to gate");
     } else {
         let (issues, declarations) = crate::report::step(record, "axiom_gate", out, |log| {
             gate(&proofs, &built, theorems, log)
         })?;
-        record.run.declarations = declarations;
         problems.extend(issues);
+        problems.extend(storage_problems(p, &declarations, out)?);
+        record.run.declarations = declarations;
     }
     if !problems.is_empty() {
         bail!(
@@ -73,7 +120,90 @@ fn check_recorded(
             problems.join("\n  ")
         );
     }
+    // Only a passed gate establishes what the coverage line claims.
+    if let Some(a) = crate::lint::authz_coverage(p) {
+        record.run.authorization = a;
+    }
     Ok(())
+}
+
+/// `<kernel>.<fn>.authorized` and `.kernel_apply_eq` for each `[authz]
+/// guarded` function, `.read_only_sound`, and the storage theorems (or
+/// `[authz] storage`).
+pub fn authz_theorems(p: &Project) -> Result<Vec<String>> {
+    let guarded = &p.manifest.authz.guarded;
+    if guarded.is_empty() {
+        return Ok(Vec::new());
+    }
+    let ns = kernel_ns(p)?;
+    let mut out: Vec<String> = guarded
+        .iter()
+        .flat_map(|g| [format!("{ns}.{g}.authorized"), format!("{ns}.{g}.kernel_apply_eq")])
+        .collect();
+    // `Authz<T>` declares the view's read-only commands, which the engine
+    // runs without locks on the strength of `ReadOnly.Sound`.
+    out.extend(guarded.iter().map(|g| format!("{ns}.{g}.read_only_sound")));
+    // A4 for the app: the generated storage theorems, or the one the app
+    // names. Never silently neither.
+    match &p.manifest.authz.storage {
+        Some(t) => out.push(t.clone()),
+        None => out.extend(crate::extract::STORAGE_THEOREMS.iter().map(|t| format!("{ns}.{t}"))),
+    }
+    Ok(out)
+}
+
+/// `[authz] storage` names the app's own A4 theorem: it must be a theorem of
+/// the kernel's namespace (not a library fact or a type), and its statement
+/// is printed, since `check` cannot tell what it says. Reviewing that
+/// statement is on the app (docs/design/design-app-authz.md, "What stays trusted").
+fn storage_problems(p: &Project, decls: &[h5i_app_report::Declaration], out: &Out) -> Result<Vec<String>> {
+    let Some(name) = &p.manifest.authz.storage else { return Ok(Vec::new()) };
+    if p.manifest.authz.guarded.is_empty() {
+        return Ok(Vec::new());
+    }
+    let ns = kernel_ns(p)?;
+    let Some(d) = decls.iter().find(|d| &d.name == name) else {
+        return Ok(vec![format!("[authz] storage: {name} was not found among the gated declarations")]);
+    };
+    let mut bad = Vec::new();
+    if d.kind != "theorem" {
+        bad.push(format!("[authz] storage: {name} is a {}, not a theorem", d.kind));
+    }
+    if !name.starts_with(&format!("{ns}.")) {
+        bad.push(format!("[authz] storage: {name} is not in the kernel's namespace `{ns}`"));
+    }
+    out.note(&format!("[authz] storage, to review: {name} : {}", d.signature));
+    Ok(bad)
+}
+
+/// The kernel's Lean namespace: its crate's name, `-` as `_`.
+fn kernel_ns(p: &Project) -> Result<String> {
+    let Some(ex) = &p.manifest.extract else {
+        bail!("{}: `[authz] guarded` needs an [extract] section", p.display());
+    };
+    let krate = p.root.join(&ex.krate);
+    let meta = util::metadata(&krate, false)?;
+    Ok(util::ident(&meta.package_at(&krate)?.name))
+}
+
+/// A hand-written proof states `ReadOnly.Sound` in code, not in a comment.
+pub fn has_read_only_proof(p: &Project) -> bool {
+    std::fs::read_dir(p.proofs()).into_iter().flatten().flatten().any(|e| {
+        e.path().extension().is_some_and(|x| x == "lean")
+            && lean_code(&std::fs::read_to_string(e.path()).unwrap_or_default()).contains("ReadOnly.Sound")
+    })
+}
+
+/// Lean source without its comments (`--` to the end of a line, `/- … -/`).
+pub fn lean_code(text: &str) -> String {
+    static BLOCK: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"(?s)/-.*?-/").unwrap());
+    BLOCK
+        .replace_all(text, "")
+        .lines()
+        .map(|l| l.split("--").next().unwrap_or(""))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn lean_files(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -573,6 +703,13 @@ mod tests {
             "a.Sound.«select_sound'»"
         );
         assert_eq!(lean_name("a.b"), "a.b");
+    }
+
+    #[test]
+    fn comments_are_not_proofs() {
+        let t = "-- ReadOnly.Sound later\n/- ReadOnly.Sound\n  here -/\ntheorem x : True := trivial\n";
+        assert!(!lean_code(t).contains("ReadOnly.Sound"));
+        assert!(lean_code("theorem ro : H5iAppLib.ReadOnly.Sound r t w := h -- done").contains("ReadOnly.Sound"));
     }
 
     #[test]

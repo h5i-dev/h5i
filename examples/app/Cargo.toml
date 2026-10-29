@@ -5,6 +5,8 @@ members = [
     "parallel/kernel",
     "board/kernel",
     "board/server",
+    "forum/kernel",
+    "forum/server",
     "booking/kernel",
     "booking/server",
     "calculator/kernel",

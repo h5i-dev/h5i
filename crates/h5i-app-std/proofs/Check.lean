@@ -1,5 +1,6 @@
 import StdSpecs
-/-! Every spec in `StdSpecs` exists here (none was skipped by its `h5i_when` guard) and
+import AuthzSpecs
+/-! Every spec in `StdSpecs` and `AuthzSpecs` exists here (none was skipped by its `h5i_when` guard) and
 uses only the standard axioms. Not copied into kernels. -/
 #print axioms h5i_app_std.Specs.HashModel.spec
 #print axioms h5i_app_std.Specs.bool_key_hash_spec
@@ -71,3 +72,20 @@ uses only the standard axioms. Not copied into kernels. -/
 #print axioms h5i_app_std.Specs.u8_key_hash_spec
 #print axioms h5i_app_std.Specs.usize_key_hash_spec
 #print axioms h5i_app_std.Specs.vec_u8_key_hash_spec
+#print axioms h5i_app_std.Specs.authz.take_val
+#print axioms h5i_app_std.Specs.authz.take_length
+#print axioms h5i_app_std.Specs.authz.push_ok
+#print axioms h5i_app_std.Specs.authz.index_ok
+#print axioms h5i_app_std.Specs.authz.prefix_ok
+#print axioms h5i_app_std.Specs.authz.check_writes_ok
+#print axioms h5i_app_std.Specs.authz.shown_ok
+#print axioms h5i_app_std.Specs.authz.check_reads_ok
+#print axioms h5i_app_std.Specs.authz.guard_authorized
+#print axioms h5i_app_std.Specs.authz.guard_app_error
+#print axioms h5i_app_std.Specs.authz.guard_only_denies
+#print axioms h5i_app_std.Specs.authz.authorized_of_eq
+#print axioms h5i_app_std.Specs.authz.transition_authorized_of_never_denied
+#print axioms h5i_app_std.Specs.authz.guard_viewed_noninterference
+#print axioms h5i_app_std.Specs.authz.guard_viewed_authorized
+#print axioms h5i_app_std.Specs.authz.authorized_viewed_of_eq
+#print axioms h5i_app_std.Specs.authz.read_only_sound_of_viewed

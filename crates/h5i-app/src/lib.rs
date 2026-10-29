@@ -3,7 +3,7 @@
 //! Application logic is a pure Rust function, the *kernel*, which is
 //! extracted to Lean 4 with Aeneas so its properties can be proven. The
 //! shell around it — HTTP, authentication, PostgreSQL — is ordinary Rust
-//! and is trusted. `docs/app/TRUST.md` in the h5i repository lists exactly
+//! and is trusted. `docs/design/design-app-trust.md` in the h5i repository lists exactly
 //! what is proven and what is assumed.
 //!
 //! This crate re-exports the `h5i-app-*` crates behind features, so a

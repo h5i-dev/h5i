@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel>
 <title>The h5i Blog</title><link>https://h5i.dev/blog/</link>
 <description>Engineering essays on verifiable Rust web applications, Lean 4 proofs, web security testing, and agent isolation.</description>
-<language>en-us</language><lastBuildDate>Wed, 21 Oct 2026 12:00:00 GMT</lastBuildDate>
+<language>en-us</language><lastBuildDate>Wed, 28 Oct 2026 12:00:00 GMT</lastBuildDate>
 <atom:link xmlns:atom="http://www.w3.org/2005/Atom" href="https://h5i.dev/feed.xml" rel="self" type="application/rss+xml"/>
     <item><title>Building a Verifiable Web Framework in Rust</title><link>https://h5i.dev/blog/building-a-verifiable-web-framework/</link>
       <guid isPermaLink="true">https://h5i.dev/blog/building-a-verifiable-web-framework/</guid><pubDate>Wed, 21 Oct 2026 12:00:00 GMT</pubDate>
