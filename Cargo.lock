@@ -1220,9 +1220,13 @@ dependencies = [
  "h5i-app-core",
  "h5i-app-pgsql",
  "h5i-app-sql",
+ "ring",
+ "rustls",
  "tokio",
  "tokio-postgres",
+ "tokio-rustls",
  "tracing",
+ "webpki-roots 1.0.7",
 ]
 
 [[package]]

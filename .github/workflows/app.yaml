@@ -65,6 +65,8 @@ jobs:
       - run: cargo build -p 'h5i-app*' --all-features --all-targets --locked
       - run: cargo build --workspace --all-targets --locked
         working-directory: examples/app
+      # A TLS-only PostgreSQL for h5i-app-pg's `tls` tests.
+      - run: scripts/app/pg-tls.sh "$RUNNER_TEMP/pg-tls" >> "$GITHUB_ENV"
       - run: scripts/app/ci-rust-tests.sh
       # Routes take an Actor; no client-set identity in a Command.
       - run: cargo app lint --all crates examples/app

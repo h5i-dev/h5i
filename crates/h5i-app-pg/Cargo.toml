@@ -11,6 +11,8 @@ readme = "../h5i-app/README.md"
 [features]
 # Test-only hooks (Tx::backend_pid).
 testing = []
+# `pool_tls` / `lockdown_tls`: TLS with rustls, server certificate verified.
+tls = ["dep:rustls", "dep:tokio-rustls", "dep:webpki-roots", "dep:ring"]
 
 [dependencies]
 h5i-app-core.workspace = true
@@ -22,3 +24,7 @@ bytes = "1"
 tracing = "0.1"
 h5i-app-sql.workspace = true
 h5i-app-pgsql.workspace = true
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"], optional = true }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"], optional = true }
+webpki-roots = { version = "1.0", optional = true }
+ring = { version = "0.17", optional = true }

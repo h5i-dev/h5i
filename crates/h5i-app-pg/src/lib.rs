@@ -29,10 +29,16 @@ pub mod outbox;
 mod roles;
 mod statements;
 mod table;
+#[cfg(feature = "tls")]
+pub mod tls;
 #[cfg(test)]
 mod reads_test;
+#[cfg(all(test, feature = "tls"))]
+mod tls_test;
 
 pub use roles::{lockdown, lockdown_sql};
+#[cfg(feature = "tls")]
+pub use roles::lockdown_tls;
 pub use table::{column_of, count_read, create_index, create_tables, load_read, load_reads, load_table, load_tables, spec, store_writes, ColumnDef, Kind, PgField, Table, Value};
 pub use h5i_app_core::Timestamp;
 pub use h5i_app_sql as sql;
@@ -354,11 +360,31 @@ pub fn with_schema(url: &str, schema: &str) -> Result<String, DbError> {
     Ok(format!("{url}{sep}options=-c%20search_path%3D{schema}"))
 }
 
+/// A pool of plain TCP connections. A URL with `sslmode=require` fails to
+/// connect; use [`pool_tls`] for TLS.
 pub fn pool(url: &str, max_size: usize) -> Result<Pool, DbError> {
     let mut cfg = Config::new();
     cfg.url = Some(url.to_string());
     cfg.pool = Some(deadpool_postgres::PoolConfig::new(max_size));
     cfg.create_pool(Some(Runtime::Tokio1), NoTls)
+        .map(|p| Pool(p, Arc::new(statements::Statements::new(statements::DEFAULT_CAPACITY))))
+        .map_err(|e| DbError::Pool(e.to_string()))
+}
+
+/// A pool whose connections all use TLS, verifying the server's certificate
+/// against `roots` and its host name (libpq's `sslmode=verify-full`). The
+/// URL's `sslmode` is raised to `require`, so a server without TLS is refused
+/// instead of used in the clear; `sslmode=disable` in the URL is an error.
+/// The host must be a name or IP address in the certificate, not a Unix socket.
+#[cfg(feature = "tls")]
+pub fn pool_tls(url: &str, max_size: usize, roots: &tls::Roots) -> Result<Pool, DbError> {
+    tls::require_tls(url)?;
+    let connector = tls::RustlsConnect::new(roots)?;
+    let mut cfg = Config::new();
+    cfg.url = Some(url.to_string());
+    cfg.ssl_mode = Some(deadpool_postgres::SslMode::Require);
+    cfg.pool = Some(deadpool_postgres::PoolConfig::new(max_size));
+    cfg.create_pool(Some(Runtime::Tokio1), connector)
         .map(|p| Pool(p, Arc::new(statements::Statements::new(statements::DEFAULT_CAPACITY))))
         .map_err(|e| DbError::Pool(e.to_string()))
 }
