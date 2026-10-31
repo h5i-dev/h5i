@@ -1139,7 +1139,7 @@ dependencies = [
 
 [[package]]
 name = "h5i-app"
-version = "0.1.4"
+version = "0.5.2"
 dependencies = [
  "h5i-app-core",
  "h5i-app-http",
@@ -1153,7 +1153,7 @@ dependencies = [
 
 [[package]]
 name = "h5i-app-cli"
-version = "0.1.4"
+version = "0.5.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -1170,18 +1170,18 @@ dependencies = [
 
 [[package]]
 name = "h5i-app-core"
-version = "0.1.4"
+version = "0.5.2"
 dependencies = [
  "h5i-app-std",
 ]
 
 [[package]]
 name = "h5i-app-gpu"
-version = "0.1.4"
+version = "0.5.2"
 
 [[package]]
 name = "h5i-app-http"
-version = "0.1.4"
+version = "0.5.2"
 dependencies = [
  "axum 0.8.9",
  "h5i-app-core",
@@ -1195,7 +1195,7 @@ dependencies = [
 
 [[package]]
 name = "h5i-app-json"
-version = "0.1.4"
+version = "0.5.2"
 dependencies = [
  "proptest",
  "serde_json",
@@ -1203,7 +1203,7 @@ dependencies = [
 
 [[package]]
 name = "h5i-app-mem"
-version = "0.1.4"
+version = "0.5.2"
 dependencies = [
  "h5i-app-core",
  "h5i-app-pg",
@@ -1212,7 +1212,7 @@ dependencies = [
 
 [[package]]
 name = "h5i-app-pg"
-version = "0.1.4"
+version = "0.5.2"
 dependencies = [
  "bytes",
  "deadpool-postgres",
@@ -1231,14 +1231,14 @@ dependencies = [
 
 [[package]]
 name = "h5i-app-pgsql"
-version = "0.1.4"
+version = "0.5.2"
 dependencies = [
  "h5i-app-sql",
 ]
 
 [[package]]
 name = "h5i-app-report"
-version = "0.1.0"
+version = "0.5.2"
 dependencies = [
  "git2",
  "serde",
@@ -1249,23 +1249,23 @@ dependencies = [
 
 [[package]]
 name = "h5i-app-schema"
-version = "0.1.4"
+version = "0.5.2"
 
 [[package]]
 name = "h5i-app-sql"
-version = "0.1.4"
+version = "0.5.2"
 
 [[package]]
 name = "h5i-app-std"
-version = "0.1.4"
+version = "0.5.2"
 
 [[package]]
 name = "h5i-app-token"
-version = "0.1.4"
+version = "0.5.2"
 
 [[package]]
 name = "h5i-app-xtask"
-version = "0.1.4"
+version = "0.5.2"
 dependencies = [
  "anyhow",
  "clap",

@@ -176,11 +176,11 @@ checksum = "e4eba85ea1d0a966a983acd07deee566e67395d2d96b6fb39e62b5a833f1eb0b"
 
 [[package]]
 name = "h5i-app-gpu"
-version = "0.1.4"
+version = "0.5.2"
 
 [[package]]
 name = "h5i-app-gpu-backend-nvvm"
-version = "0.1.0"
+version = "0.5.2"
 dependencies = [
  "cust",
  "h5i-app-gpu",
