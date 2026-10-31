@@ -1220,6 +1220,7 @@ dependencies = [
  "h5i-app-core",
  "h5i-app-pgsql",
  "h5i-app-sql",
+ "ring",
  "rustls",
  "tokio",
  "tokio-postgres",

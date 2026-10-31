@@ -4,7 +4,14 @@
 //! connect with `sslmode=require` and a connector that verifies the server's
 //! certificate chain against [`Roots`] and its name against the URL's host
 //! (libpq's `verify-full`). There is no unverified mode and no fallback to
-//! plain TCP. Channel binding is not offered; SCRAM still authenticates.
+//! plain TCP.
+//!
+//! SCRAM channel binding (`SCRAM-SHA-256-PLUS`, `tls-server-end-point` from
+//! RFC 5929) is offered when the server certificate is signed with RSA
+//! PKCS#1 v1.5 or ECDSA over MD5, SHA-1, SHA-256, SHA-384 or SHA-512. For
+//! other signatures (RSA-PSS, Ed25519, SHA-224) no binding data is offered:
+//! authentication falls back to plain SCRAM-SHA-256, and a URL with
+//! `channel_binding=require` fails to connect.
 
 use std::future::Future;
 use std::io;
@@ -133,6 +140,66 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for TlsStream<S> {
 
 impl<S: AsyncRead + AsyncWrite + Unpin> tokio_postgres::tls::TlsStream for TlsStream<S> {
     fn channel_binding(&self) -> ChannelBinding {
-        ChannelBinding::none()
+        let cert = self.0.get_ref().1.peer_certificates().and_then(|c| c.first());
+        match cert.and_then(|c| server_end_point(c.as_ref())) {
+            Some(hash) => ChannelBinding::tls_server_end_point(hash),
+            None => ChannelBinding::none(),
+        }
     }
+}
+
+/// `tls-server-end-point` (RFC 5929 §4.1): the certificate's hash with its
+/// signature's hash function, SHA-256 for MD5 and SHA-1. `None` when the
+/// signature algorithm names no single supported hash.
+pub(crate) fn server_end_point(der: &[u8]) -> Option<Vec<u8>> {
+    let alg = match signature_oid(der)? {
+        // md5WithRSAEncryption, sha1WithRSAEncryption, ecdsa-with-SHA1
+        [0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x04 | 0x05] | [0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x01] => {
+            &ring::digest::SHA256
+        }
+        // sha256WithRSAEncryption, ecdsa-with-SHA256
+        [0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b] | [0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02] => {
+            &ring::digest::SHA256
+        }
+        // sha384WithRSAEncryption, ecdsa-with-SHA384
+        [0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0c] | [0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x03] => {
+            &ring::digest::SHA384
+        }
+        // sha512WithRSAEncryption, ecdsa-with-SHA512
+        [0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0d] | [0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x04] => {
+            &ring::digest::SHA512
+        }
+        _ => return None,
+    };
+    Some(ring::digest::digest(alg, der).as_ref().to_vec())
+}
+
+/// The OID of `Certificate.signatureAlgorithm` (RFC 5280 §4.1).
+fn signature_oid(der: &[u8]) -> Option<&[u8]> {
+    let (cert, _) = tlv(der, 0x30)?;
+    let (_tbs, rest) = tlv(cert, 0x30)?;
+    let (alg, _) = tlv(rest, 0x30)?;
+    let (oid, _) = tlv(alg, 0x06)?;
+    Some(oid)
+}
+
+/// One DER element with tag `tag`: its contents and what follows it.
+fn tlv(b: &[u8], tag: u8) -> Option<(&[u8], &[u8])> {
+    let (&t, b) = b.split_first()?;
+    if t != tag {
+        return None;
+    }
+    let (&l, mut b) = b.split_first()?;
+    let len = if l < 0x80 {
+        l as usize
+    } else {
+        let n = (l & 0x7f) as usize;
+        if n == 0 || n > 4 || b.len() < n {
+            return None;
+        }
+        let len = b[..n].iter().fold(0usize, |a, &x| (a << 8) | x as usize);
+        b = &b[n..];
+        len
+    };
+    (b.len() >= len).then(|| b.split_at(len))
 }

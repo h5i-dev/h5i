@@ -91,7 +91,9 @@ axum::serve(TcpListener::bind("127.0.0.1:8080").await?, router).await?;
 certificate chain and host name (libpq's `verify-full`); a server without TLS
 is refused, never used in the clear. Use `Roots::WebPki` for a publicly
 trusted certificate, or the provider's CA bundle (e.g. Amazon RDS's) as a PEM
-file. `lockdown_tls` does the same for `lockdown`.
+file. `lockdown_tls` does the same for `lockdown`. SCRAM channel binding
+(`SCRAM-SHA-256-PLUS`) is offered for RSA (PKCS#1 v1.5) and ECDSA server
+certificates; add `channel_binding=require` to the URL to insist on it.
 
 After the kernel is translated to Lean, you can prove properties of it, for
 example that after any successful command a `get` by the same user returns its
