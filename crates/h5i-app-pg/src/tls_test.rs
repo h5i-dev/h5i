@@ -173,28 +173,28 @@ fn hex(b: &[u8]) -> String {
 #[test]
 fn server_end_point_follows_rfc_5929() {
     let cases: &[(&str, Option<&str>)] = &[
-        (include_str!("tls_fixtures/rsa-sha1.pem"), Some("2505927d8fb256f801df1494799aaa904ef5bf7ea774224d79acc6be150eaad2")),
-        (include_str!("tls_fixtures/rsa-sha256.pem"), Some("c464c049a04058494142c7c680fae1dd125fd4f90a75ae9f2f179e26a79d5e57")),
+        (include_str!("../tests/fixtures/tls/rsa-sha1.pem"), Some("2505927d8fb256f801df1494799aaa904ef5bf7ea774224d79acc6be150eaad2")),
+        (include_str!("../tests/fixtures/tls/rsa-sha256.pem"), Some("c464c049a04058494142c7c680fae1dd125fd4f90a75ae9f2f179e26a79d5e57")),
         (
-            include_str!("tls_fixtures/rsa-sha384.pem"),
+            include_str!("../tests/fixtures/tls/rsa-sha384.pem"),
             Some("4026606e6e6932eab8a310f4ba9900a2d4630c529b3838d21d48dc0dfce460921351506fdf4e761fc3b54915da806455"),
         ),
         (
-            include_str!("tls_fixtures/rsa-sha512.pem"),
+            include_str!("../tests/fixtures/tls/rsa-sha512.pem"),
             Some("94a7a2498952614db3e5f6e692c34e4845387f55d451e1af7f0cb2355ce0f0c77b0bee494a0de4c5aafcdfe0d33089ae34958ca4450bb995f19a12ef8335b288"),
         ),
-        (include_str!("tls_fixtures/ecdsa-sha256.pem"), Some("cf6466f5abd0016771e5e437ad7e257abce6b379d3c93088b6163ce7bb8a802f")),
+        (include_str!("../tests/fixtures/tls/ecdsa-sha256.pem"), Some("cf6466f5abd0016771e5e437ad7e257abce6b379d3c93088b6163ce7bb8a802f")),
         (
-            include_str!("tls_fixtures/ecdsa-sha384.pem"),
+            include_str!("../tests/fixtures/tls/ecdsa-sha384.pem"),
             Some("9152043673ff911e2c13de1ccec615fa33365421d8032bd9fc23d140639d5164bb0ec5c41d69e55433b3be28d04305a0"),
         ),
         (
-            include_str!("tls_fixtures/ecdsa-sha512.pem"),
+            include_str!("../tests/fixtures/tls/ecdsa-sha512.pem"),
             Some("bf445468d1508fcc065d5856f6d42ac3c3712f599c4e34e3bed027b3b644fa379e8caf9164629ead53ceb579b11f93625977e4c33dbf1fa56ec27f1dd4ea9b99"),
         ),
         // No single hash for the signature: no binding data.
-        (include_str!("tls_fixtures/ed25519.pem"), None),
-        (include_str!("tls_fixtures/rsa-pss.pem"), None),
+        (include_str!("../tests/fixtures/tls/ed25519.pem"), None),
+        (include_str!("../tests/fixtures/tls/rsa-pss.pem"), None),
     ];
     for (pem, want) in cases {
         let der = CertificateDer::from_pem_slice(pem.as_bytes()).unwrap();
