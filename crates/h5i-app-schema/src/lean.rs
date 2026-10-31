@@ -108,6 +108,37 @@ theorem u64_from_val (x : U64) : U64.Insts.H5i_app_sqlColumn.from_val (int x.val
   simp [BitVec.signExtend_eq]
 "#;
 
+/// `u32` columns: stored like `u64`, but `from_val` range-checks
+/// `0 ≤ i ≤ u32::MAX`. Needs `int_inj` from `U64`.
+const U32: &str = r#"
+@[simp] theorem int_u32 (x y : U32) : int x.val = int y.val ↔ x = y := by
+  refine ⟨fun h => ?_, fun h => h ▸ rfl⟩
+  have := int_inj (by scalar_tac) (by scalar_tac) h
+  scalar_tac
+
+theorem u32_to_val_eq (x : U32) : U32.Insts.H5i_app_sqlColumn.to_val x = ok (int x.val) := by
+  unfold U32.Insts.H5i_app_sqlColumn.to_val int
+  simp only [lift, UScalar.hcast]
+  rw [← UScalar.bv_toNat, BitVec.ofNat_toNat]
+  simp [BitVec.zeroExtend]
+
+@[step] theorem u32_to_val (x : U32) : U32.Insts.H5i_app_sqlColumn.to_val x ⦃ v => v = int x.val ⦄ := by
+  simp [u32_to_val_eq]
+
+theorem u32_from_val (x : U32) : U32.Insts.H5i_app_sqlColumn.from_val (int x.val) = ok (some x) := by
+  have hx : x.val < 2 ^ 32 := by scalar_tac
+  simp only [U32.Insts.H5i_app_sqlColumn.from_val, int, lift, IScalar.hcast, UScalar.hcast, core.num.U32.MAX]
+  rw [← UScalar.bv_toNat, BitVec.ofNat_toNat]
+  rw [if_pos (by simp only [GE.ge, IScalar.le_equiv, IScalar.val]; simp [Int.bmod]; omega)]
+  simp only [bind_ok]
+  rw [if_pos (by simp only [IScalar.le_equiv, IScalar.val]; simp [Int.bmod, U32.rMax]; omega)]
+  obtain ⟨b⟩ := x
+  simp only [ok.injEq, Option.some.injEq]
+  congr 1
+  rw [BitVec.signExtend_eq_setWidth_of_le _ (by decide)]
+  simp
+"#;
+
 const BOOL: &str = r#"
 @[step] theorem bool_to_val (b : Bool) : Bool.Insts.H5i_app_sqlColumn.to_val b ⦃ v => v = .Bool b ⦄ := by
   simp [Bool.Insts.H5i_app_sqlColumn.to_val]
@@ -247,6 +278,9 @@ def valKind : Val → Option Pg.Kind
         let _ = writeln!(s, "/-- An integer column: its 64 bits as a `BIGINT`. -/\ndef int (n : Nat) : Val := .Int ⟨BitVec.ofNat _ n⟩");
         s.push_str(U64);
     }
+    if has(Prim::U32) {
+        s.push_str(U32);
+    }
     if has(Prim::Bool) {
         s.push_str(BOOL);
     }
@@ -292,6 +326,9 @@ def valKind : Val → Option Pg.Kind
     let mut dec = vec!["List.getElem_cons_zero", "List.getElem_cons_succ", "Nat.zero_add", "Nat.reduceAdd", "bind_tc_ok"];
     if ints {
         dec.push("u64_from_val");
+    }
+    if has(Prim::U32) {
+        dec.push("u32_from_val");
     }
     if has(Prim::Bool) {
         dec.push("bool_from_val");
