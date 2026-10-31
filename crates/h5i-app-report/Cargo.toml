@@ -1,6 +1,6 @@
 [package]
 name = "h5i-app-report"
-version = "0.1.0"
+version = "0.5.2"
 edition = "2024"
 publish = false
 description = "Versioned app explanations and verification records shared by the CLI and console"
