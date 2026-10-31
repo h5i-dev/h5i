@@ -20,6 +20,8 @@ default = []
 http = ["dep:h5i-app-http", "postgres", "json", "token"]
 # The PostgreSQL engine: SERIALIZABLE execution, retries, idempotency keys.
 postgres = ["dep:h5i-app-pg", "sql", "pgsql"]
+# `pg::pool_tls`: TLS to PostgreSQL, server certificate verified (rustls).
+tls = ["postgres", "h5i-app-pg/tls"]
 # `schema!`: declare tables once, get Rust mappings and Lean.
 schema = ["dep:h5i-app-schema"]
 sql = ["dep:h5i-app-sql"]

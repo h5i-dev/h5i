@@ -47,7 +47,40 @@ pub fn lockdown_sql<K: Kernel, S: Store<K>>(owner: &str, engine_role: &str) -> R
 pub async fn lockdown<K: Kernel, S: Store<K>>(admin_url: &str, owner: &str, engine_role: &str) -> Result<(), DbError> {
     let stmts = lockdown_sql::<K, S>(owner, engine_role)?;
     let (admin, conn) = tokio_postgres::connect(admin_url, tokio_postgres::NoTls).await?;
-    let conn = tokio::spawn(conn);
+    run_admin(admin, tokio::spawn(conn), stmts).await
+}
+
+/// [`lockdown`] over TLS, verified as in [`crate::pool_tls`].
+#[cfg(feature = "tls")]
+pub async fn lockdown_tls<K: Kernel, S: Store<K>>(
+    admin_url: &str,
+    roots: &crate::tls::Roots,
+    owner: &str,
+    engine_role: &str,
+) -> Result<(), DbError> {
+    let stmts = lockdown_sql::<K, S>(owner, engine_role)?;
+    let (admin, conn) = connect_tls(admin_url, roots).await?;
+    run_admin(admin, conn, stmts).await
+}
+
+/// One TLS connection, verified as in [`crate::pool_tls`].
+#[cfg(feature = "tls")]
+pub(crate) async fn connect_tls(
+    url: &str,
+    roots: &crate::tls::Roots,
+) -> Result<(tokio_postgres::Client, tokio::task::JoinHandle<Result<(), tokio_postgres::Error>>), DbError> {
+    crate::tls::require_tls(url)?;
+    let mut cfg: tokio_postgres::Config = url.parse()?;
+    cfg.ssl_mode(tokio_postgres::config::SslMode::Require);
+    let (client, conn) = cfg.connect(crate::tls::RustlsConnect::new(roots)?).await?;
+    Ok((client, tokio::spawn(conn)))
+}
+
+async fn run_admin(
+    admin: tokio_postgres::Client,
+    conn: tokio::task::JoinHandle<Result<(), tokio_postgres::Error>>,
+    stmts: Vec<String>,
+) -> Result<(), DbError> {
     for stmt in stmts {
         admin.batch_execute(&stmt).await?;
     }
