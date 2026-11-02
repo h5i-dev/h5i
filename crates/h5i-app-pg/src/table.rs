@@ -263,11 +263,6 @@ async fn query(tx: &Tx<'_>, sql: &str, vals: &[Value]) -> Result<Vec<Row>, DbErr
     Ok(tx.0.query(&st, &refs(vals)).await?)
 }
 
-async fn execute(tx: &Tx<'_>, sql: &str, vals: &[Value]) -> Result<u64, DbError> {
-    let st = prepare(tx, sql).await?;
-    Ok(tx.0.execute(&st, &refs(vals)).await?)
-}
-
 /// The connection's prepared statement for `sql`, kept in its bounded cache.
 pub(crate) async fn prepare(tx: &Tx<'_>, sql: &str) -> Result<tokio_postgres::Statement, DbError> {
     let st = tx.0.prepare_cached(sql).await?;
@@ -288,15 +283,29 @@ fn compiled_read(tx: &Tx<'_>, schema: &Vec<Spec>, tenant: TenantId, q: &h5i_app_
 
 /// Plan (`h5i_app_sql::plan`), compile (`h5i_app_pgsql::compile`) and run each write in
 /// order. A statement that does not fit the schema fails the transaction.
+///
+/// Pipelined: every statement is prepared first (once per connection), then
+/// all are sent before any result is awaited, in order, so the server runs
+/// them in plan order and the write set costs about one round trip. If one
+/// fails, PostgreSQL refuses the rest of the transaction; its error is the
+/// first to arrive, and the one returned.
 pub async fn store_writes(tx: &Tx<'_>, tenant: TenantId, schema: &Vec<Spec>, ws: &Vec<SqlWrite>) -> Result<(), DbError> {
     let tid = tenant_param(tenant)?;
+    let mut bound = Vec::new();
     for stmt in h5i_app_sql::plan(ws) {
         let Some(q) = h5i_app_pgsql::compile(schema, tid, &stmt) else {
             return Err(DbError::Decode(format!("statement does not fit the schema: {stmt:?}")));
         };
-        let (sql, vals) = bind(&q)?;
-        execute(tx, &sql, &vals).await?;
+        bound.push(bind(&q)?);
     }
+    // Prepared before any is sent: a statement still to prepare would
+    // otherwise be sent after the ones behind it.
+    let sts = futures_util::future::try_join_all(bound.iter().map(|(sql, _)| prepare(tx, sql))).await?;
+    let runs = sts.iter().zip(&bound).map(|(st, (_, vals))| async move {
+        let params = refs(vals);
+        tx.0.execute(st, &params).await
+    });
+    futures_util::future::try_join_all(runs).await?;
     Ok(())
 }
 
