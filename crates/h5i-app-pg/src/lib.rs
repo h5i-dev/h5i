@@ -52,7 +52,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio_postgres::error::SqlState;
-use tokio_postgres::{IsolationLevel, NoTls, Transaction};
+use tokio_postgres::{IsolationLevel, NoTls};
 
 /// The transaction a `Store` works in. Offers only this crate's table operations.
 /// Its statements are prepared once per connection (deadpool's statement
@@ -628,8 +628,9 @@ impl<K: Kernel, S: Store<K>> Engine<K, S> {
             .deferrable(true)
             .start()
             .await?;
-        let now = self.read_clock(&tx, tid).await?;
-        let snap = S::load_for(&Tx(&tx, &self.pool.1, None), tenant, actor, cmd).await?;
+        // The clock is pipelined with the load: no round trip of its own.
+        let (now, snap) =
+            futures_util::future::try_join(self.read_clock(&tx, tid), S::load_for(&Tx(&tx, &self.pool.1, None), tenant, actor, cmd)).await?;
         let mut actor = actor.clone();
         K::stamp(&mut actor, now);
         match K::transition(&actor, &snap, cmd) {
@@ -658,23 +659,33 @@ impl<K: Kernel, S: Store<K>> Engine<K, S> {
     ) -> Result<Attempt<K>, DbError> {
         let tid = table::tenant_param(tenant)?;
         let tx = client.build_transaction().isolation_level(IsolationLevel::Serializable).start().await?;
-        let now = self.read_clock(&tx, tid).await?;
-        if let Some(idem) = idem {
-            let stored = tx
-                .query_opt("SELECT fingerprint, reply FROM h5i_idempotency WHERE tenant_id = $1 AND key = $2", &[&tid, &idem.key])
-                .await?;
-            if let Some(row) = stored {
-                let fp: Vec<u8> = row.try_get(0)?;
-                if fp != idem.fingerprint {
-                    return Err(DbError::IdempotencyConflict);
+        // The clock is pipelined with the first statement after it (the
+        // idempotency lookup or the load): no round trip of its own. Every
+        // statement of the attempt sees the same `transaction_timestamp()`.
+        let load = async {
+            if let Some(idem) = idem {
+                let stored = tx
+                    .query_opt("SELECT fingerprint, reply FROM h5i_idempotency WHERE tenant_id = $1 AND key = $2", &[&tid, &idem.key])
+                    .await?;
+                if let Some(row) = stored {
+                    let fp: Vec<u8> = row.try_get(0)?;
+                    if fp != idem.fingerprint {
+                        return Err(DbError::IdempotencyConflict);
+                    }
+                    let bytes: Vec<u8> = row.try_get(1)?;
+                    return Ok(Err((idem.decode)(&bytes).map_err(DbError::Decode)?));
                 }
-                let bytes: Vec<u8> = row.try_get(1)?;
-                let reply = (idem.decode)(&bytes).map_err(DbError::Decode)?;
+            }
+            Ok(Ok(S::load_for(&Tx(&tx, &self.pool.1, None), tenant, actor, cmd).await?))
+        };
+        let (now, loaded) = futures_util::future::try_join(self.read_clock(&tx, tid), load).await?;
+        let snap = match loaded {
+            Ok(snap) => snap,
+            Err(reply) => {
                 tx.commit().await?;
                 return Ok(Attempt::Replayed(reply));
             }
-        }
-        let snap = S::load_for(&Tx(&tx, &self.pool.1, None), tenant, actor, cmd).await?;
+        };
         let mut actor = actor.clone();
         K::stamp(&mut actor, now);
         let decision = K::transition(&actor, &snap, cmd);
@@ -714,14 +725,15 @@ impl<K: Kernel, S: Store<K>> Engine<K, S> {
 
 impl<K: Kernel, S: Store<K>> Engine<K, S> {
     /// Under `monotonic`, never before the tenant's last commit. Reading that
-    /// row makes a concurrent commit force a retry.
-    async fn read_clock(&self, tx: &Transaction<'_>, tid: i64) -> Result<Timestamp, DbError> {
+    /// row makes a concurrent commit force a retry. The statements are
+    /// prepared once per connection, so each costs one message exchange
+    /// (and the engine pipelines them with the load).
+    async fn read_clock(&self, tx: &deadpool_postgres::Transaction<'_>, tid: i64) -> Result<Timestamp, DbError> {
         let clock = match &self.config.clock {
             Clock::System => Timestamp::now(),
             Clock::Database => {
-                let row = tx
-                    .query_one("SELECT (extract(epoch FROM transaction_timestamp()) * 1000000)::bigint", &[])
-                    .await?;
+                let st = table::prepare(&Tx(tx, &self.pool.1, None), DATABASE_CLOCK).await?;
+                let row = tx.query_one(&st, &[]).await?;
                 Timestamp(row.get::<_, i64>(0).max(0) as u64)
             }
             Clock::Fixed(t) => *t,
@@ -730,7 +742,8 @@ impl<K: Kernel, S: Store<K>> Engine<K, S> {
         if !self.config.monotonic {
             return Ok(clock);
         }
-        let last = tx.query_opt("SELECT last FROM h5i_clock WHERE tenant_id = $1", &[&tid]).await?;
+        let st = table::prepare(&Tx(tx, &self.pool.1, None), "SELECT last FROM h5i_clock WHERE tenant_id = $1").await?;
+        let last = tx.query_opt(&st, &[&tid]).await?;
         let last = Timestamp(last.map(|r| r.get::<_, i64>(0)).unwrap_or(0).max(0) as u64);
         Ok(clock.max(last))
     }
@@ -739,6 +752,9 @@ impl<K: Kernel, S: Store<K>> Engine<K, S> {
 fn time_param(t: Timestamp) -> Result<i64, DbError> {
     i64::try_from(t.0).map_err(|_| DbError::Decode(format!("time {} does not fit in BIGINT", t.0)))
 }
+
+/// `Clock::Database`: the transaction's start, in microseconds.
+const DATABASE_CLOCK: &str = "SELECT (extract(epoch FROM transaction_timestamp()) * 1000000)::bigint";
 
 fn backoff(attempt: u32) -> Duration {
     let cap_ms = 1u64 << attempt.min(8);

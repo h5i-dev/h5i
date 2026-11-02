@@ -123,3 +123,30 @@ async fn monotonic_time_keeps_started_bookings() {
     assert_eq!(cancel_after_clock_went_back(&url, false).await, Ok(k::Reply::Done));
     assert_eq!(cancel_after_clock_went_back(&url, true).await, Err(k::Error::Started));
 }
+
+/// `Clock::Database`, read in the same flight as the load: every commit
+/// records PostgreSQL's `transaction_timestamp()`, which falls between the
+/// test's clock before and after the request.
+#[tokio::test]
+async fn database_clock_is_the_transactions() {
+    let Ok(url) = std::env::var("H5I_APP_TEST_DATABASE_URL") else {
+        eprintln!("H5I_APP_TEST_DATABASE_URL not set; skipping");
+        return;
+    };
+    let url = h5i_app_pg::with_schema(&url, "booking").unwrap();
+    let pg = Engine::<BookingApp, BookingStore>::new(pool(&url, 2).unwrap(), EngineConfig::default().database_time());
+    pg.install_schema().await.unwrap();
+    let org = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos() as u64 % (1 << 50);
+    let who = |user| k::Principal { org, user, now: 0 };
+    let (c, conn) = tokio_postgres::connect(&url, NoTls).await.unwrap();
+    tokio::spawn(conn);
+    // Allow for a database clock up to a second off this machine's.
+    let micros = || std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_micros() as i64;
+    for cmd in [k::Command::AddAdmin { user: 1 }, k::Command::CreateRoom { dest: 7 }, k::Command::List] {
+        let before = micros();
+        pg.execute(&who(1), &cmd).await.unwrap().unwrap();
+        let after = micros();
+        let last: i64 = c.query_one("SELECT last FROM h5i_clock WHERE tenant_id = $1", &[&(org as i64)]).await.unwrap().get(0);
+        assert!(before - 1_000_000 <= last && last <= after + 1_000_000, "{cmd:?}: {before} {last} {after}");
+    }
+}
