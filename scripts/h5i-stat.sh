@@ -6,8 +6,8 @@ MIN_VER=""
 
 usage() {
   echo "Usage: $0 [-s|--since <version>] [-r|--repo <owner/repo>]"
-  echo "  -s, --since   指定バージョン以降のみ集計 (例: v0.3.1 または 0.3.1)"
-  echo "  -r, --repo    対象リポジトリ (デフォルト: h5i-dev/h5i)"
+  echo "  -s, --since   Only count releases from this version on (e.g. v0.3.1 or 0.3.1)"
+  echo "  -r, --repo    Target repository (default: h5i-dev/h5i)"
   exit 1
 }
 
@@ -33,7 +33,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# GitHub APIからデータを取得し、バージョンフィルタとアセット抽出を適用
+# Fetch release data from the GitHub API, then apply the version filter and asset extraction
 DATA=$(gh api --paginate "repos/${REPO}/releases?per_page=100" | jq -s --arg min_ver "$MIN_VER" '
   def parse_ver(v):
     [v | ltrimstr("v") | split(".")[] | tonumber? // 0];
@@ -78,7 +78,7 @@ DATA=$(gh api --paginate "repos/${REPO}/releases?per_page=100" | jq -s --arg min
 FILTER_LABEL="${MIN_VER:+ (>= ${MIN_VER})}"
 
 echo "======================================================================"
-echo " 1. バイナリ種類別 × OS 合計ダウンロード数${FILTER_LABEL}"
+echo " 1. Total downloads by binary × OS${FILTER_LABEL}"
 echo "======================================================================"
 echo "$DATA" | jq -r '
   ["BINARY", "LINUX-X64", "LINUX-ARM64", "MACOS-ARM64", "WIN-X64", "PYTHON", "TOTAL"],
@@ -110,7 +110,7 @@ echo "$DATA" | jq -r '
 
 echo ""
 echo "======================================================================"
-echo " 2. バージョン別 × バイナリ種類 合計ダウンロード数${FILTER_LABEL}"
+echo " 2. Total downloads by version × binary${FILTER_LABEL}"
 echo "======================================================================"
 echo "$DATA" | jq -r '
   ["VERSION", "h5i(core)", "h5i-websec", "h5i-recon", "h5i-test", "browser-light", "whl", "TOTAL"],
@@ -147,7 +147,7 @@ echo "$DATA" | jq -r '
 
 echo ""
 echo "======================================================================"
-echo " 3. 詳細内訳 (バージョン × バイナリ × OS)${FILTER_LABEL}"
+echo " 3. Detailed breakdown (version × binary × OS)${FILTER_LABEL}"
 echo "======================================================================"
 echo "$DATA" | jq -r '
   ["VERSION", "BINARY", "LINUX-X64", "LINUX-ARM64", "MACOS-ARM64", "WIN-X64", "PY-WHL", "SUBTOTAL"],
