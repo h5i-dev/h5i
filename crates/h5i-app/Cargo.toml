@@ -1,11 +1,12 @@
 [package]
 name = "h5i-app"
-version = "0.5.2"
+version = "0.5.3"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/h5i-dev/h5i"
 homepage = "https://github.com/h5i-dev/h5i"
-readme = "README.md"
+readme = "../../README.md"
+exclude = ["/README.md"]
 description = "The Axum-based application framework for h5i. Write application logic in Rust and prove its properties in Lean 4."
 
 # One dependency for the server side of an h5i-app application. Each feature
