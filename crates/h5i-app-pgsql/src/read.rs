@@ -5,7 +5,9 @@
 //! mirrors `H5iAppLib.Query`. The checks below are what makes the SQL mean
 //! what the Lean says: membership only between `NOT NULL` columns, windows
 //! only on tables whose key columns are all integers or booleans (so the key
-//! order is not a collation's), and the result always sorted by key ascending.
+//! order is not a collation's), range comparisons (`>=`, `<`) only between an
+//! integer column and an integer (signed `BIGINT` order, as the Lean compares),
+//! and the result always sorted by key ascending.
 //! In opt-in ScalarWhenUnique mode, a lookup fixed by its entire PK uses `=`;
 //! its empty-result UNKNOWN selects the same rows as FALSE in this positive
 //! AND/OR language. Adding negation would require revisiting that rewrite.
@@ -157,6 +159,18 @@ impl Out<'_> {
                 self.lit(if not_null(t, *col as usize) { " = " } else { " IS NOT DISTINCT FROM " });
                 self.param(val.clone());
             }
+            Pred::Ge { col, val } | Pred::Lt { col, val } => {
+                // Integers only: `BIGINT` order is the signed order the Lean
+                // compares in; text and bytes would bring collations in.
+                let c = t.columns.get(*col as usize)?;
+                if c.kind != Kind::Int || !matches!(val, Val::Int(_)) {
+                    return None;
+                }
+                self.col(alias, &c.name.clone());
+                // `NULL >= x` is UNKNOWN, which `WHERE` drops: false, as in the Lean.
+                self.lit(if matches!(p, Pred::Ge { .. }) { " >= " } else { " < " });
+                self.param(val.clone());
+            }
             Pred::In { col, table, pred, of, window } => {
                 let i = *col as usize;
                 let c = t.columns.get(i)?;
@@ -193,7 +207,8 @@ impl Out<'_> {
 /// The `SELECT` returning `q`'s rows of `tenant` (no `tenant_id`) in
 /// ascending key order, or with `count` the number of them. `None` on an
 /// invalid schema, a missing table or column, a value of the wrong type, `IN`
-/// on a nullable column, or a window on a table without an integer key.
+/// on a nullable column, a range comparison on a column or with a value that
+/// is not an integer, or a window on a table without an integer key.
 pub fn compile_read(tables: &Vec<Table>, tenant: i64, q: &Read, count: bool) -> Option<ReadQuery> {
     compile_read_with_mode(tables, tenant, q, count, ReadSqlMode::default())
 }
@@ -370,6 +385,33 @@ mod tests {
         assert!(compile_read(&s, 1, &h5i_app_sql::read_eq(0, 2, Val::Int(1)), false).is_none());
         assert!(compile_read(&s, 1, &h5i_app_sql::read_eq(0, 9, Val::Int(1)), false).is_none());
         assert!(compile_read(&s, 1, &h5i_app_sql::read_all(0), false).is_some());
+        // A range comparison on bytes, with NULL or bytes, or on a missing column.
+        let range = |table, col, val| Read { table, pred: Pred::Ge { col, val }, window: whole() };
+        assert!(compile_read(&s, 1, &range(0, 2, Val::Bytes(b"a".to_vec())), false).is_none());
+        assert!(compile_read(&s, 1, &range(0, 0, Val::Null), false).is_none());
+        assert!(compile_read(&s, 1, &range(0, 0, Val::Bytes(b"a".to_vec())), false).is_none());
+        assert!(compile_read(&s, 1, &range(0, 9, Val::Int(1)), false).is_none());
+        let lt = Read { table: 2, pred: Pred::Lt { col: 0, val: Val::Int(1) }, window: whole() };
+        assert!(compile_read(&s, 1, &lt, false).is_none());
+    }
+
+    #[test]
+    fn renders_an_id_range() {
+        let q = Read {
+            table: 0,
+            pred: Pred::And(Box::new(Pred::Ge { col: 0, val: Val::Int(64) }), Box::new(Pred::Lt { col: 0, val: Val::Int(128) })),
+            window: whole(),
+        };
+        let c = compile_read(&schema(), 7, &q, false).unwrap();
+        assert_eq!(
+            text(&c),
+            "SELECT q0.\"id\", q0.\"author\", q0.\"slug\" FROM \"articles\" AS q0 WHERE q0.\"tenant_id\" = $1 \
+             AND (q0.\"id\" >= $2 AND q0.\"id\" < $3) ORDER BY q0.\"id\""
+        );
+        assert_eq!(c.params, vec![Val::Int(7), Val::Int(64), Val::Int(128)]);
+        // A nullable integer column.
+        let n = Read { table: 2, pred: Pred::Lt { col: 1, val: Val::Int(-3) }, window: whole() };
+        assert!(text(&compile_read(&schema(), 7, &n, false).unwrap()).contains("q0.\"n\" < $2"));
     }
 
     #[test]

@@ -167,8 +167,10 @@ in [design-app-numbers.md](design-app-numbers.md).
 - `Store::lock_for` names a write's advisory locks, so writes queue on what
   they change. Only an optimization; SERIALIZABLE decides correctness.
 - `Store::load_for` may load a declarative read per table
-  (`h5i_app_sql::Read`: column equality, `IN` another read's column, `and`,
-  `or`, a key-ordered window), defined in `H5iAppLib.Query`. Its SQL is
+  (`h5i_app_sql::Read`: column equality, an integer column `>=` or `<` an
+  integer (signed `BIGINT` order, `Query.IntOf`), `IN` another read's
+  column, `and`, `or`, a key-ordered window), defined in `H5iAppLib.Query`.
+  A range of keys is one index range instead of an `OR` of equalities. Its SQL is
   differential-tested, not proven.
 
 An app that loads by plan proves a frame theorem: on what the plan loads,

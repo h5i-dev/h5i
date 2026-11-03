@@ -12,6 +12,7 @@ const PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../h5i-app-core/proofs/
 
 fn val(v: &Val) -> String {
     match v {
+        Val::Int(i) if *i < 0 => format!("(.i ({i}))"),
         Val::Int(i) => format!("(.i {i})"),
         Val::Bytes(b) | Val::Text(b) => format!("(.b {b:?})"),
         Val::Bool(b) => format!("(.i {})", i64::from(*b)),
@@ -39,6 +40,8 @@ fn pred(p: &Pred) -> String {
     match p {
         Pred::All => ".all".into(),
         Pred::Eq { col, val: v } => format!("(.eq {col} {})", val(v)),
+        Pred::Ge { col, val: v } => format!("(.ge {col} {})", val(v)),
+        Pred::Lt { col, val: v } => format!("(.lt {col} {})", val(v)),
         Pred::In { col, table, pred: q, of, window: w } => format!("(.isIn {col} {table} {} {of} {})", pred(q), window(w)),
         Pred::And(a, b) => format!("(.and {} {})", pred(a), pred(b)),
         Pred::Or(a, b) => format!("(.or {} {})", pred(a), pred(b)),
@@ -69,6 +72,8 @@ inductive TV where
   | b (s : List Nat)
   | null
 deriving DecidableEq
+
+instance : IntOf TV := ⟨fun | .i n => some n | _ => none⟩
 
 ",
     );

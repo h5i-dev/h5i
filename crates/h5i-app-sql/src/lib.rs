@@ -252,6 +252,12 @@ pub enum Pred {
     All,
     /// Column `col` holds `val` (`IS NOT DISTINCT FROM`).
     Eq { col: u32, val: Val },
+    /// Column `col` holds an integer at least `val`, an integer (`>=`, in
+    /// signed 64-bit order: `BIGINT`'s). False for `NULL`.
+    Ge { col: u32, val: Val },
+    /// Column `col` holds an integer below `val`, an integer (`<`). False
+    /// for `NULL`.
+    Lt { col: u32, val: Val },
     /// Column `col` is column `of` of a row the read of `table` by `pred` and
     /// `window` returns (`IN (SELECT ...)`). Both columns must be `NOT NULL`.
     In { col: u32, table: u32, pred: Box<Pred>, of: u32, window: Window },
@@ -309,6 +315,14 @@ pub mod eval {
         match p {
             Pred::All => true,
             Pred::Eq { col, val } => row.get(*col as usize) == Some(val),
+            Pred::Ge { col, val } => match (row.get(*col as usize), val) {
+                (Some(Val::Int(x)), Val::Int(y)) => x >= y,
+                _ => false,
+            },
+            Pred::Lt { col, val } => match (row.get(*col as usize), val) {
+                (Some(Val::Int(x)), Val::Int(y)) => x < y,
+                _ => false,
+            },
             Pred::In { col, table, pred, of, window: w } => match row.get(*col as usize) {
                 None => false,
                 Some(x) => {
@@ -428,14 +442,26 @@ pub mod eval {
 
         fn pred(r: &mut Rng, table: usize, depth: u32) -> Pred {
             let sh = &shapes()[table];
-            let pick = if depth == 0 { r.below(2) } else { r.below(5) };
+            let pick = if depth == 0 { r.below(4) } else { r.below(7) };
             match pick {
                 0 => Pred::All,
                 1 => {
                     let c = r.below(sh.cols.len() as u64) as usize;
                     Pred::Eq { col: c as u32, val: value(r, sh.cols[c].1, sh.cols[c].2) }
                 }
-                2 => {
+                2 | 3 => {
+                    // An integer column (`NULL`s included) against a bound
+                    // just outside the values' range, or inside it.
+                    let ints: Vec<usize> = (0..sh.cols.len()).filter(|&i| sh.cols[i].1 == Kind::Int).collect();
+                    let col = ints[r.below(ints.len() as u64) as usize] as u32;
+                    let val = Val::Int(r.below(8) as i64 - 1);
+                    if pick == 2 {
+                        Pred::Ge { col, val }
+                    } else {
+                        Pred::Lt { col, val }
+                    }
+                }
+                4 => {
                     // An integer, never-NULL column against one of another read.
                     let ints = |s: &Shape| -> Vec<usize> {
                         (0..s.cols.len()).filter(|&i| s.cols[i].1 == Kind::Int && !s.cols[i].2).collect()
@@ -448,7 +474,7 @@ pub mod eval {
                     let w = window(r, t != 2);
                     Pred::In { col, table: t as u32, pred: Box::new(pred(r, t, depth - 1)), of, window: w }
                 }
-                3 => Pred::And(Box::new(pred(r, table, depth - 1)), Box::new(pred(r, table, depth - 1))),
+                5 => Pred::And(Box::new(pred(r, table, depth - 1)), Box::new(pred(r, table, depth - 1))),
                 _ => Pred::Or(Box::new(pred(r, table, depth - 1)), Box::new(pred(r, table, depth - 1))),
             }
         }

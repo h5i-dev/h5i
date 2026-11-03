@@ -22,6 +22,10 @@ def valKind : Val → Option Pg.Kind
   | .Bytes _ => some .bytes
   | .Null => none
 
+/-- What a range comparison of a read compares (`H5iAppLib.Query.Pred.ge`,
+`.lt`): a `BIGINT`, as a signed integer; any other value is none. -/
+instance intOfVal : H5iAppLib.Query.IntOf Val := ⟨fun | .Int i => some i.val | _ => none⟩
+
 /-- An integer column: its 64 bits as a `BIGINT`. -/
 def int (n : Nat) : Val := .Int ⟨BitVec.ofNat _ n⟩
 
