@@ -6,7 +6,8 @@ import H5iAppLib.Lists
 What `h5i_app_sql::Read` and `h5i_app_sql::Pred` mean, over the tables of one
 tenant listed in ascending key order (the order `load` returns them in). A
 read keeps the rows of one table that satisfy a predicate (column equality,
-membership in a column of another read, `and`, `or`), then a window of them:
+an integer column's range, membership in a column of another read, `and`,
+`or`), then a window of them:
 `offset` and `limit` counted in ascending or descending key order. Its
 result is still in ascending key order, a sublist of the table.
 
@@ -20,6 +21,13 @@ not proved. The lemmas here are what an app's frame theorem uses to show that
 namespace H5iAppLib.Query
 
 open H5iAppLib.Sql
+
+/-- The integer a value is, if it is one: what the range comparisons `ge`
+and `lt` compare, in `BIGINT`'s order (signed 64-bit integers). `NULL`, text,
+bytes and booleans are none, so a comparison with them is false. An app's
+generated `Schema.lean` gives the instance for its `Val`. -/
+class IntOf (V : Type) where
+  intOf : V → Option Int
 
 /-- Which part of the matching rows a read keeps. -/
 structure Window where
@@ -44,6 +52,10 @@ inductive Pred (V : Type) where
   | all
   /-- Column `i` is `v` (`IS NOT DISTINCT FROM`). -/
   | eq (i : Nat) (v : V)
+  /-- Column `i` is an integer at least `v`, an integer (`>=`). -/
+  | ge (i : Nat) (v : V)
+  /-- Column `i` is an integer below `v`, an integer (`<`). -/
+  | lt (i : Nat) (v : V)
   /-- Column `i` is the column `j` of some row of the read of table `t` by
   `p` and `w`. Only for columns that are never `NULL`. -/
   | isIn (i t : Nat) (p : Pred V) (j : Nat) (w : Window)
@@ -56,12 +68,20 @@ structure Read (V : Type) where
   window : Window := {}
 
 section
-variable {V : Type} [DecidableEq V]
+variable {V : Type} [DecidableEq V] [IntOf V]
 
 /-- `p` holds of `row`, a row of some table of `tabs`. -/
 def Pred.holds (tabs : Tables V) : Pred V → List V → Bool
   | .all, _ => true
   | .eq i v, r => decide (r[i]? = some v)
+  | .ge i v, r =>
+    match r[i]?.bind IntOf.intOf, IntOf.intOf v with
+    | some x, some y => decide (y ≤ x)
+    | _, _ => false
+  | .lt i v, r =>
+    match r[i]?.bind IntOf.intOf, IntOf.intOf v with
+    | some x, some y => decide (x < y)
+    | _, _ => false
   | .isIn i t p j w, r =>
     match r[i]? with
     | none => false
@@ -126,9 +146,9 @@ end Windows
 /-! ## Reads over encoded rows -/
 
 section Enc
-variable {V : Type} [DecidableEq V] {α : Type}
+variable {V : Type} [DecidableEq V] [IntOf V] {α : Type}
 
-omit [DecidableEq V] in
+omit [DecidableEq V] [IntOf V] in
 theorem filter_map_holds (f : α → List V) (P : List V → Bool) (l : List α) :
     (l.map f).filter P = (l.filter (fun x => P (f x))).map f := by
   rw [List.filter_map]; rfl
@@ -148,12 +168,24 @@ theorem holds_isIn (tabs : Tables V) (i t j : Nat) (p : Pred V) (w : Window) (r 
       | some x => (w.apply (l.filter (fun y => p.holds tabs (f y)))).any (fun y => decide ((f y)[j]? = some x)) := by
   simp only [Pred.holds, h, filter_map_holds, Window.apply_map, List.any_map, Function.comp_def]
 
+/-- `ge` in terms of the integers compared. -/
+theorem holds_ge (tabs : Tables V) (i : Nat) (v : V) (r : List V) (x y : Int)
+    (hx : r[i]?.bind IntOf.intOf = some x) (hy : IntOf.intOf v = some y) :
+    (Pred.ge i v).holds tabs r = decide (y ≤ x) := by
+  simp [Pred.holds, hx, hy]
+
+/-- `lt` in terms of the integers compared. -/
+theorem holds_lt (tabs : Tables V) (i : Nat) (v : V) (r : List V) (x y : Int)
+    (hx : r[i]?.bind IntOf.intOf = some x) (hy : IntOf.intOf v = some y) :
+    (Pred.lt i v).holds tabs r = decide (x < y) := by
+  simp [Pred.holds, hx, hy]
+
 end Enc
 
 /-! ## What a plan loads, table by table -/
 
 section Pick
-variable {V : Type} [DecidableEq V] {α : Type}
+variable {V : Type} [DecidableEq V] [IntOf V] {α : Type}
 
 /-- The rows of table `t` (the list `l`, encoded by `row`) that `plan`
 loads from `tabs`: its read's window of the rows its predicate keeps, or
