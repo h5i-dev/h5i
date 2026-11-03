@@ -5,14 +5,9 @@ Write application logic in Rust and prove its properties in Lean 4.
 
 [![Crates.io](https://img.shields.io/crates/v/h5i-app)](https://crates.io/crates/h5i-app)
 
-h5i-app was developed as [i5h](https://github.com/h5i-dev/i5h) and moved into
-the h5i workspace, where it sits next to h5i's red-teaming tools: they test the
-running application for what you did not anticipate, and h5i-app proves the
-properties you can state. The i5h repository now hosts the benchmark.
-
 ```toml
 [dependencies]
-h5i-app = { version = "0.1", features = ["http", "postgres"] }
+h5i-app = { version = "5.3", features = ["http", "postgres"] }
 ```
 
 | Crate | Role |
