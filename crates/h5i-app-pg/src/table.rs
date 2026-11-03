@@ -11,6 +11,8 @@ use h5i_app_sql::{Val, Write as SqlWrite};
 use tokio_postgres::types::{to_sql_checked, IsNull, ToSql, Type};
 use crate::Tx;
 use tokio_postgres::Row;
+use tokio_postgres::error::SqlState;
+use std::future::Future;
 
 pub use h5i_app_pgsql::Kind;
 
@@ -281,14 +283,52 @@ fn compiled_read(tx: &Tx<'_>, schema: &Vec<Spec>, tenant: TenantId, q: &h5i_app_
     Ok((sql, vals, kinds))
 }
 
+/// Statements sent together on one transaction, awaited to the end: their
+/// results in order, or the error that failed the transaction.
+///
+/// Once one statement fails, PostgreSQL refuses every later one with
+/// "current transaction is aborted" (25P02), which is not retryable. Which
+/// failure a caller sees first is not the order the server ran them in:
+/// the connection task delivers the replies on another thread while the
+/// futures are polled, and a statement prepared on first use is sent after
+/// the cached ones behind it. So every reply is awaited and the error
+/// returned is the first that is not 25P02 (the cause: e.g. a
+/// serialization failure, which the engine retries).
+pub(crate) async fn pipelined<T>(futs: impl IntoIterator<Item = impl Future<Output = Result<T, DbError>>>) -> Result<Vec<T>, DbError> {
+    first_cause(futures_util::future::join_all(futs).await)
+}
+
+/// The results in order, or the first error that is not 25P02 (else the
+/// first error). See [`pipelined`].
+pub(crate) fn first_cause<T>(results: Vec<Result<T, DbError>>) -> Result<Vec<T>, DbError> {
+    let mut out = Vec::with_capacity(results.len());
+    let mut refused = None;
+    let mut cause = None;
+    for r in results {
+        match r {
+            Ok(v) => out.push(v),
+            Err(e) if e.code() == Some(&SqlState::IN_FAILED_SQL_TRANSACTION) => {
+                refused.get_or_insert(e);
+            }
+            Err(e) => {
+                cause.get_or_insert(e);
+            }
+        }
+    }
+    match cause.or(refused) {
+        Some(e) => Err(e),
+        None => Ok(out),
+    }
+}
+
 /// Plan (`h5i_app_sql::plan`), compile (`h5i_app_pgsql::compile`) and run each write in
 /// order. A statement that does not fit the schema fails the transaction.
 ///
 /// Pipelined: every statement is prepared first (once per connection), then
 /// all are sent before any result is awaited, in order, so the server runs
 /// them in plan order and the write set costs about one round trip. If one
-/// fails, PostgreSQL refuses the rest of the transaction; its error is the
-/// first to arrive, and the one returned.
+/// fails, PostgreSQL refuses the rest of the transaction; that failure is
+/// the error returned ([`pipelined`]).
 pub async fn store_writes(tx: &Tx<'_>, tenant: TenantId, schema: &Vec<Spec>, ws: &Vec<SqlWrite>) -> Result<(), DbError> {
     let tid = tenant_param(tenant)?;
     let mut bound = Vec::new();
@@ -300,12 +340,12 @@ pub async fn store_writes(tx: &Tx<'_>, tenant: TenantId, schema: &Vec<Spec>, ws:
     }
     // Prepared before any is sent: a statement still to prepare would
     // otherwise be sent after the ones behind it.
-    let sts = futures_util::future::try_join_all(bound.iter().map(|(sql, _)| prepare(tx, sql))).await?;
+    let sts = pipelined(bound.iter().map(|(sql, _)| prepare(tx, sql))).await?;
     let runs = sts.iter().zip(&bound).map(|(st, (_, vals))| async move {
         let params = refs(vals);
         tx.0.execute(st, &params).await
     });
-    futures_util::future::try_join_all(runs).await?;
+    pipelined(runs.map(|f| async move { Ok::<_, DbError>(f.await?) })).await?;
     Ok(())
 }
 
@@ -331,7 +371,7 @@ pub async fn load_table(
 /// `load_table` of each table in `tables` (no filter), all sent before any
 /// result is awaited: one round trip instead of one per table.
 pub async fn load_tables(tx: &Tx<'_>, tenant: TenantId, schema: &Vec<Spec>, tables: &[u32]) -> Result<Vec<Vec<Vec<Val>>>, DbError> {
-    futures_util::future::try_join_all(tables.iter().map(|t| load_table(tx, tenant, schema, *t, None))).await
+    pipelined(tables.iter().map(|t| load_table(tx, tenant, schema, *t, None))).await
 }
 
 /// The tenant's rows `q` returns (`H5iAppLib.Query.Read.rows`), without
@@ -352,7 +392,7 @@ pub async fn load_reads(
     schema: &Vec<Spec>,
     reads: &[&h5i_app_sql::Read],
 ) -> Result<Vec<Vec<Vec<Val>>>, DbError> {
-    futures_util::future::try_join_all(reads.iter().map(|q| load_read(tx, tenant, schema, q))).await
+    pipelined(reads.iter().map(|q| load_read(tx, tenant, schema, q))).await
 }
 
 /// How many rows `q` returns (`H5iAppLib.Query.Read.count`).
