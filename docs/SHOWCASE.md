@@ -3,7 +3,7 @@
 ## Web Applications using `h5i-app`
 
 - [o5s](https://github.com/h5i-dev/o5s): Patch-based version control for concurrent AI agents, deployable on Cloudflare Workers.
-- [h5i-ai-gateway](https://github.com/h5i-dev/h5i-ai-gateway): [litellm](https://github.com/BerriAI/litellm) rebuilt in Rust with h5i-app, deployable on Vercel.
+- [h5i-ai-gateway](https://github.com/h5i-dev/h5i-ai-gateway): [litellm](https://github.com/BerriAI/litellm) rebuilt in Rust with `h5i-app`, deployable on Vercel.
 - [h5i-pay](https://github.com/h5i-dev/h5i-pay): 
 - [h5i-db](https://github.com/Koukyosyumei/h5i-db): High-performance time-series database and backtesting engine with an `h5i-app`-based web interface.
 - [ai-town](https://github.com/h5i-dev/ai-town-rust): [AI Town](https://github.com/a16z-infra/ai-town) rebuilt in Rust with h5i-app
