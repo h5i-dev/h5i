@@ -175,9 +175,13 @@ impl DbError {
 /// can succeed. Other 53200 errors (real memory exhaustion) stay fatal.
 fn ssi_exhausted(e: &tokio_postgres::Error) -> bool {
     let Some(db) = e.as_db_error() else { return false };
-    *db.code() == SqlState::OUT_OF_MEMORY
-        && (db.message().contains("RWConflictPool")
-            || db.hint().is_some_and(|h| h.contains("max_pred_locks_per_transaction")))
+    ssi_exhausted_report(db.code(), db.message(), db.hint())
+}
+
+/// [`ssi_exhausted`] on the parts of a server error report.
+pub(crate) fn ssi_exhausted_report(code: &SqlState, message: &str, hint: Option<&str>) -> bool {
+    *code == SqlState::OUT_OF_MEMORY
+        && (message.contains("RWConflictPool") || hint.is_some_and(|h| h.contains("max_pred_locks_per_transaction")))
 }
 
 /// No server error code on COMMIT: the connection dropped and COMMIT may have landed.

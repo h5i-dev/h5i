@@ -1,13 +1,47 @@
-//! SERIALIZABLE's conflict pool overflowing (53200) is retryable: many
-//! open serializable transactions that each read a whole table and then
-//! write one row record a read/write conflict with every other one, more
-//! than the pool (about 5 × max_connections) holds. Needs
-//! H5I_APP_TEST_DATABASE_URL; skips otherwise.
+//! SERIALIZABLE running out of its shared structures (53200) is retryable.
+//!
+//! The classification is checked on the reports PostgreSQL 17 sends
+//! (`predicate.c`), always. Overflowing a real conflict pool needs a server
+//! that can hold enough open transactions: the pool has
+//! `5 × 10 × MaxBackends` entries (MaxBackends = max_connections +
+//! autovacuum_max_workers + 1 + max_worker_processes + max_wal_senders,
+//! about 6,100 at the defaults), while `n` transactions record at most
+//! `n × (n − 1)` conflicts, so with the default `max_connections = 100`
+//! (h5i's CI) no number of connections overflows it. That test is
+//! therefore `#[ignore]`d: run it with `--ignored` against a server with
+//! `max_connections ≥ 200` (h5i-pay's `scripts/dev-db.sh` starts one).
 
-use crate::DbError;
+use crate::{ssi_exhausted_report, DbError};
 use tokio_postgres::error::SqlState;
 
+#[test]
+fn ssi_exhaustion_reports_are_retryable_and_real_oom_is_not() {
+    // The RWConflictPool report (predicate.c, SetRWConflict).
+    assert!(ssi_exhausted_report(
+        &SqlState::OUT_OF_MEMORY,
+        "not enough elements in RWConflictPool to record a read/write conflict",
+        Some("You might need to run fewer transactions at a time or increase \"max_connections\"."),
+    ));
+    // The predicate lock table report (predicate.c, CreatePredicateLock).
+    assert!(ssi_exhausted_report(
+        &SqlState::OUT_OF_MEMORY,
+        "out of shared memory",
+        Some("You might need to increase \"max_pred_locks_per_transaction\"."),
+    ));
+    // Other 53200 reports are real memory exhaustion: not retried.
+    assert!(!ssi_exhausted_report(&SqlState::OUT_OF_MEMORY, "out of memory", Some("Failed on request of size 8192.")));
+    assert!(!ssi_exhausted_report(
+        &SqlState::OUT_OF_MEMORY,
+        "out of shared memory",
+        Some("You might need to increase \"max_locks_per_transaction\"."),
+    ));
+    // The same text under another code is not this condition.
+    assert!(!ssi_exhausted_report(&SqlState::T_R_SERIALIZATION_FAILURE, "not enough elements in RWConflictPool", None));
+    assert!(!DbError::Pool("x".into()).is_retryable());
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "needs max_connections >= 200 to overflow the conflict pool; see the module docs"]
 async fn conflict_pool_overflow_is_retryable() {
     let Ok(url) = std::env::var("H5I_APP_TEST_DATABASE_URL") else {
         eprintln!("H5I_APP_TEST_DATABASE_URL not set; skipping");
@@ -55,6 +89,4 @@ async fn conflict_pool_overflow_is_retryable() {
     drop(clients);
     admin.batch_execute("DROP TABLE h5i_ssi_test").await.unwrap();
     assert!(exhausted > 0, "{n} transactions did not overflow the conflict pool (max_connections {max}; {serialization} serialization failures)");
-    // Real memory exhaustion is not retried.
-    assert!(!DbError::Pool("x".into()).is_retryable());
 }
