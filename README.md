@@ -48,41 +48,35 @@ h5i provides a unified CLI for building, verifying, debugging, and security-test
 
 > The red-team, CI/CD, sandbox, and UI are framework-independent, so there's no need to adopt `h5i-app`.
 
-**Capabilities**
-
-- **Project tooling:** Scaffold Rust web applications, extract Lean 4 models, check proofs, and test proof sensitivity.
-- **Browser automation:** Navigate websites, interact with forms, and inspect authenticated workflows.
-- **HTTP security testing:** Capture, modify, replay, and compare HTTP requests.
-- **Reconnaissance:** Discover endpoints, parameters, and hidden attack surfaces.
-- **CI/CD:** Replay security tests and enforce API coverage requirements.
-- **Sandboxed environment:** Run isolated workflows with filesystem and network restrictions.
-- **Dashboard:** Monitor browser sessions and agent activity through a local web interface.
-
 **CLI Examples**
 
 ```bash
-# Build and verify
+# Project tooling: Scaffold Rust web applications, extract Lean 4 models, check proofs, and test proof sensitivity.
 h5i app new counter && cd counter
 h5i app extract
 h5i app prove
 h5i app mutate
 
-# Browser automation and red-teaming
+# Browser automation: Navigate websites, interact with forms, and inspect authenticated workflows.
 h5i browser open https://example.com
 h5i browser click @e3
+
+# HTTP security testing: Capture, modify, replay, and compare HTTP requests.
 h5i websec requests
 h5i websec replay req_42 --set query.id=456
+
+# Reconnaissance: Discover endpoints, parameters, and hidden attack surfaces.
 h5i recon crawl --max-requests 200
 
-# Security regression testing
+# CI/CD: Replay security tests and enforce API coverage requirements.
 h5i test .h5i-tests/tests/auth.yaml --target https://staging.example.com
 h5i test --target https://staging.example.com --openapi openapi.yaml --min-coverage 80
 
-# Sandboxed environment
+# Sandboxed environment: Run isolated workflows with filesystem and network restrictions.
 h5i box --name lab --profile browser
 h5i box shell lab -- claude
 
-# Local dashboard
+# Dashboard: Monitor browser sessions and agent activity through a local web interface.
 h5i ui
 ```
 
