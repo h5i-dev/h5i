@@ -48,10 +48,6 @@ h5i provides a unified CLI for building, verifying, debugging, and security-test
 
 > The red-team, CI/CD, sandbox, and UI are framework-independent, so there's no need to adopt `h5i-app`.
 
-<p align="center">
-  <img src="./docs/_static/agent-audit-target.svg" alt="An AI agent auditing a web application with h5i" width="99%" />
-</p>
-
 **Capabilities**
 
 - **Project tooling:** Scaffold Rust web applications, extract Lean 4 models, check proofs, and test proof sensitivity.
