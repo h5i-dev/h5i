@@ -465,6 +465,33 @@ enum Attempt<K: Kernel> {
     Replayed(K::Reply),
 }
 
+/// A write attempt's connection, which may hold session-level advisory
+/// locks from `lock` until `unlock` releases them. Dropped any other way
+/// (the request future was cancelled in between), the connection is closed
+/// rather than returned to the pool, so the server releases the locks and
+/// no later request inherits them; with a lock request still in flight,
+/// the server releases the lock as soon as it is granted.
+struct Locked(Option<deadpool_postgres::Object>);
+
+impl Locked {
+    fn get(&mut self) -> &mut deadpool_postgres::Object {
+        self.0.as_mut().expect("connection present until released")
+    }
+
+    /// Back to the pool: it holds no advisory lock.
+    fn release(&mut self) {
+        self.0.take();
+    }
+}
+
+impl Drop for Locked {
+    fn drop(&mut self) {
+        if let Some(client) = self.0.take() {
+            drop(deadpool_postgres::Object::take(client));
+        }
+    }
+}
+
 impl<K: Kernel, S: Store<K>> Engine<K, S> {
     pub fn new(pool: Pool, config: EngineConfig) -> Self {
         pool.1.set_capacity(config.statement_cache);
@@ -573,15 +600,15 @@ impl<K: Kernel, S: Store<K>> Engine<K, S> {
         let lock = if self.config.tenant_lock { S::lock_for(actor, cmd) } else { Lock::None };
         for attempt in 0..self.config.max_attempts {
             self.stats.attempts.fetch_add(1, Ordering::Relaxed);
-            let mut client = self.pool.0.get().await.map_err(|e| DbError::Pool(e.to_string()))?;
-            let result = match self.lock(&client, tenant, &lock).await {
+            let mut client = Locked(Some(self.pool.0.get().await.map_err(|e| DbError::Pool(e.to_string()))?));
+            let result = match self.lock(client.get(), tenant, &lock).await {
                 Ok(()) => {
-                    let r = self.attempt(&mut client, tenant, actor, cmd, idem.as_ref()).await;
-                    self.unlock(&client, &lock).await;
+                    let r = self.attempt(client.get(), tenant, actor, cmd, idem.as_ref()).await;
+                    self.unlock(client, &lock).await;
                     r
                 }
                 Err(e) => {
-                    self.unlock(&client, &lock).await;
+                    self.unlock(client, &lock).await;
                     Err(e)
                 }
             };
@@ -633,10 +660,12 @@ impl<K: Kernel, S: Store<K>> Engine<K, S> {
         Ok(())
     }
 
-    /// Releases every session-level advisory lock this connection holds.
-    async fn unlock(&self, client: &deadpool_postgres::Object, lock: &Lock) {
-        if *lock != Lock::None {
-            let _ = client.execute("SELECT pg_advisory_unlock_all()", &[]).await;
+    /// Releases every session-level advisory lock this connection holds,
+    /// then returns it to the pool. If that fails, the connection is closed
+    /// instead, which releases them too.
+    async fn unlock(&self, mut client: Locked, lock: &Lock) {
+        if *lock == Lock::None || client.get().execute("SELECT pg_advisory_unlock_all()", &[]).await.is_ok() {
+            client.release();
         }
     }
 

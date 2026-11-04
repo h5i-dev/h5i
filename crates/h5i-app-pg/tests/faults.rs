@@ -648,6 +648,88 @@ async fn outbox_is_atomic_and_redelivers_with_one_key() {
     assert!(inbox.seen.lock().unwrap().is_empty());
 }
 
+// Cancellation: dropping a request's future mid-transaction (here: after its
+// writes, before COMMIT), or while it waits for an advisory lock, leaves no
+// write and no advisory lock, and other servers get the tenant.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancelled_requests_leave_no_write_and_no_lock() {
+    let Some(db) = setup("h5i_fault_cancel").await else { return };
+    let pg = Arc::new(db.engine(2, EngineConfig::default()).await);
+    let other = db.engine(2, EngineConfig::default()).await;
+    for keyed in [false, true] {
+        let t = tenant();
+        let a = actor(t, 1);
+        pg.execute(&a, &add(0, 1)).await.unwrap().unwrap();
+        let reached = Arc::new(tokio::sync::Notify::new());
+        let r = reached.clone();
+        set_hook(t, at_first(Point::Written, 1, move |_| {
+            let r = r.clone();
+            async move {
+                r.notify_one();
+                std::future::pending::<()>().await;
+                Ok(())
+            }
+        }));
+        let (p, a2) = (pg.clone(), a.clone());
+        let task = tokio::spawn(async move {
+            if keyed { p.execute_idempotent(&a2, "c", &add(0, 5)).await } else { p.execute(&a2, &add(0, 5)).await }
+        });
+        reached.notified().await;
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        clear_hook(t);
+        assert_eq!(db.wait_no_advisory_locks(Duration::from_secs(5)).await, 0, "keyed={keyed}: lock left held");
+        assert_eq!(db.cells(t).await.get(0), 1, "keyed={keyed}: no partial write");
+        assert_eq!(db.count("h5i_idempotency", t).await, 0);
+        tokio::time::timeout(Duration::from_secs(5), other.execute(&a, &add(0, 1))).await.expect("tenant lock free").unwrap().unwrap();
+        tokio::time::timeout(Duration::from_secs(5), pg.execute(&a, &add(0, 1))).await.expect("pool usable").unwrap().unwrap();
+        assert_eq!(db.cells(t).await.get(0), 3);
+    }
+
+    // Cancelled while waiting for the tenant lock another request holds.
+    let t = tenant();
+    let a = actor(t, 1);
+    let (go, wait) = (Arc::new(tokio::sync::Notify::new()), Arc::new(tokio::sync::Notify::new()));
+    let (g, w) = (go.clone(), wait.clone());
+    set_hook(t, at_first(Point::Write, 1, move |_| {
+        let (g, w) = (g.clone(), w.clone());
+        async move {
+            w.notify_one();
+            g.notified().await;
+            Ok(())
+        }
+    }));
+    let (p, a1) = (pg.clone(), a.clone());
+    let holder = tokio::spawn(async move { p.execute(&a1, &add(0, 1)).await });
+    wait.notified().await;
+    let (p, a2) = (pg.clone(), a.clone());
+    let queued = tokio::spawn(async move { p.execute(&a2, &add(0, 100)).await });
+    loop {
+        let n: i64 = db
+            .admin
+            .query_one(
+                "SELECT count(*) FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
+                 WHERE a.application_name = $1 AND l.locktype = 'advisory' AND NOT l.granted",
+                &[&db.name],
+            )
+            .await
+            .unwrap()
+            .get(0);
+        if n > 0 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    queued.abort();
+    assert!(queued.await.unwrap_err().is_cancelled());
+    go.notify_one();
+    holder.await.unwrap().unwrap().unwrap();
+    clear_hook(t);
+    assert_eq!(db.wait_no_advisory_locks(Duration::from_secs(5)).await, 0, "the cancelled wait left a lock");
+    assert_eq!(db.cells(t).await.get(0), 1, "the cancelled request did not run");
+    tokio::time::timeout(Duration::from_secs(5), other.execute(&a, &add(0, 1))).await.expect("tenant lock free").unwrap().unwrap();
+}
+
 /// A serial order of `done` (actor, command, reply, writes) through
 /// `transition` from `start` that reproduces every reply and write set, by
 /// depth-first search; and the state it ends in.
