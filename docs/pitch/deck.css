@@ -61,6 +61,16 @@ pre strong { color:var(--spot); font-weight:500; }
 .metrics strong { font-size:112px; line-height:1; font-stretch:70%; font-weight:650; letter-spacing:-.06em; color:var(--ink); }
 .metrics strong span { color:var(--spot); }
 .metrics>div>span { font:12px var(--mono); letter-spacing:.13em; color:var(--dim); }
+.metric-row { display:flex; align-items:center; flex-wrap:wrap; gap:14px 32px; }
+.os-split { margin:0; display:flex; align-items:center; gap:18px; }
+.os-split svg { width:96px; height:96px; flex:none; }
+.os-split .os-linux { stroke:var(--spot); background:var(--spot); }
+.os-split .os-mac { stroke:var(--text); background:var(--text); }
+.os-split .os-win { stroke:#5c5953; background:#5c5953; }
+.os-split figcaption { display:grid; gap:7px; font:12px/1.2 var(--mono); color:var(--dim); }
+.os-split figcaption span { display:grid; grid-template-columns:9px 64px auto; align-items:center; gap:9px; }
+.os-split i { width:9px; height:9px; }
+.os-split b { color:var(--ink); font-weight:500; text-align:right; }
 .traction-bottom { display:grid; grid-template-columns:1fr 1fr; gap:48px; margin-top:22px; }
 .traction-bottom p { font-size:18px; }
 .traction-bottom .index+p { margin-top:6px; }
@@ -154,6 +164,9 @@ figure { margin:0; }
 .shell-dashboard { display:grid; grid-template-columns:360px 50px minmax(0,1fr); margin-top:26px; }
 .agent-shell { border:1px solid var(--line); background:var(--panel); }
 .agent-shell pre { margin:0; padding:23px 16px; font-size:13px; line-height:1.8; overflow-wrap:anywhere; }
+.shell-stack { display:grid; grid-template-rows:repeat(3,auto); gap:10px; align-content:start; }
+.shell-stack .editor-bar { padding:6px 12px; }
+.shell-stack pre { padding:9px 12px; font-size:12px; line-height:1.55; }
 .shell-link { align-self:center; text-align:center; color:var(--spot); font:30px var(--mono); }
 .session-ui-frame { height:400px; border:1px solid var(--line); overflow:hidden; }
 .session-ui-frame iframe { display:block; width:1000px; height:540px; transform:scale(.738); transform-origin:top left; border:0; pointer-events:none; }
@@ -266,6 +279,11 @@ figure { margin:0; }
   .metrics strong { font-size:67px; }
   .metrics>div+div { padding-left:20px; }
   .metrics>div>span { font-size:9px; letter-spacing:0; }
+  .os-split { gap:10px; }
+  .os-split svg { width:56px; height:56px; }
+  .os-split figcaption { font-size:9px; gap:4px; }
+  .os-split figcaption span { grid-template-columns:7px 44px auto; gap:5px; }
+  .os-split i { width:7px; height:7px; }
   .traction-bottom { gap:20px; }
   .closing { gap:24px; }
   #slide-4 h2 { font-size:40px; }
