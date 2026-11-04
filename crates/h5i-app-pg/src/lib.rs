@@ -35,6 +35,8 @@ pub mod tls;
 mod reads_test;
 #[cfg(test)]
 mod pipeline_test;
+#[cfg(test)]
+mod ssi_test;
 #[cfg(all(test, feature = "tls"))]
 mod tls_test;
 
@@ -158,10 +160,28 @@ impl DbError {
                         || *c == SqlState::T_R_DEADLOCK_DETECTED
                         || *c == SqlState::ADMIN_SHUTDOWN
                         || *c == SqlState::CRASH_SHUTDOWN)
+                    || ssi_exhausted(e)
             }
             _ => false,
         }
     }
+}
+
+/// SERIALIZABLE ran out of its shared structures: the read/write conflict
+/// pool (sized from `max_connections`) or the predicate lock table
+/// (`max_pred_locks_per_transaction`). PostgreSQL reports both as 53200
+/// (`out_of_memory`); the transaction was aborted and the space frees as
+/// concurrent serializable transactions end, so a retry after a backoff
+/// can succeed. Other 53200 errors (real memory exhaustion) stay fatal.
+fn ssi_exhausted(e: &tokio_postgres::Error) -> bool {
+    let Some(db) = e.as_db_error() else { return false };
+    ssi_exhausted_report(db.code(), db.message(), db.hint())
+}
+
+/// [`ssi_exhausted`] on the parts of a server error report.
+pub(crate) fn ssi_exhausted_report(code: &SqlState, message: &str, hint: Option<&str>) -> bool {
+    *code == SqlState::OUT_OF_MEMORY
+        && (message.contains("RWConflictPool") || hint.is_some_and(|h| h.contains("max_pred_locks_per_transaction")))
 }
 
 /// No server error code on COMMIT: the connection dropped and COMMIT may have landed.
