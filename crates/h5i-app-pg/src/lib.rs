@@ -34,6 +34,8 @@ pub mod tls;
 #[cfg(test)]
 mod reads_test;
 #[cfg(test)]
+mod pipeline_test;
+#[cfg(test)]
 mod ssi_test;
 #[cfg(all(test, feature = "tls"))]
 mod tls_test;
@@ -646,7 +648,7 @@ impl<K: Kernel, S: Store<K>> Engine<K, S> {
             .await?;
         // The clock is pipelined with the load: no round trip of its own.
         let (now, snap) =
-            futures_util::future::try_join(self.read_clock(&tx, tid), S::load_for(&Tx(&tx, &self.pool.1, None), tenant, actor, cmd)).await?;
+            both(futures_util::future::join(self.read_clock(&tx, tid), S::load_for(&Tx(&tx, &self.pool.1, None), tenant, actor, cmd)).await)?;
         let mut actor = actor.clone();
         K::stamp(&mut actor, now);
         match K::transition(&actor, &snap, cmd) {
@@ -694,7 +696,7 @@ impl<K: Kernel, S: Store<K>> Engine<K, S> {
             }
             Ok(Ok(S::load_for(&Tx(&tx, &self.pool.1, None), tenant, actor, cmd).await?))
         };
-        let (now, loaded) = futures_util::future::try_join(self.read_clock(&tx, tid), load).await?;
+        let (now, loaded) = both(futures_util::future::join(self.read_clock(&tx, tid), load).await)?;
         let snap = match loaded {
             Ok(snap) => snap,
             Err(reply) => {
@@ -762,6 +764,16 @@ impl<K: Kernel, S: Store<K>> Engine<K, S> {
         let last = tx.query_opt(&st, &[&tid]).await?;
         let last = Timestamp(last.map(|r| r.get::<_, i64>(0)).unwrap_or(0).max(0) as u64);
         Ok(clock.max(last))
+    }
+}
+
+/// Two pipelined results, or the error that failed the transaction (the
+/// first that is not "current transaction is aborted"; `table::pipelined`).
+fn both<A, B>((a, b): (Result<A, DbError>, Result<B, DbError>)) -> Result<(A, B), DbError> {
+    match (a, b) {
+        (Ok(a), Ok(b)) => Ok((a, b)),
+        (Err(e), Ok(_)) | (Ok(_), Err(e)) => Err(e),
+        (Err(x), Err(y)) => Err(if x.code() == Some(&SqlState::IN_FAILED_SQL_TRANSACTION) { y } else { x }),
     }
 }
 

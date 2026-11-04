@@ -141,26 +141,31 @@
 <div class="content">
   <div class="eyebrow">06 / The tooling</div>
   <h2 id="title-6">Development Infrastructure</h2>
-  <p class="slide-intro">Red-teaming tests the running system, including HTTP adapters and external services beyond the proof boundary. Findings can become CI/CD regression tests.</p>
+  <p class="slide-intro">Red-teaming tests the running system, including HTTP adapters and external services beyond the proof boundary. Untrusted code runs in confined boxes, and findings become CI/CD regression tests.</p>
   <div class="shell-dashboard">
-    <div class="agent-shell"><div class="editor-bar">AI agent / shell</div><pre><span class="prompt">$</span> h5i browser snapshot
+    <div class="shell-stack">
+      <div class="agent-shell"><div class="editor-bar">h5i browser + websec / red-team</div><pre><span class="prompt">$</span> h5i browser snapshot
 <span class="terminal-result">  @e7 Order 1041</span>
-
 <span class="prompt">$</span> h5i websec replay req_3 \
     --set query.id=1042
 <span class="terminal-result">  → req_4 · HTTP 200</span>
-
 <span class="prompt">$</span> h5i websec diff res_3 res_4
 <span class="terminal-result">  owner: Alice → Bob</span></pre></div>
+      <div class="agent-shell"><div class="editor-bar">h5i box / sandbox</div><pre><span class="prompt">$</span> h5i box create pr-1234 --pr 1234
+<span class="prompt">$</span> h5i box run pr-1234 -- npm test</pre></div>
+      <div class="agent-shell"><div class="editor-bar">h5i test / CI/CD</div><pre><span class="prompt">$</span> h5i test --target $STAGING_URL
+<span class="terminal-result">  ✔ document-isolation (Pass, 412 ms)</span>
+<span class="terminal-result">  results: h5i-test-results</span></pre></div>
+    </div>
     <div class="shell-link" aria-label="Same session">↔</div>
     <div class="session-ui-frame"><iframe src="assets/h5i-ui-session.html" title="Actual h5i ui session workspace, static local demonstration" sandbox tabindex="-1"></iframe></div>
   </div>
 </div>
-<footer class="folio"><span>Illustrative shell + actual h5i ui / local demo; confirmed findings can become CI tests</span><span>06</span></footer>
+<footer class="folio"><span>Illustrative shell (browser, websec, box, test) + actual h5i ui / local demo</span><span>06</span></footer>
 </section>
 
 <section class="slide " id="slide-7" aria-labelledby="title-7">
-<div class="content"><div class="eyebrow">07 / Early traction</div><h2 id="title-7">Open-source traction</h2><div class="metrics"><div><strong>2.3k<span>+</span></strong><span>RELEASE DOWNLOADS</span></div><div><strong>880<span>+</span></strong><span>GITHUB STARS</span></div></div><div class="source-line"><span>Maintainer-reported · October 28, 2026</span><a href="https://github.com/h5i-dev/h5i">Repository ↗</a><a href="https://github.com/h5i-dev/h5i/releases">Releases ↗</a></div></div>
+<div class="content"><div class="eyebrow">07 / Early traction</div><h2 id="title-7">Open-source traction</h2><div class="metrics"><div><div class="metric-row"><strong>3.5k<span>+</span></strong><figure class="os-split" aria-label="Release downloads by OS: Linux 59%, macOS 23%, Windows 18%"><svg viewBox="0 0 42 42" aria-hidden="true"><g transform="rotate(-90 21 21)" fill="none" stroke-width="7"><circle class="os-linux" cx="21" cy="21" r="15.9155" stroke-dasharray="58.2 41.8" stroke-dashoffset="0"/><circle class="os-mac" cx="21" cy="21" r="15.9155" stroke-dasharray="22.2 77.8" stroke-dashoffset="-59"/><circle class="os-win" cx="21" cy="21" r="15.9155" stroke-dasharray="17.2 82.8" stroke-dashoffset="-82"/></g></svg><figcaption><span><i class="os-linux"></i>Linux<b>59%</b></span><span><i class="os-mac"></i>macOS<b>23%</b></span><span><i class="os-win"></i>Windows<b>18%</b></span></figcaption></figure></div><span>RELEASE DOWNLOADS</span></div><div><strong>880<span>+</span></strong><span>GITHUB STARS</span></div></div><div class="source-line"><span>Maintainer-reported · downloads November 3, stars October 28, 2026</span><a href="https://github.com/h5i-dev/h5i">Repository ↗</a><a href="https://github.com/h5i-dev/h5i/releases">Releases ↗</a></div></div>
 <footer class="folio"><span>Open-source interest / downloads and stars</span><span>07</span></footer>
 </section>
 

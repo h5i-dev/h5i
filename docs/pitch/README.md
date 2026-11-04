@@ -38,8 +38,9 @@ supporting tools, not the differentiator. Show the real dashboard layout, not a 
 so its text and borders remain sharp in the PDF. Dashboard controls refer to browser control
 and stopping the browser, not arbitrary agent termination or policy editing.
 
-Slide 7 shows an October 28, 2026 snapshot: 2.3k+ release downloads and
-880+ GitHub stars. These are conservative interest signals, not
+Slide 7 shows 3.5k+ release downloads (November 3, 2026, from
+`scripts/h5i-stat.sh`) with a Linux/macOS/Windows donut that excludes Python
+wheels, and 880+ GitHub stars (October 28, 2026). These are conservative interest signals, not
 customer numbers. The dashboard uses a static DOM/CSS snapshot of the real `h5i ui`, captured
 from a local demonstration session. It is not a screenshot or a UI mockup. Product boundaries follow `docs/design/design-app-trust.md` and
 the box policy guide. Design partners and paid pilots are future steps.
