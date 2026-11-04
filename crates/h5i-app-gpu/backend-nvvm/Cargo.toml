@@ -2,6 +2,7 @@
 name = "h5i-app-gpu-backend-nvvm"
 version = "0.5.3"
 edition = "2024"
+license = "Apache-2.0"
 publish = false
 [dependencies]
 h5i-app-gpu = { path = ".." }
