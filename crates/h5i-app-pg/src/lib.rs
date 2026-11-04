@@ -82,6 +82,38 @@ impl Tx<'_> {
     pub async fn backend_pid(&self) -> Result<i32, DbError> {
         Ok(self.0.query_one("SELECT pg_backend_pid()", &[]).await?.get(0))
     }
+
+    /// This transaction's backend, isolation and identity, so fault tests
+    /// can check that each attempt runs in a new transaction of the right kind.
+    #[cfg(feature = "testing")]
+    pub async fn info(&self) -> Result<TxInfo, DbError> {
+        let row = self
+            .0
+            .query_one(
+                "SELECT pg_backend_pid(), current_setting('transaction_isolation'),
+                        current_setting('transaction_read_only') = 'on',
+                        current_setting('transaction_deferrable') = 'on',
+                        (SELECT virtualxid FROM pg_locks
+                          WHERE locktype = 'virtualxid' AND pid = pg_backend_pid() LIMIT 1)",
+                &[],
+            )
+            .await?;
+        Ok(TxInfo { pid: row.try_get(0)?, isolation: row.try_get(1)?, read_only: row.try_get(2)?, deferrable: row.try_get(3)?, vxid: row.try_get(4)? })
+    }
+}
+
+/// What [`Tx::info`] reports.
+#[cfg(feature = "testing")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TxInfo {
+    pub pid: i32,
+    /// `current_setting('transaction_isolation')`, e.g. `serializable`.
+    pub isolation: String,
+    pub read_only: bool,
+    pub deferrable: bool,
+    /// The virtual transaction id: unique among running transactions, new
+    /// for each transaction of a backend.
+    pub vxid: String,
 }
 
 /// Opaque connection pool, so app code cannot take a raw connection.
