@@ -1,6 +1,8 @@
 # h5i-app on bare metal: a verified, async, `no_std` HTTP/1.1 server
 
-Status: design, not yet implemented. Branch `support-embed-webserver`.
+Status: implemented on branch `support-embed-webserver`; see "Final state"
+at the end for what was built, what is proven, and where the implementation
+departs from this design and why.
 
 ## Goal
 
@@ -270,3 +272,85 @@ verified core, and between the core and a kernel.
 | `h5i-app-embedded` shell, router, extractors, command decoding | trusted, tested |
 | `embassy`, HAL, `embedded-io`, Renode models, Charon/Aeneas/Lean | assumed |
 | that the device runs the extracted code | CI re-extracts and diffs (A9), as for other crates |
+
+## Final state
+
+### Built
+
+| Piece | Where |
+|---|---|
+| verified core | `crates/h5i-app-h1` (`src/lib.rs`, `proofs/H1Spec.lean`, `H1Proofs.lean`, `H1Props.lean`, `H1Smuggle.lean`) |
+| async shell | `crates/h5i-app-embedded` (`serve`, `Router`, `kernel::{DeviceEngine, PskAuth, Api, respond}`) |
+| `no_std` core | `crates/h5i-app-core` features `std` (default) / `alloc` |
+| thermostat | `examples/embedded/thermostat/{kernel,proofs,app,host,firmware}` |
+| Renode | `scripts/embedded/{install-renode.sh,thermostat.resc,renode-smoke.sh}` (Renode 1.17.0) |
+
+### Proven (gate: `cargo app check`, no `sorry`/`native_decide`/axioms)
+
+- `parse_head_spec`: `parse_head` = `Spec.parseHead` for every buffer and limit
+  (panic freedom included). `chunk_step_spec`: `chunk_step` = `Spec.chunkStep`
+  for every state. `write_head_total`: `write_head` never panics; its pieces
+  (`dec_digits_spec`, `put_W`, `put1_W`, `put_dec_W`, `put_reason_W`) write
+  exactly their bytes after a written prefix.
+- `accept_wellformed` / `parse_head_wellformed` (`H1Props.lean`).
+- `no_smuggling` (`H1Smuggle.lean`) relative to `Interp`: line ends CRLF or LF;
+  first or last duplicate `Content-Length`; TE-wins or CL-wins; whitespace
+  before the colon stripped or kept; obs-fold unfolded or ignored; values
+  trimmed or kept. For every input `parse_head` accepts, every member, given
+  any prefix that holds the head, computes the same head length and framing.
+- `parseHead_reads` / `parse_head_reads`: the result depends only on the first
+  `max_head` bytes once they are buffered.
+- Thermostat: `transition_total`, `set_relay_refused`, `inv_reachable`,
+  `interlock`, `ReadOnly.sound`; mutants 3/3 caught.
+
+### Tested, not proven
+
+- `write_head` output equals `Spec.renderHead` (unit tests; the Lean spec is
+  written, the end-to-end theorem is not: Aeneas' `step` cannot infer the
+  prefix lemmas' ghost arguments, and the manual chain was not finished).
+- `response_no_splitting`: the content type is checked to hold only
+  field-value bytes (proven to be checked: `write_head` returns `None`
+  otherwise), but "exactly one CRLFCRLF" is not a theorem.
+- Whole-body chunked decoding against a list-level `dechunk`, and
+  `pipeline_split`: each byte step is proven; the fold and the stream split are
+  tested (shell tests, Renode smoke).
+- Work per byte: termination measures only; no step-counter theorem.
+- Shell: unit tests, smuggling corpus, proptest; `parse_head` vs `httparse`
+  (9,000 cases); thermostat API proptest of the interlock through HTTP;
+  Renode smoke (25 checks).
+
+### Deviations from the design, and why
+
+1. **Slices, not `&[u8; N]`.** The spike extracted `&[u8]` reads, `&mut [u8]`
+   writes and `[T; N]` cleanly, and `Slice`/`Array` lemmas sufficed.
+2. **Aeneas limits shaped the code.** A function returning a `&'static [u8]`
+   from a `match` fails ("no bottoms"), unsizing a local array (`&code`)
+   and arrays of borrows are unimplemented. So reasons are written by
+   `put_reason`, status digits by `put1`, and decimals through a local
+   `[u8; 10]` and `put_n`. Long `||` chains blow up the extracted Lean, so
+   `is_tchar` tests ranges.
+3. **`chunk_step` split into phase helpers**, so its spec proof stays small.
+4. **CL/TE values may not end in whitespace.** Needed for `no_smuggling`
+   against the keep-trailing-whitespace member: `chunked ` would otherwise be
+   another coding to it.
+5. **Case-sensitive name matching is outside `Interp`.** A parser recognizing
+   only `Content-Length` would frame a `content-length` body as the next
+   request; agreeing with it and with a conforming parser would mean refusing
+   every other spelling, which breaks proxies that lowercase names (HTTP/2
+   downgrades). RFC 9110 §5.1 makes names case-insensitive.
+6. **Read bound is `max_head`, not `max_head + 1`.** A buffer of `max_head`
+   bytes without a complete head is already 431/414.
+7. **`[authz]` binding needs `std`.** `h5i-app-std` is not `no_std`, so
+   `h5i_app_core::authz` sits behind `std`; `alloc` alone gives `ReplyCodec`,
+   `Executor` and `sorted_by_key`.
+8. **Handlers take `(&Request, &S, &mut [u8])`** rather than per-argument
+   extractors: borrowed extractors (`Body<'r>`) and HRTB `AsyncFn` bounds do
+   not compose without allocation. `Request::param_u32`, `header`, `body`
+   play the extractors' role.
+9. **No read timeout in `Config`.** The shell has no clock; the host runner
+   wraps `serve` in `tokio::time::timeout`, the firmware uses
+   `embassy_time::with_timeout` to resynchronize the UART.
+10. **Transport: UART, not Ethernet.** The UART path (choice 2) worked first
+    try in Renode; Ethernet (embassy-net, a TAP bridge) was not attempted.
+11. **`Head` holds header spans, the shell compares names** (`Request::header`)
+    outside the verified code; the framing headers are classified inside it.
