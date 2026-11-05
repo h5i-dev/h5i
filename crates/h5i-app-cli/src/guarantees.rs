@@ -19,6 +19,10 @@
 //!   state `ReadOnly.Sound`. Each is `passed` only if the latest recorded
 //!   check run passed and gated it; the run's input digest is compared with
 //!   the current sources'.
+//! - The tenant (`crate::tenant`): `tenant-of-token`'s status as the latest
+//!   passed check found it, and whether the server is linked to the
+//!   principal function it is proven for, read now from the sources. Each
+//!   kernel route's `tenant` line says covered or reviewed.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};

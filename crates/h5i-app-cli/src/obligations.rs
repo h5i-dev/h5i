@@ -22,7 +22,10 @@
 //! The intent-free ones (group A of `docs/design/design-app-authz.md`,
 //! "Obligations") are stated for every project with an extracted kernel:
 //! panic freedom, tenant isolation, read-only soundness when commands are
-//! read-only, and storage for `[authz]`.
+//! read-only, and storage for `[authz]`. One is opt-in: `tenant-of-token`,
+//! for an `[authz]` app that names its principal function as `[obligations]
+//! principal` (whether the server uses that function is `crate::tenant`'s
+//! source check, reported next to it).
 
 use std::path::Path;
 

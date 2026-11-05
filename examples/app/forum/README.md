@@ -28,13 +28,19 @@ authorization is still proven, for every request sequence.
   checked in the kernel's own `apply`), `.read_only_sound` (the engine may run
   reads without locks), and `Committed.pg_stored` (PostgreSQL holds and loads
   back what that `apply` computes).
+- The tenant comes from the token, by proof: the kernel's `principal` is named
+  as `[obligations] principal`, `h5i app check` proves `tenant-of-token`
+  (`tenant_of(principal(t, u)) = t`, where `tenant_of` is the tenant
+  `authz_kernel!` gives the engine) by automation, and `server/src/main.rs`
+  passes `forum_kernel::principal` to `HmacAuth::new`, which `h5i app report`
+  reads as `proven, linked` (a source check, not a proof).
 
 What is proven and what stays trusted: [`docs/design/design-app-authz.md`](../../../docs/design/design-app-authz.md).
 To review the forum's authorization, read its `Policy`, `View` and `Disclose`
-impls with `Write` and `apply_write`, the `authz_kernel!` call, the principal
-function `HmacAuth` is given (`principal`) and `ReplyCodec::scope` in
-`server/src/lib.rs`, the two `Cargo.toml`s and the engine line of
-`server/src/main.rs`. The handlers may be wrong without breaking it, as long
+impls with `Write` and `apply_write`, the `authz_kernel!` call (its types; its
+tenant is covered by `tenant-of-token` while the report says `proven, linked`),
+`ReplyCodec::scope` in `server/src/lib.rs`, the two `Cargo.toml`s and the
+`HmacAuth` and engine lines of `server/src/main.rs`. The handlers may be wrong without breaking it, as long
 as the server acts only through `H5iApp` (it does: `rpc_router`).
 
 ## Run it

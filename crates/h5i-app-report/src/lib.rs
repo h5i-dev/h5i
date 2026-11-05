@@ -359,7 +359,8 @@ impl TenantLink {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ObligationResult {
-    /// `read-only`, `storage`, `panic-free`, `authorized`, `tenant-isolation`, `authz`.
+    /// `read-only`, `storage`, `panic-free`, `authorized`, `tenant-isolation`,
+    /// `authz`, `policy-*`, `tenant-of-token`, `reply-codec`.
     pub name: String,
     /// The statement, as a Lean term, instantiated for the app.
     pub statement: String,

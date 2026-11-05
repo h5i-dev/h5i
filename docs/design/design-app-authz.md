@@ -30,11 +30,14 @@ The reviewed surface, which does not grow with the app:
 - the `Policy`, `View` and `Disclose` impls, and the `Write` type with
   `apply_write` (`permits` judges a write's value; `apply_write` decides what
   it does);
-- the one `authz_kernel!` invocation (which type, and the tenant);
+- the one `authz_kernel!` invocation (which type, and the tenant expression);
 - how a request becomes a principal: the `Authenticator` (for `HmacAuth`, the
   principal function given to `HmacAuth::new`), any `or_anonymous`, any
   `Actor::assume_authenticated`. The policy is judged for the principal it is
-  given;
+  given. The tenant a request runs in is part of this surface, unless
+  `tenant-of-token` is proven and the server is linked
+  ([The tenant of a token](#the-tenant-of-a-token)); `or_anonymous` and
+  `assume_authenticated` stay in it either way;
 - `ReplyCodec::scope`, which decides whose stored replies a repeated request
   gets back;
 - the kernel's and server's `Cargo.toml` dependencies on `h5i-app-*`;
@@ -74,10 +77,11 @@ In the kernel crate, in the Rust subset Aeneas translates:
 | `impl Disclose<D> for Reply` | the rows a reply carries | complete: an omitted row is not checked |
 | `impl View<A, S, C>` | `read_only(cmd)`; `view(actor, s)`, the part of the state the actor may see | the read side of the policy |
 | `impl Transition<…>` | delegates `kernel_transition`/`kernel_apply` to the kernel's `transition`/`apply` | wiring; `kernel_apply_eq` proves it |
-| `h5i_app_std::authz_kernel! { Forum { … } }` | the types, and a principal's tenant | the types; the tenant |
+| `h5i_app_std::authz_kernel! { Forum { … } }` | the types, and a principal's tenant | the types; the tenant, unless `tenant-of-token` is proven and linked |
 
 From one list of types, `authz_kernel!` writes `guarded_transition` (what the
-proof is about), `read_only`, and `App` (the kernel behind the guard). The
+proof is about), `read_only`, `tenant_of` (the tenant expression as a
+function, which `AuthzKernel::tenant` calls), and `App` (the kernel behind the guard). The
 policy is plain Rust extracted with the kernel, so no generator sits between
 what the reviewer reads and the theorem. Handlers check input and
 existence only.
@@ -261,9 +265,10 @@ obligation `read-only`: calculator_kernel.Proofs.memory_of_spec does not state i
 | `TenantIsolation` | `valKind`: another tenant's compiled statements leave this tenant's rows unchanged, and a compiled `SELECT` returns only what this tenant's rows determine | `H5iAppLib.Obligation.tenant_isolation`, proven once from `Pg.compileAll_sound` and `Pg.select_sound` |
 | `Authorized` | `transition`, with the app's `allowed` and `visible` | `[obligations] authorized` |
 | `PolicySpec` | `policy::permits`, `visible`, `stored` compute `PolicySpec.Permits`, `Visible`, `Stored` | generated with a `schema!` policy ([below](#a-policy-from-the-schema)) |
+| `TenantOfToken` (opt-in) | `tenant_of` (from `authz_kernel!`) and the principal function: `∀ t u, ∃ p, principal t u = ok p ∧ tenant_of p = ok t`; `TenantOfTokenWith` adds `∀ x` for a per-request input | `[obligations] tenant-of-token`, else automation (`simp`); only with `[obligations] principal` ([below](#the-tenant-of-a-token)) |
 
 `[obligations]` names the theorem for a slot (`read-only`, `panic-free`,
-`authorized`, `storage`); `[authz] storage` is the same slot as
+`authorized`, `storage`, `tenant-of-token`); `[authz] storage` is the same slot as
 `[obligations] storage`. A theorem under `[check] theorems` only is gated for
 its axioms and claims no obligation, so existing manifests mean what they
 meant. `lint` asks a `Kernel` that overrides `read_only` to name its proof as
@@ -287,25 +292,82 @@ ones not stated and why.
 Group A, the statements that need no input from the app, on the examples
 (`h5i app check` on 5 November 2026):
 
-| Project | read-only | storage | panic-free | tenant isolation |
-|---|---|---|---|---|
-| forum | proven (guard) | proven (`Committed.storage`) | open | proven (library) |
-| notes | proven (guard) | proven (`Committed.storage`) | open | proven (library) |
-| calculator | proven (`ReadOnly.sound`) | not stated (no `[authz]`; `pg_stored` is the app's) | proven (automation) | proven (library) |
-| board, booking, inbox, ledger | none (no read-only commands) | not stated (`db_inv` is the app's) | proven (`Theorems.panic_free`, from `transition_total`) | proven (library) |
-| parallel | none | not stated | no `transition` | proven (library) |
+| Project | read-only | storage | panic-free | tenant isolation | tenant of token (opt-in) |
+|---|---|---|---|---|---|
+| forum | proven (guard) | proven (`Committed.storage`) | open | proven (library) | proven (automation), linked |
+| notes | proven (guard) | proven (`Committed.storage`) | open | proven (library) | proven (`Tenant.tenant_of_token`), not linked (no server) |
+| calculator | proven (`ReadOnly.sound`) | not stated (no `[authz]`; `pg_stored` is the app's) | proven (automation) | proven (library) | not stated |
+| board, booking, inbox, ledger | none (no read-only commands) | not stated (`db_inv` is the app's) | proven (`Theorems.panic_free`, from `transition_total`) | proven (library) | not stated |
+| parallel | none | not stated | no `transition` | proven (library) | not stated |
 
 Panic freedom of `guarded_transition` stays open: `step*` does not get through
 the guard's loops, and nobody has proven a total spec of `guard_viewed`.
 Tenant isolation is a statement about the compiler and the database model; it
 leaves trusted that the engine and the generated store pass `K::tenant(actor)`
-consistently (A6) and that `authz_kernel!`'s `tenant` is right (A11).
+consistently (A6) and that `authz_kernel!`'s `tenant` is right (A11), unless
+the app proves `tenant-of-token` ([below](#the-tenant-of-a-token)).
 
 Not stated, and why: the `ReplyCodec` (fingerprint injectivity,
 `decode (encode r) = ok r`, a scope without `/`) is implemented in each
 server crate with `String` and serde, outside the extracted subset. Stating
 those needs the codec moved into the kernel crate in the Aeneas subset (bytes
 as `Vec<u8>`, explicit loops), then the statements fit next to the others.
+
+### The tenant of a token
+
+Which tenant a request runs in is decided by two pieces of code: the
+principal function the server gives the authenticator
+(`HmacAuth::new(secret, f)`, called with a verified token's tenant and user)
+and the kernel's tenant (`authz_kernel!`'s `tenant: |actor| actor.org`). By
+default neither is extracted, and both are in the reviewed surface. An app
+may opt in to an obligation that connects them; nothing requires it, and
+`HmacAuth::new` takes any closure as before.
+
+```toml
+[obligations]
+principal = "principal"                                   # a function of the kernel crate, by path
+tenant-of-token = "notes_kernel.Tenant.tenant_of_token"   # optional: without it, automation
+```
+
+`principal` needs `[authz]`: `authz_kernel!` writes
+`pub fn tenant_of(actor: &P) -> u64` from its `tenant` expression, and
+`AuthzKernel::tenant` (what the engine uses) is `TenantId(tenant_of(actor))`.
+`extract` then also starts Charon from `principal` and `tenant_of`, and
+`check` states, for the extracted functions,
+
+```lean
+H5iAppLib.Obligation.TenantOfToken notes_kernel.tenant_of notes_kernel.principal
+-- := ∀ t u, ∃ p, principal t u = ok p ∧ tenant_of p = ok t
+```
+
+(`TenantOfTokenWith`, `∀ t u x`, when the principal function takes a third,
+per-request argument). A named theorem must state exactly this
+(definitional equality, as for the other obligations); without one, `check`
+tries `simp` on the two definitions and reports `open` if that fails.
+
+The proof covers the kernel's function. Whether the server uses it is
+reported, not required. `h5i app report` (and the check run's `tenant`
+record) reads the server crates with `syn` and calls the server *linked* when
+every `HmacAuth::new` outside tests is given the kernel's principal function
+by path (`forum_kernel::principal`, a `use forum_kernel as k` alias, or a
+`use forum_kernel::principal` import in the same file), or a closure
+`|t, u| forum_kernel::principal(t, u[, x])`, and no crate hand-writes an
+`impl Authenticator`. That is a source-level check, not a proof: it does not
+see code a macro produces, and it trusts that the path names the kernel
+crate's function. Per project and route the report says one of:
+
+| Status | Meaning | The tenant is |
+|---|---|---|
+| `proven, linked` | the obligation is proven (theorem or automation) and the server is linked | covered by the proof and A1 (the token parser is proven; the HMAC key and clock stay A1) |
+| `proven, not linked` | proven, but a server builds principals another way, or there is no server; the report says which construction and why | reviewed |
+| `open`, `failed`, `not_run` | the obligation's own status | reviewed |
+| `not_stated` | no `[obligations] principal` | reviewed |
+
+`or_anonymous` and `Actor::assume_authenticated` decide a principal without
+a token; they are listed and stay reviewed whatever the status. `forum`
+opts in with automation and its `main.rs` passes `forum_kernel::principal`:
+`proven, linked`. `notes` names a theorem (`proofs/Tenant.lean`) and has no
+server: `proven, not linked`. The other examples do not opt in: `not_stated`.
 
 ## A policy from the schema
 
@@ -382,9 +444,21 @@ there is. In notes the same bugs, made to the generator, break `PolicySpec`.
 Removing the guard is refused by `extract` before any proof runs (`[authz]
 guarded` names a function that never calls the guard), which `mutate` counts
 as invalid rather than caught; skipping the guard's write check breaks
-`guard_authorized` and `guard_only_denies`. Fixing every principal's tenant to 0 breaks nothing: the
-tenant function is trusted (A11), and tenant isolation is about the compiler,
-not about which tenant a principal is put in. Specs no mutant here breaks: `read_only_sound` under `[authz]` (it holds for
+`guard_authorized` and `guard_only_denies`. Fixing every principal's tenant
+to 0 in `authz_kernel!` (`security:tenant-zero`) breaks nothing in an app
+that does not opt in to `tenant-of-token`: the tenant is reviewed (A11), and
+tenant isolation is about the compiler, not about which tenant a principal is
+put in. In an app that opts in it breaks `tenant-of-token`: notes's
+`Tenant.tenant_of_token` fails to build, and for the forum, whose obligation
+is proven by `check`'s automation rather than a theorem the build compiles,
+`mutate` runs that automation in the copy too and reports
+`caught by tenant-of-token (automation)`. `security:principal-tenant-zero`
+puts every token in tenant 0 in the principal function the server gives
+`HmacAuth::new`. When the server is linked, that function is the kernel's,
+and the mutant shadows its tenant argument with 0 there (forum: caught). When
+it is not, the function is server code no proof is about, so the mutant is
+listed as `survives by design (not linked)` with the reason and is not run
+(notes: no server; board and the other apps: not stated). Specs no mutant here breaks: `read_only_sound` under `[authz]` (it holds for
 every kernel, since the guard denies a read-only command that writes),
 `TenantIsolation` (it depends on no app code), and `Committed.storage` (no
 security mutant touches `apply_write` or `sql_write`; the `[[mutant]]`s and
@@ -425,7 +499,13 @@ neither the opaque `Tx` nor `cargo deny` covers them. The app adds:
   (it replaces the `Policy` impl in the review), and `policy.rs` and
   `render_policy` are reviewed once, like `authz_kernel!`.
 - `Authz<T>`, `authz_kernel!` and the generated store, reviewed once for every
-  app like the rest of the shell.
+  app like the rest of the shell (for `tenant-of-token`: that
+  `AuthzKernel::tenant` is `TenantId(tenant_of(actor))`).
+- The tenant a request runs in: the principal function and the `tenant`
+  expression, unless `tenant-of-token` is proven and the server linked. When
+  it is, what remains is A1's trusted half (the HMAC key and the clock) and
+  the linkage check itself, which reads source paths and does not see code a
+  macro produces.
 
 No longer trusted: that the server calls the guard, that the theorems are about
 what `App` runs, that `kernel_apply` is `apply`, that `sql_writes` and

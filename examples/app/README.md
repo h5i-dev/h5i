@@ -11,8 +11,8 @@ start with the first one.
 | [3. Ledger](ledger/TUTORIAL.md) | accounts, deposits, withdrawals and transfers | sums over tables, conservation, invariants that rule out overflow |
 | [4. Inbox](inbox/TUTORIAL.md) | private messages with blocking | confidentiality, views and noninterference |
 | [5. Meeting rooms](booking/TUTORIAL.md) | rooms booked for intervals of time, with notifications | time as an input, monotonic time, interval invariants, effects through the outbox |
-| [6. Forum](forum/README.md) | posts with drafts, admins and self-registration (a port of Nyxis's bulletin board) | a policy written in Rust, the authorization theorem proven by the framework ([AUTHZ.md](../../docs/design/design-app-authz.md)), no hand-written Lean |
-| [7. Notes](notes/README.md) | notes with members and admins (kernel only) | a policy declared in `schema!`, its generated Rust proven against a spec rendered from the declaration, no hand-written Lean |
+| [6. Forum](forum/README.md) | posts with drafts, admins and self-registration (a port of Nyxis's bulletin board) | a policy written in Rust, the authorization theorem proven by the framework ([AUTHZ.md](../../docs/design/design-app-authz.md)), the tenant proven from the token (`tenant-of-token`, linked), no hand-written Lean |
+| [7. Notes](notes/README.md) | notes with members and admins (kernel only) | a policy declared in `schema!`, its generated Rust proven against a spec rendered from the declaration; one hand-written theorem, for `tenant-of-token` |
 
 Every tutorial runs with one PostgreSQL container and `cargo run`, and its
 proofs are checked by `h5i app prove` and CI in the same way as the rest of

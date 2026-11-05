@@ -1299,6 +1299,20 @@ obligation no theorem is named for is tried by automation in a separate Lean
 run and reported `open` if that fails. `h5i app report` lists each with its
 status.
 
+One obligation is opt-in: `tenant-of-token`. With `[obligations] principal`
+naming the kernel function the server gives `HmacAuth::new` (an `[authz]` app),
+`extract` also extracts it and `authz_kernel!`'s `tenant_of` (the tenant the
+engine uses), and `check` states `H5iAppLib.Obligation.TenantOfToken`: the
+tenant of the principal built from a token's tenant and user is that tenant.
+`tenant-of-token` may name the theorem; without it, `check` tries automation.
+`h5i app report` and the check run then say whether the server is linked:
+every `HmacAuth::new` is given that function by path. Linked is a source check
+(`syn`), not a proof. The report gives each project and route one of
+`proven, linked` (the tenant is covered by the proof and A1), `proven, not
+linked` (with the construction that is not), `open` or `not_stated`, and
+lists `or_anonymous` and `Actor::assume_authenticated`, which stay reviewed.
+Nothing changes for an app that does not opt in.
+
 `mutate` runs each mutant in a copy of the project: it edits the kernel,
 re-extracts it and rebuilds the proofs. A mutant is caught when the proofs stop
 building. One that survives is a behaviour the spec does not pin down, such as
@@ -1308,9 +1322,14 @@ mutants generated from the kernel's syntax: comparison boundaries, `==` and
 `false`. `--security` adds authorization bugs: a conjunct of a hand-written
 `Policy::permits` dropped, `visible` or `stored` made `true`, a comparison with
 the actor made `true`, the guard removed or its write check skipped, every
-principal put in tenant 0, and for a policy from `schema!` the same changes made
-to its generator. Each caught mutant's line names the declarations whose proofs
-broke.
+principal put in tenant 0, the principal function the server gives
+`HmacAuth::new` putting every token in tenant 0, and for a policy from `schema!`
+the same changes made to its generator. Each caught mutant's line names the
+declarations whose proofs broke. The principal-function mutant runs only when
+the server is linked (it then edits the kernel's function); otherwise it is
+listed as `survives by design (not linked)`, with the reason, and not run. For
+an obligation proven by `check`'s automation (`tenant-of-token` without a named
+theorem), `mutate` runs that automation in the copy as well.
 
 `[authz] guarded` opts a kernel into framework-proven authorization
 ([`docs/design/design-app-authz.md`](design/design-app-authz.md)). The kernel invokes
@@ -1359,6 +1378,8 @@ read-only = "my_kernel.ReadOnly.sound"   # ReadOnlySound: required when a Kernel
 panic-free = "my_kernel.panic_free"      # PanicFree
 # authorized = "..."                     # Authorized, with the app's own allowed/visible (printed)
 # storage = "..."                        # Storage; the same slot as [authz] storage
+# principal = "principal"                # opt in to tenant-of-token ([authz] only): the kernel's principal function
+# tenant-of-token = "my_kernel.Tenant.t" # TenantOfToken of tenant_of and principal; default: automation
 
 [mutate]
 targets = ["Theorems"]        # Lake targets a mutant must break (default: all)
