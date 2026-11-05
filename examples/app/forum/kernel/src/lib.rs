@@ -32,6 +32,13 @@ pub struct Principal {
     pub user: u64,
 }
 
+/// The principal of a verified token's tenant and user: what the server
+/// gives `HmacAuth::new`. Named as `[obligations] principal`, so `h5i app
+/// check` proves `tenant_of(principal(t, u)) = t` (`tenant-of-token`).
+pub fn principal(org: u64, user: u64) -> Principal {
+    Principal { org, user }
+}
+
 h5i_app_schema::schema! {
     mapping forum_tables for forum_kernel, writes Write, lean "../proofs/generated/Schema.lean";
 

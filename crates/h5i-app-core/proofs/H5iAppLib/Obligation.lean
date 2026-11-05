@@ -15,7 +15,8 @@ theorem's type to be definitionally equal to it (`docs/design/design-app-authz.m
 
 The arguments `check` fills in come from the extraction and the schema, never
 from the app's proofs: the kernel's `transition`, `read_only`, `apply`,
-`sql_writes` and `decode`, and the schema's `Snapshot.enc`, `Loads`, `kl`. Where
+`sql_writes` and `decode`, `tenant_of` and the principal function the
+manifest names, and the schema's `Snapshot.enc`, `Loads`, `kl`. Where
 a statement has a part the app chooses (the write list of a write set that is
 not a `Vec`, a hand-written policy's `allowed`), `check` prints what was chosen.
 -/
@@ -151,5 +152,26 @@ def Storage {V Rw S W SW : Type} (kind : V → Option Pg.Kind)
     Pg.Valid ts → kind tv = some .int → Pg.klOf ts = kl → ts.length = n →
     Reached kind ts tv (loads ts tv) decode sqlWrites sqlW apply init Step bound db s →
     ∀ r, loads ts tv db r → decode r ⦃ o => ∃ snap, o = some snap ∧ ∀ t, (enc snap t).Perm (enc s t) ⦄
+
+/-! ## The tenant of a token (opt-in) -/
+
+/-- The tenant the engine runs a request in is the one its token names.
+`principal` is the function the server gives the authenticator
+(`HmacAuth::new(secret, kernel::principal)`), applied to a verified token's
+tenant and user; `tenant` is the kernel's `tenant_of`, which
+`authz_kernel!` makes `AuthzKernel::tenant`. With the token parser's proof
+(an accepted token's payload is exactly `enc(tenant, user, exp)`, A1 for the
+rest), this takes the tenant out of the reviewed surface, provided the server
+really passes this `principal`: `h5i app report` checks that in the source
+(`linked`), which is not a proof. `principal` must not fail either. -/
+def TenantOfToken {P : Type} (tenant : P → Result Std.U64)
+    (principal : Std.U64 → Std.U64 → Result P) : Prop :=
+  ∀ t u, ∃ p, principal t u = ok p ∧ tenant p = ok t
+
+/-- `TenantOfToken` for a principal function with a per-request input `x`
+(a slug, say) next to the token's tenant and user: for every `x`. -/
+def TenantOfTokenWith {P X : Type} (tenant : P → Result Std.U64)
+    (principal : Std.U64 → Std.U64 → X → Result P) : Prop :=
+  ∀ t u x, ∃ p, principal t u x = ok p ∧ tenant p = ok t
 
 end H5iAppLib.Obligation

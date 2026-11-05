@@ -51,6 +51,10 @@ pub struct Project {
     /// why no statement exists.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub obligations: Vec<crate::ObligationResult>,
+    /// The tenant a request runs in: `tenant-of-token` and whether the
+    /// server is linked to its principal function (a source check).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant: Option<crate::TenantLink>,
     /// What could not be analyzed; a route or theorem it hides is missing
     /// from the report, so a non-empty list means the report is incomplete.
     pub errors: Vec<String>,
@@ -157,6 +161,11 @@ pub struct Route {
     pub assumptions: Vec<String>,
     /// What neither a theorem nor a listed assumption covers.
     pub not_verified: Vec<String>,
+    /// For a route that runs kernel commands: what decides the tenant they
+    /// run in, covered (`tenant-of-token` proven and linked, with A1) or
+    /// reviewed, and why.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -268,6 +277,15 @@ impl Guarantees {
                     let _ = writeln!(s, "    {} [{}]{by}", o.name, o.status);
                 }
             }
+            if let Some(t) = &p.tenant {
+                let _ = writeln!(s, "  tenant: {}: {}", t.label(), t.summary);
+                for a in &t.authenticators {
+                    let _ = writeln!(s, "    authenticator: {a}");
+                }
+                for r in &t.reviewed {
+                    let _ = writeln!(s, "    reviewed: {r}");
+                }
+            }
             for r in &p.routes {
                 let actor = match r.actor {
                     Some(true) => "Actor",
@@ -291,6 +309,9 @@ impl Guarantees {
                     let _ = writeln!(s, "    no kernel command");
                 }
                 let _ = writeln!(s, "    assumes: {}", if r.assumptions.is_empty() { "-".into() } else { r.assumptions.join(" ") });
+                if let Some(t) = &r.tenant {
+                    let _ = writeln!(s, "    tenant: {t}");
+                }
                 for n in &r.not_verified {
                     let _ = writeln!(s, "    not verified: {n}");
                 }
@@ -343,9 +364,18 @@ mod tests {
                 theorems: vec!["x.db_inv".into()],
                 assumptions: vec!["A1".into(), "A6".into()],
                 not_verified: vec![],
+                tenant: Some("reviewed: no tenant-of-token".into()),
             }],
             errors: vec![],
             obligations: vec![],
+            tenant: Some(crate::TenantLink {
+                status: "proven_linked".into(),
+                obligation: "automation".into(),
+                principal: Some("x.principal".into()),
+                authenticators: vec!["server/src/main.rs:3: HmacAuth::new(…, x::principal): linked".into()],
+                summary: "covered".into(),
+                reviewed: vec![],
+            }),
         }])
     }
 
@@ -361,5 +391,6 @@ mod tests {
         let v2 = text.replacen("\"version\":1", "\"version\":2", 1);
         assert!(Guarantees::parse(&v2).unwrap_err().contains("version 2"));
         assert!(g.render().contains("POST /rpc"));
+        assert!(g.render().contains("tenant: proven, linked: covered"), "{}", g.render());
     }
 }

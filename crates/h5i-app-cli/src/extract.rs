@@ -122,6 +122,13 @@ fn extract_into(p: &Project, dest: &Path, schema_lean: bool, out: &Out) -> Resul
     if ex.schema {
         charon.args(schema_items(&id));
     }
+    // `tenant-of-token`: the principal function and the tenant it is proven
+    // against, `authz_kernel!`'s `tenant_of`. Only for an app that opts in.
+    if let Some(f) = p.principal_fn() {
+        for s in [f, "tenant_of"] {
+            charon.args(["--start-from", &format!("{id}::{s}")]);
+        }
+    }
     for i in &ex.include {
         charon.args(["--include", i]);
     }

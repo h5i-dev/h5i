@@ -175,6 +175,16 @@ fn check_recorded(
             r.theorem.as_ref().map(|t| format!(" ({t})")).unwrap_or_default()
         ));
     }
+    // The tenant: `tenant-of-token`'s status and the server's linkage to its
+    // principal function (a source check), for apps with a kernel.
+    if p.krate().is_some() {
+        let status = results.iter().find(|r| r.name == crate::obligations::TENANT_OF_TOKEN).map(|r| r.status.as_str());
+        let t = crate::tenant::link(p, status, &crate::tenant::linkage(p));
+        if p.principal_fn().is_some() {
+            out.note(&format!("tenant: {}: {}", t.label(), t.summary));
+        }
+        record.run.tenant = Some(t);
+    }
     record.run.obligations = results;
     if !problems.is_empty() {
         bail!(
@@ -615,7 +625,7 @@ fn obligation_result(o: &crate::obligations::Obligation, g: Option<&GateObligati
 }
 
 /// Modules of `proofs/generated/` this build compiled, and `Authz` for `[authz]`.
-fn generated_modules(proofs: &Path, p: &Project) -> Vec<String> {
+pub(crate) fn generated_modules(proofs: &Path, p: &Project) -> Vec<String> {
     let mut out = Vec::new();
     let Ok(entries) = std::fs::read_dir(proofs.join("generated")) else { return out };
     let mut names: Vec<String> = entries
@@ -639,7 +649,7 @@ fn generated_modules(proofs: &Path, p: &Project) -> Vec<String> {
 /// error in that file only; the obligation is proven by automation only if
 /// its theorem exists and uses the standard axioms (no `sorryAx` from error
 /// recovery). Returns, per obligation, whether it was proven.
-fn automation(
+pub(crate) fn automation(
     proofs: &Path,
     modules: &[String],
     tries: &[&crate::obligations::Obligation],

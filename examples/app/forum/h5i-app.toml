@@ -14,6 +14,14 @@ std-specs = true
 # instantiating the framework's theorems.
 guarded = ["guarded_transition"]
 
+[obligations]
+# Opt in to `tenant-of-token`: the kernel's `principal`, which the server
+# gives `HmacAuth::new` (`server/src/main.rs`), puts a token's tenant where
+# `authz_kernel!`'s `tenant_of` reads it. No theorem is named: `h5i app check`
+# proves it by automation. `h5i app report` says whether the server is linked
+# (passes `forum_kernel::principal` by path; a source check).
+principal = "principal"
+
 [check]
 # Must exist and use only the standard axioms. The `[authz]` theorems are
 # checked as well, without being listed here.

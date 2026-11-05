@@ -91,6 +91,22 @@ pub fn project(p: &Project) -> g::Project {
     let all_cmds: Vec<String> = theorems.iter().filter(|t| t.covers == Covers::AllCommands).map(|t| t.name.clone()).collect();
     let ro_cmds: Vec<String> = theorems.iter().filter(|t| t.covers == Covers::ReadOnlyCommands).map(|t| t.name.clone()).collect();
 
+    let check = latest_check(p, top.as_deref());
+    let obligations = obligations(p, &check, &mut errors);
+    // The tenant: `tenant-of-token` as the latest passed check found it, and
+    // the server's linkage, read now from the sources.
+    let tenant = p.krate().map(|_| {
+        let status = p
+            .principal_fn()
+            .map(|_| {
+                obligations
+                    .iter()
+                    .find(|o| o.name == crate::obligations::TENANT_OF_TOKEN)
+                    .map_or("not_run", |o| o.status.as_str())
+            });
+        crate::tenant::link(p, status, &crate::tenant::linkage(p))
+    });
+
     let mut routes = Vec::new();
     for s in &server_sources {
         for found in find_routes(s, &mut errors, p) {
@@ -151,13 +167,12 @@ pub fn project(p: &Project) -> g::Project {
                 theorems: covered,
                 assumptions: assumptions.into_iter().map(String::from).collect(),
                 not_verified,
+                tenant: tenant.as_ref().filter(|_| kernel_route).map(|t| crate::tenant::route_line(t, actor == Some(true))),
             });
         }
     }
     routes.sort_by(|a, b| (&a.path, &a.method).cmp(&(&b.path, &b.method)));
 
-    let check = latest_check(p, top.as_deref());
-    let obligations = obligations(p, &check, &mut errors);
     let theorems = theorems.into_iter().map(|t| with_check(t, &check)).collect();
     g::Project {
         path,
@@ -172,6 +187,7 @@ pub fn project(p: &Project) -> g::Project {
         routes,
         errors,
         obligations,
+        tenant,
     }
 }
 
@@ -797,6 +813,11 @@ mod tests {
         assert_eq!((pf.source, pf.file.as_deref()), (TheoremSource::Obligation, Some("proofs/Theorems.lean")));
         assert_eq!(rpc.assumptions, ["A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9", "A10"]);
         assert!(rpc.not_verified.iter().any(|n| n.contains("request decoding")));
+        // Not opted in to `tenant-of-token`: not stated, and the tenant stays reviewed.
+        let t = r.tenant.as_ref().unwrap();
+        assert_eq!((t.status.as_str(), t.obligation.as_str()), ("not_stated", "not_stated"));
+        assert!(r.obligations.iter().any(|o| o.name == "tenant-of-token" && o.status == "not_stated"));
+        assert!(rpc.tenant.as_deref().unwrap().starts_with("reviewed (not_stated)"), "{:?}", rpc.tenant);
     }
 
     #[test]
@@ -825,9 +846,18 @@ mod tests {
         assert_eq!(rpc.theorems.len(), 7);
         // The framework-defined obligations, with nothing recorded yet for them.
         let names: Vec<&str> = r.obligations.iter().map(|o| o.name.as_str()).collect();
-        assert_eq!(names, ["authz", "read-only", "storage", "panic-free", "tenant-isolation", "reply-codec"]);
+        assert_eq!(names, ["authz", "read-only", "storage", "panic-free", "tenant-isolation", "tenant-of-token", "reply-codec"]);
         assert_eq!(r.obligations.last().map(|o| o.status.as_str()), Some("not_stated"));
         assert_eq!(rpc.assumptions.last().map(String::as_str), Some("A11"));
+        // Opted in to `tenant-of-token` and linked: `main.rs` gives `HmacAuth::new`
+        // the kernel's `principal`. Without a passed run on these inputs the
+        // obligation is `not_run`, so the tenant is not yet covered.
+        let t = r.tenant.as_ref().unwrap();
+        assert_eq!(t.principal.as_deref(), Some("forum_kernel.principal"));
+        assert_eq!(t.authenticators.len(), 1);
+        assert!(t.authenticators[0].ends_with("HmacAuth::new(…, forum_kernel::principal): linked"), "{:?}", t.authenticators);
+        assert!(rpc.tenant.as_deref().is_some_and(|l| l.starts_with("reviewed") || l.starts_with("covered")), "{:?}", rpc.tenant);
+        assert!(route(&r, "GET", "/healthz").tenant.is_none(), "no kernel command, no tenant");
         // The report and its schema agree, and the text form names each route.
         let all = report(&[example("ledger"), example("forum")]);
         let text = serde_json::to_string(&all).unwrap();

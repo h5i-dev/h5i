@@ -42,6 +42,9 @@ pub enum Change {
         was: String,
         new: String,
     },
+    /// Not run: the change would be to code no proof is about (a server's
+    /// own principal function), so it survives by design. `why` says so.
+    NotRun { why: String },
 }
 
 impl Mutant {
@@ -69,6 +72,7 @@ impl Mutant {
                 }
                 Ok(format!("{}{}{}", &src[..*start], new, &src[*end..]))
             }
+            Change::NotRun { why } => bail!("not run: {why}"),
         }
     }
 }
@@ -327,6 +331,9 @@ impl<'ast> Visit<'ast> for Finder<'_> {
 /// - For `[authz]`: `guarded_transition` without the guard, and the guard
 ///   without its write check (`h5i-app-std/src/authz.rs`); the tenant of every
 ///   principal set to 0 in `authz_kernel!`.
+/// - The principal function the server gives `HmacAuth::new` puts every
+///   token in tenant 0 ([`PRINCIPAL_MUTANT`]): run on the kernel's function
+///   when the server is linked to it, else listed as surviving by design.
 pub fn security(p: &Project) -> Result<Vec<Mutant>> {
     let Some(krate) = p.krate() else {
         bail!("{}: no [extract] crate to mutate", p.display())
@@ -365,6 +372,9 @@ pub fn security(p: &Project) -> Result<Vec<Mutant>> {
                 }
             }
         }
+    }
+    if let Some(m) = principal_mutant(p, &files)? {
+        out.push(m);
     }
     let meta = util::metadata(&krate, true)?;
     let framework = |pkg: &str, file: &str| -> Option<PathBuf> {
@@ -423,6 +433,82 @@ pub fn security(p: &Project) -> Result<Vec<Mutant>> {
         ));
     }
     Ok(out)
+}
+
+/// The name of the server-side principal mutant.
+pub const PRINCIPAL_MUTANT: &str = "security:principal-tenant-zero";
+
+/// The function the server gives `HmacAuth::new` puts every token in tenant
+/// 0. When the server is linked (`crate::tenant`) that function is the
+/// kernel's `[obligations] principal`, and the mutant shadows its first
+/// argument (the tenant) with 0 there: `tenant-of-token` must break. When it
+/// is not linked, the function is the server's own, which no proof is about:
+/// the mutant is listed as surviving by design, with the reason, and not run.
+/// None for a project with no authenticator to speak of.
+fn principal_mutant(p: &Project, files: &[PathBuf]) -> Result<Option<Mutant>> {
+    let l = crate::tenant::linkage(p);
+    let opted = p.principal_fn().is_some();
+    if !opted && l.constructions.is_empty() && l.custom.is_empty() {
+        return Ok(None);
+    }
+    let what = "the principal function the server gives `HmacAuth::new` puts every token in tenant 0";
+    let not_run = |why: String| Mutant {
+        name: PRINCIPAL_MUTANT.into(),
+        what: Some(what.into()),
+        file: PathBuf::new(),
+        change: Change::NotRun { why },
+    };
+    let Some(why_linked) = l.why_not() else {
+        // Linked: the kernel's function, found by its last path segment.
+        let f = p.principal_fn().unwrap_or_default();
+        let name = f.rsplit("::").next().unwrap_or(f);
+        for file in files {
+            let src = std::fs::read_to_string(file)?;
+            let ast = syn::parse_file(&src).with_context(|| format!("parsing {}", file.display()))?;
+            let Some(func) = ast.items.iter().find_map(|i| match i {
+                syn::Item::Fn(x) if x.sig.ident == name => Some(x),
+                _ => None,
+            }) else {
+                continue;
+            };
+            let first = func.sig.inputs.first().and_then(|a| match a {
+                syn::FnArg::Typed(t) => match &*t.pat {
+                    syn::Pat::Ident(i) => Some(i.ident.to_string()),
+                    _ => None,
+                },
+                _ => None,
+            });
+            let Some(tenant) = first else {
+                return Ok(Some(not_run(format!("`{f}`'s first argument is not a plain name, so the mutant cannot shadow it"))));
+            };
+            let finder = Finder { src: &src, lines: line_starts(&src), func: String::new(), found: Vec::new() };
+            let Some(at) = finder.offset(func.block.brace_token.span.open().end()) else { continue };
+            let rel = file.strip_prefix(&p.root).unwrap_or(file).to_path_buf();
+            return Ok(Some(Mutant {
+                name: PRINCIPAL_MUTANT.into(),
+                what: Some(format!("{what} (linked: the kernel's `{f}`, its `{tenant}` shadowed by 0)")),
+                file: rel,
+                change: Change::Splice { start: at, end: at, was: String::new(), new: format!("\n    let {tenant}: u64 = 0;") },
+            }));
+        }
+        return Ok(Some(not_run(format!("linked, but `{f}` was not found at the top level of a kernel source file"))));
+    };
+    let why = if opted {
+        format!("no proof is about the function the server uses: {why_linked}")
+    } else {
+        let used: Vec<String> = l
+            .constructions
+            .iter()
+            .map(|c| format!("{} passes `{}`", c.at, c.what))
+            .chain(l.custom.iter().map(|c| format!("{c}: impl Authenticator")))
+            .collect();
+        format!(
+            "`tenant-of-token` is not stated (no `[obligations] principal`), so no proof is about the principal function \
+             the server uses ({})",
+            used.join("; ")
+        )
+    };
+    Ok(Some(not_run(why)))
 }
 
 fn declared_edit(name: &str, what: &str, file: PathBuf, old: &str, new: &str) -> Mutant {
@@ -561,6 +647,9 @@ pub enum Verdict {
     Caught,
     /// Everything builds: the spec does not see this bug.
     Survived,
+    /// Not run: the bug is in code no proof is about, because the server is
+    /// not linked to the function a proof covers (`tenant-of-token`).
+    ByDesign,
     /// The baseline built.
     Ok,
     /// The edit did not apply, or the mutated Rust or its extraction failed.
@@ -572,6 +661,7 @@ impl std::fmt::Display for Verdict {
         match self {
             Verdict::Caught => write!(f, "caught"),
             Verdict::Survived => write!(f, "SURVIVED"),
+            Verdict::ByDesign => write!(f, "survives by design (not linked)"),
             Verdict::Ok => write!(f, "ok"),
             Verdict::Invalid(why) => write!(f, "invalid ({why})"),
         }
@@ -801,6 +891,11 @@ fn evaluate(
     observe: &mut impl FnMut(h5i_app_report::Stage) -> Result<()>,
 ) -> Result<(Verdict, Option<PathBuf>, Vec<String>)> {
     let name = m.map_or("baseline", |m| m.name.as_str());
+    // A mutant of code no proof is about (a server's own principal
+    // function): it survives by design, and is not run.
+    if let Some(Mutant { change: Change::NotRun { .. }, .. }) = m {
+        return Ok((Verdict::ByDesign, None, Vec::new()));
+    }
     let sb = measured("sandbox", None, observe, || sandbox(p, name))?;
     let out = Out::Log(sb.log.clone());
     let verdict = (|| -> Result<Verdict> {
@@ -851,14 +946,52 @@ fn evaluate(
             (true, false) => Verdict::Caught,
         })
     })()?;
-    // Which specs the mutant broke, read off the failed build's errors.
-    let broke = if verdict == Verdict::Caught {
-        broken_declarations(&std::fs::read_to_string(&sb.log).unwrap_or_default(), &sb.project.proofs())
-    } else {
-        Vec::new()
+    // `tenant-of-token` proven by `check`'s automation, not by a theorem the
+    // build compiles: run that automation too, so a mutant that breaks it is
+    // caught. The baseline must pass it.
+    let mut broke = Vec::new();
+    let verdict = match verdict {
+        Verdict::Ok | Verdict::Survived => match tenant_automation(&sb.project, observe, &sb.log, &out)? {
+            Some(false) if m.is_none() => Verdict::Invalid("baseline: tenant-of-token automation fails"),
+            Some(false) => {
+                broke.push(format!("{} (automation)", crate::obligations::TENANT_OF_TOKEN));
+                Verdict::Caught
+            }
+            _ => verdict,
+        },
+        v => v,
     };
+    // Which specs the mutant broke, read off the failed build's errors.
+    if verdict == Verdict::Caught && broke.is_empty() {
+        broke = broken_declarations(&std::fs::read_to_string(&sb.log).unwrap_or_default(), &sb.project.proofs());
+    }
     let kept = if keep { Some(sb._tmp.keep()) } else { None };
     Ok((verdict, kept, broke))
+}
+
+/// `check`'s automation for `tenant-of-token`, when the project opts in
+/// without naming a theorem: `Some(proven)`, or `None` when it does not apply.
+fn tenant_automation(
+    p: &Project,
+    observe: &mut impl FnMut(h5i_app_report::Stage) -> Result<()>,
+    log: &Path,
+    out: &Out,
+) -> Result<Option<bool>> {
+    let obligations = crate::obligations::of(p)?;
+    let Some(o) = obligations.iter().find(|o| o.name == crate::obligations::TENANT_OF_TOKEN && o.theorem.is_none() && o.auto.is_some())
+    else {
+        return Ok(None);
+    };
+    let proofs = p.proofs();
+    measured("tenant_automation", Some(log), observe, || {
+        util::run(
+            Command::new("lake").args(["build", crate::check::OBLIGATION_MODULE]).current_dir(&proofs),
+            out,
+        )?;
+        let modules = crate::check::generated_modules(&proofs, p);
+        let proven = crate::check::automation(&proofs, &modules, &[o], out)?;
+        Ok(Some(proven.get(o.name).copied().unwrap_or(false)))
+    })
 }
 
 fn measured<T>(
@@ -947,6 +1080,7 @@ fn record_verdict(
     r.run.trials[index].status = match verdict {
         Verdict::Caught => "proof_failed",
         Verdict::Survived => "survived",
+        Verdict::ByDesign => "survived_by_design",
         Verdict::Ok => "passed",
         Verdict::Invalid("error") => "error",
         Verdict::Invalid(_) => "invalid",
@@ -958,6 +1092,7 @@ fn record_verdict(
     Ok(r.save()?)
 }
 
+#[derive(Clone, Copy)]
 pub struct Options {
     pub jobs: usize,
     pub keep: bool,
@@ -980,6 +1115,9 @@ pub struct Outcome {
 pub fn run(p: &Project, mutants: Vec<Mutant>, opts: &Options) -> Result<Vec<Outcome>> {
     let targets = &p.manifest.mutate.targets;
     use h5i_app_report::{Edit as RecordedEdit, Trial};
+    // Mutants that are not run (surviving by design) need no baseline.
+    let baseline = opts.baseline && mutants.iter().any(|m| !matches!(m.change, Change::NotRun { .. }));
+    let opts = &Options { baseline, ..*opts };
     let mut record = crate::report::start(p, "mutation", targets.clone())?;
     record.run.baseline = if opts.baseline { "pending" } else { "skipped" }.into();
     record.run.trials.push(Trial {
@@ -1003,6 +1141,7 @@ pub fn run(p: &Project, mutants: Vec<Mutant>, opts: &Options) -> Result<Vec<Outc
                 before: was.clone(),
                 after: new.clone(),
             }],
+            Change::NotRun { .. } => vec![],
         };
         record.run.trials.push(Trial {
             name: m.name.clone(),
@@ -1083,6 +1222,10 @@ pub fn run(p: &Project, mutants: Vec<Mutant>, opts: &Options) -> Result<Vec<Outc
                         recording_errors.lock().unwrap().push(e.to_string());
                     }
                     let by = if broke.is_empty() { String::new() } else { format!(" by {}", broke.join(", ")) };
+                    let by = match &m.change {
+                        Change::NotRun { why } => format!(": {why}"),
+                        _ => by,
+                    };
                     eprintln!(
                         "[{}/{total}] {:<40} {v}{by}  {:.0}s{}",
                         i + 1,
@@ -1220,6 +1363,42 @@ mod tests {
             },
         };
         assert_eq!(m.apply(src).unwrap(), "fn f(a: u64) -> bool { a > 1 }");
+    }
+
+    #[test]
+    fn the_principal_mutant_runs_only_when_linked() {
+        let d = tempfile::tempdir().unwrap();
+        let w = |f: &str, t: &str| {
+            let p = d.path().join(f);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, t).unwrap();
+        };
+        w("h5i-app.toml", "[extract]\n[authz]\nguarded = [\"guarded_transition\"]\n[obligations]\nprincipal = \"principal\"\n");
+        w("kernel/Cargo.toml", "[package]\nname = \"k\"\n");
+        let kernel = "pub fn principal(org: u64, user: u64) -> P {\n    P { org, user }\n}\n";
+        w("kernel/src/lib.rs", kernel);
+        w("server/Cargo.toml", "[package]\nname = \"s\"\n[dependencies]\naxum = \"0.8\"\n");
+        w("server/src/main.rs", "fn main() { HmacAuth::new(s, k::principal); }\n");
+        let p = Project::load(&d.path().join("h5i-app.toml")).unwrap();
+        let files = [d.path().join("kernel/src/lib.rs")];
+        let m = principal_mutant(&p, &files).unwrap().unwrap();
+        assert_eq!(m.file, PathBuf::from("kernel/src/lib.rs"));
+        assert_eq!(
+            m.apply(kernel).unwrap(),
+            "pub fn principal(org: u64, user: u64) -> P {\n    let org: u64 = 0;\n    P { org, user }\n}\n"
+        );
+        // The server's own closure: no proof is about it, so it is not run.
+        w("server/src/main.rs", "fn main() { HmacAuth::new(s, |t, u| P { org: t, user: u }); }\n");
+        let m = principal_mutant(&p, &files).unwrap().unwrap();
+        match &m.change {
+            Change::NotRun { why } => assert!(why.contains("server/src/main.rs:1") && why.contains("closure"), "{why}"),
+            c => panic!("{c:?}"),
+        }
+        // Nothing opted in and no authenticator: no mutant.
+        w("h5i-app.toml", "[extract]\n");
+        std::fs::remove_dir_all(d.path().join("server")).unwrap();
+        let p = Project::load(&d.path().join("h5i-app.toml")).unwrap();
+        assert!(principal_mutant(&p, &files).unwrap().is_none());
     }
 
     #[test]
