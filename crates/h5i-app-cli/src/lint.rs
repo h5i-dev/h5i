@@ -66,7 +66,7 @@ fn crate_of(f: &Path) -> Option<PathBuf> {
 }
 
 /// A crate that serves HTTP: one depending on axum or h5i-app's axum layer.
-fn is_server(krate: &Path) -> bool {
+pub(crate) fn is_server(krate: &Path) -> bool {
     let text = std::fs::read_to_string(krate.join("Cargo.toml")).unwrap_or_default();
     text.lines().any(|l| {
         let l = l.trim_start();

@@ -10,6 +10,7 @@
 //! | `check` | `lake build`, then the gate: no `sorry`/`native_decide`/`axiom`, standard axioms only |
 //! | `prove` | `extract`, then `check` |
 //! | `lint` | routes take an `Actor`, no client-set identity in `Command` |
+//! | `report` | per route: commands, covering theorems and their last check, assumptions |
 //! | `mutate` | inject bugs, re-extract, rebuild: every bug must break a proof |
 //! | `doctor` | tools and pins |
 //!
@@ -25,6 +26,7 @@ pub mod check;
 pub mod deps;
 pub mod doctor;
 pub mod extract;
+pub mod guarantees;
 pub mod lint;
 pub mod manifest;
 pub mod mutate;
@@ -93,6 +95,19 @@ pub enum AppCommands {
     /// lets the client set its own identity or privilege. Reports whether the
     /// proofs state a universal authorization theorem.
     Lint(Targets),
+
+    /// For each HTTP route: the kernel commands it builds, whether it takes
+    /// an `Actor`, the theorems that cover it and what the last recorded
+    /// `check` observed for each, the assumptions (A1-A11) it rests on, and
+    /// what nothing verifies. Derived from the sources and h5i-app.toml;
+    /// it runs no proof.
+    Report {
+        #[command(flatten)]
+        targets: Targets,
+        /// The versioned JSON form instead of text.
+        #[arg(long)]
+        json: bool,
+    },
 
     /// Put bugs in the kernel and make sure each one breaks a proof. A bug
     /// that survives is behaviour the spec does not pin down.
@@ -235,6 +250,7 @@ pub fn run(cmd: AppCommands, cx: &Context) -> Result<()> {
             eprintln!("{}: lint ok", p.display());
             Ok(())
         }),
+        AppCommands::Report { targets: t, json } => guarantees::print(&t.projects()?, json),
         AppCommands::Check { targets: t, fetch } => each(&t, |p| {
             check::check(p, refetch(p, &fetch)?, false, &out)?;
             eprintln!("{}: proofs ok", p.display());
