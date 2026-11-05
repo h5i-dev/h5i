@@ -32,7 +32,7 @@ npx skills add h5i-dev/h5i
 - **Kernel-based architecture**: Separate application logic from infrastructure to verify and optimize core behavior.
 - **Formal verification**: Translate Rust application logic into Lean 4 using [Aeneas](https://github.com/AeneasVerif/aeneas) and prove their properties.
 - **Automatic specification generation**: Generate Lean 4 specifications and proofs for common patterns, including database schemas, authorization, and storage operations.
-- **Embedded systems support**: Run HTTP/1.1 services on microcontrollers with a no_std, heap-free server backed by a Lean 4-verified parser.
+- **Embedded systems support**: Run Lean 4-verified application kernels on microcontrollers using a no_std, heap-free HTTP/1.1 server.
 - **Optional GPU acceleration**: Execute supported application kernels on GPUs while retaining CPU execution.
 
 ```toml
