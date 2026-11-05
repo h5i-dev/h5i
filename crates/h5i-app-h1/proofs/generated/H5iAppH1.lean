@@ -798,10 +798,11 @@ inductive Added where
 | Ok : Fields → Added
 
 /-- [h5i_app_h1::add_header]:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 402:0-436:1 -/
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 405:0-449:1 -/
 def add_header
   (buf : Slice Std.U8) (f : Fields) (ns : Std.Usize) (ne : Std.Usize)
-  (vs : Std.Usize) (ve : Std.Usize) (minor : Std.U8) (max_body : Std.U64) :
+  (vs : Std.Usize) (ve : Std.Usize) (le : Std.Usize) (minor : Std.U8)
+  (max_body : Std.U64) :
   Result Added
   := do
   if f.count >= MAX_HEADERS
@@ -830,19 +831,22 @@ def add_header
           if f.te
           then ok (Added.Bad BAD_REQUEST)
           else
-            let n ← content_length buf vs ve max_body
-            match n with
-            | Num.Bad s => ok (Added.Bad s)
-            | Num.Ok v =>
-              let a ←
-                Array.update f.headers f.count
-                  ({
-                     «name» := { start := ns, «end» := ne },
-                     value := { start := vs, «end» := ve }
-                   } : Header)
-              let i ← f.count + 1#usize
-              ok (Added.Ok
-                { f with headers := a, count := i, has_cl := true, cl := v })
+            if ve != le
+            then ok (Added.Bad BAD_REQUEST)
+            else
+              let n ← content_length buf vs ve max_body
+              match n with
+              | Num.Bad s => ok (Added.Bad s)
+              | Num.Ok v =>
+                let a ←
+                  Array.update f.headers f.count
+                    ({
+                       «name» := { start := ns, «end» := ne },
+                       value := { start := vs, «end» := ve }
+                     } : Header)
+                let i ← f.count + 1#usize
+                ok (Added.Ok
+                  { f with headers := a, count := i, has_cl := true, cl := v })
       else
         if kind = KIND_TRANSFER_ENCODING
         then
@@ -855,23 +859,27 @@ def add_header
               if f.has_cl
               then ok (Added.Bad BAD_REQUEST)
               else
-                let s ←
-                  lift (Array.to_slice
-                    (Array.make 7#usize [
-                      99#u8, 104#u8, 117#u8, 110#u8, 107#u8, 101#u8, 100#u8
-                      ]))
-                let b ← eq_ci buf vs ve s
-                if b
-                then
-                  let a ←
-                    Array.update f.headers f.count
-                      ({
-                         «name» := { start := ns, «end» := ne },
-                         value := { start := vs, «end» := ve }
-                       } : Header)
-                  let i ← f.count + 1#usize
-                  ok (Added.Ok { f with headers := a, count := i, te := true })
-                else ok (Added.Bad NOT_IMPLEMENTED)
+                if ve != le
+                then ok (Added.Bad BAD_REQUEST)
+                else
+                  let s ←
+                    lift (Array.to_slice
+                      (Array.make 7#usize [
+                        99#u8, 104#u8, 117#u8, 110#u8, 107#u8, 101#u8, 100#u8
+                        ]))
+                  let b ← eq_ci buf vs ve s
+                  if b
+                  then
+                    let a ←
+                      Array.update f.headers f.count
+                        ({
+                           «name» := { start := ns, «end» := ne },
+                           value := { start := vs, «end» := ve }
+                         } : Header)
+                    let i ← f.count + 1#usize
+                    ok (Added.Ok
+                      { f with headers := a, count := i, te := true })
+                  else ok (Added.Bad NOT_IMPLEMENTED)
         else
           let a ←
             Array.update f.headers f.count
@@ -883,7 +891,7 @@ def add_header
           ok (Added.Ok { f with headers := a, count := i })
 
 /-- [h5i_app_h1::Fielded]
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 439:0-445:1
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 452:0-458:1
     Visibility: public -/
 @[discriminant isize]
 inductive Fielded where
@@ -892,7 +900,7 @@ inductive Fielded where
 | Done : Fields → Std.Usize → Fielded
 
 /-- [h5i_app_h1::fields]: loop body 0:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 1:0-473:1 -/
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 1:0-486:1 -/
 @[rust_loop_body]
 def fields_loop.body
   (buf : Slice Std.U8) (n : Std.Usize) (minor : Std.U8) (max_body : Std.U64)
@@ -917,7 +925,7 @@ def fields_loop.body
           match hl with
           | HdrLine.Bad s => ok (done (Fielded.Bad s))
           | HdrLine.Ok k vs ve =>
-            let a ← add_header buf f i k vs ve minor max_body
+            let a ← add_header buf f i k vs ve j minor max_body
             match a with
             | Added.Bad s => ok (done (Fielded.Bad s))
             | Added.Ok g => let i1 ← j + 2#usize
@@ -925,7 +933,7 @@ def fields_loop.body
   else ok (done Fielded.More)
 
 /-- [h5i_app_h1::fields]: loop 0:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 1:0-473:1 -/
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 1:0-486:1 -/
 @[rust_loop]
 def fields_loop
   (buf : Slice Std.U8) (n : Std.Usize) (minor : Std.U8) (max_body : Std.U64)
@@ -937,7 +945,7 @@ def fields_loop
     (i, f)
 
 /-- [h5i_app_h1::fields]:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 448:0-473:1 -/
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 461:0-486:1 -/
 @[reducible]
 def fields
   (buf : Slice Std.U8) (n : Std.Usize) (i : Std.Usize) (f : Fields)
@@ -947,17 +955,17 @@ def fields
   fields_loop buf n minor max_body i f
 
 /-- [h5i_app_h1::NO_SPAN]
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 475:0-475:48 -/
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 488:0-488:48 -/
 @[global_simps, irreducible]
 def NO_SPAN : Span := { start := 0#usize, «end» := 0#usize }
 
 /-- [h5i_app_h1::NO_HEADER]
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 476:0-476:67 -/
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 489:0-489:67 -/
 @[global_simps, irreducible]
 def NO_HEADER : Header := { «name» := NO_SPAN, value := NO_SPAN }
 
 /-- [h5i_app_h1::parse_head]:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 483:0-526:1
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 496:0-539:1
     Visibility: public -/
 def parse_head (buf : Slice Std.U8) (lim : Limits) : Result HeadResult := do
   let i := Slice.len buf
@@ -1081,47 +1089,47 @@ def parse_head (buf : Slice Std.U8) (lim : Limits) : Result HeadResult := do
                   })
 
 /-- [h5i_app_h1::CH_SIZE]
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 532:0-532:26
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 545:0-545:26
     Visibility: public -/
 @[global_simps, irreducible] def CH_SIZE : Std.U8 := 0#u8
 
 /-- [h5i_app_h1::CH_SIZE_LF]
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 534:0-534:29
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 547:0-547:29
     Visibility: public -/
 @[global_simps, irreducible] def CH_SIZE_LF : Std.U8 := 1#u8
 
 /-- [h5i_app_h1::CH_DATA]
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 536:0-536:26
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 549:0-549:26
     Visibility: public -/
 @[global_simps, irreducible] def CH_DATA : Std.U8 := 2#u8
 
 /-- [h5i_app_h1::CH_DATA_CR]
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 538:0-538:29
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 551:0-551:29
     Visibility: public -/
 @[global_simps, irreducible] def CH_DATA_CR : Std.U8 := 3#u8
 
 /-- [h5i_app_h1::CH_DATA_LF]
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 540:0-540:29
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 553:0-553:29
     Visibility: public -/
 @[global_simps, irreducible] def CH_DATA_LF : Std.U8 := 4#u8
 
 /-- [h5i_app_h1::CH_LAST_CR]
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 542:0-542:29
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 555:0-555:29
     Visibility: public -/
 @[global_simps, irreducible] def CH_LAST_CR : Std.U8 := 5#u8
 
 /-- [h5i_app_h1::CH_LAST_LF]
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 544:0-544:29
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 557:0-557:29
     Visibility: public -/
 @[global_simps, irreducible] def CH_LAST_LF : Std.U8 := 6#u8
 
 /-- [h5i_app_h1::CH_END]
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 546:0-546:25
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 559:0-559:25
     Visibility: public -/
 @[global_simps, irreducible] def CH_END : Std.U8 := 7#u8
 
 /-- [h5i_app_h1::ChunkState]
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 550:0-558:1
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 563:0-571:1
     Visibility: public -/
 structure ChunkState where
   phase : Std.U8
@@ -1130,7 +1138,7 @@ structure ChunkState where
   total : Std.U64
 
 /-- [h5i_app_h1::ChunkOut]
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 564:0-572:1
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 577:0-585:1
     Visibility: public -/
 @[discriminant isize]
 inductive ChunkOut where
@@ -1140,7 +1148,7 @@ inductive ChunkOut where
 | Reject : Std.U16 → ChunkOut
 
 /-- [h5i_app_h1::hex_value]:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 575:0-585:1
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 588:0-598:1
     Visibility: public -/
 def hex_value (c : Std.U8) : Result Std.U64 := do
   if c >= 48#u8
@@ -1194,7 +1202,7 @@ def hex_value (c : Std.U8) : Result Std.U64 := do
       else ok 16#u64
 
 /-- [h5i_app_h1::expect]:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 653:0-658:1 -/
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 666:0-671:1 -/
 def expect
   (st : ChunkState) (b : Std.U8) (want : Std.U8) (next : Std.U8)
   (out : ChunkOut) :
@@ -1205,7 +1213,7 @@ def expect
   else ok ({ st with phase := next }, out)
 
 /-- [h5i_app_h1::chunk_data]:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 644:0-650:1 -/
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 657:0-663:1 -/
 def chunk_data (st : ChunkState) : Result (ChunkState × ChunkOut) := do
   if st.size <= 1#u64
   then ok ({ st with phase := CH_DATA_CR, size := 0#u64 }, ChunkOut.Data)
@@ -1213,7 +1221,7 @@ def chunk_data (st : ChunkState) : Result (ChunkState × ChunkOut) := do
        ok ({ st with size := i }, ChunkOut.Data)
 
 /-- [h5i_app_h1::chunk_size_lf]:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 635:0-641:1 -/
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 648:0-654:1 -/
 def chunk_size_lf
   (st : ChunkState) (b : Std.U8) : Result (ChunkState × ChunkOut) := do
   if b != LF
@@ -1225,7 +1233,7 @@ def chunk_size_lf
     else ok ({ st with phase := CH_DATA, digits := 0#u64 }, ChunkOut.Nothing)
 
 /-- [h5i_app_h1::chunk_size]:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 612:0-632:1 -/
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 625:0-645:1 -/
 def chunk_size
   (st : ChunkState) (b : Std.U8) (max_body : Std.U32) :
   Result (ChunkState × ChunkOut)
@@ -1262,7 +1270,7 @@ def chunk_size
     else ok (st, ChunkOut.Reject BAD_REQUEST)
 
 /-- [h5i_app_h1::chunk_step]:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 590:0-609:1
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 603:0-622:1
     Visibility: public -/
 def chunk_step
   (st : ChunkState) (b : Std.U8) (max_body : Std.U32) :
@@ -1291,7 +1299,7 @@ def chunk_step
               else ok (st, ChunkOut.Reject BAD_REQUEST)
 
 /-- [h5i_app_h1::put]: loop body 0:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 669:4-672:5 -/
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 682:4-685:5 -/
 @[rust_loop_body]
 def put_loop.body
   (pos : Std.Usize) (src : Slice Std.U8) (out : Slice Std.U8) (q : Std.Usize) :
@@ -1308,7 +1316,7 @@ def put_loop.body
   else ok (done out)
 
 /-- [h5i_app_h1::put]: loop 0:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 669:4-672:5 -/
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 682:4-685:5 -/
 @[rust_loop]
 def put_loop
   (out : Slice Std.U8) (pos : Std.Usize) (src : Slice Std.U8) (q : Std.Usize) :
@@ -1319,7 +1327,7 @@ def put_loop
     (out, q)
 
 /-- [h5i_app_h1::put]:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 664:0-674:1 -/
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 677:0-687:1 -/
 def put
   (out : Slice Std.U8) (pos : Std.Usize) (src : Slice Std.U8) :
   Result ((Option Std.Usize) × (Slice Std.U8))
@@ -1340,7 +1348,7 @@ def put
       ok (some i5, out1)
 
 /-- [h5i_app_h1::put1]:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 677:0-683:1 -/
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 690:0-696:1 -/
 def put1
   (out : Slice Std.U8) (pos : Std.Usize) (b : Std.U8) :
   Result ((Option Std.Usize) × (Slice Std.U8))
@@ -1354,7 +1362,7 @@ def put1
     ok (some i1, out1)
 
 /-- [h5i_app_h1::put_dec]: loop body 0:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 690:4-702:1 -/
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 703:4-715:1 -/
 @[rust_loop_body]
 def put_dec_loop.body
   (n : Std.U32) (out : Slice Std.U8) (p : Std.U32) («at» : Std.Usize)
@@ -1400,7 +1408,7 @@ def put_dec_loop.body
   else ok (done (some «at», out))
 
 /-- [h5i_app_h1::put_dec]: loop 0:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 690:4-702:1 -/
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 703:4-715:1 -/
 @[rust_loop]
 def put_dec_loop
   (out : Slice Std.U8) (n : Std.U32) (p : Std.U32) («at» : Std.Usize)
@@ -1412,7 +1420,7 @@ def put_dec_loop
     (out, p, «at», started)
 
 /-- [h5i_app_h1::put_dec]:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 686:0-702:1 -/
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 699:0-715:1 -/
 @[reducible]
 def put_dec
   (out : Slice Std.U8) (pos : Std.Usize) (n : Std.U32) :
@@ -1421,7 +1429,7 @@ def put_dec
   put_dec_loop out n 1000000000#u32 pos false
 
 /-- [h5i_app_h1::put_reason]:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 706:0-728:1 -/
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 719:0-741:1 -/
 def put_reason
   (out : Slice Std.U8) (pos : Std.Usize) (status : Std.U16) :
   Result ((Option Std.Usize) × (Slice Std.U8))
@@ -1571,7 +1579,7 @@ def put_reason
   | _ => ok (some pos, out)
 
 /-- [h5i_app_h1::write_head]:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 744:0-812:1
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 757:0-825:1
     Visibility: public -/
 def write_head
   (out : Slice Std.U8) (status : Std.U16) (content_type : Slice Std.U8)

@@ -83,7 +83,8 @@ fn stricter_by_design(buf: &[u8], req: &httparse::Request) -> bool {
             }
             "transfer-encoding" => {
                 te += 1;
-                if !v.trim_ascii().eq_ignore_ascii_case(b"chunked") {
+                // Framing values may not end in whitespace.
+                if v.trim_ascii_end() != v || !v.trim_ascii().eq_ignore_ascii_case(b"chunked") {
                     return true;
                 }
             }
@@ -99,9 +100,22 @@ fn stricter_by_design(buf: &[u8], req: &httparse::Request) -> bool {
         || (cl > 0 && te > 0)
         || (minor == 0 && te > 0)
         || req.headers.len() > MAX_HEADERS
+        || framing_value_ends_in_ows(buf)
         // Bare LF line ends, which httparse allows.
         || buf.windows(2).any(|w| w[1] == b'\n' && w[0] != b'\r')
         || buf.starts_with(b"\n")
+}
+
+/// A `Content-Length` or `Transfer-Encoding` line whose raw value ends in
+/// SP or HTAB (httparse trims it; we refuse it).
+fn framing_value_ends_in_ows(buf: &[u8]) -> bool {
+    buf.split(|&c| c == b'\n').any(|line| {
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        let Some(colon) = line.iter().position(|&c| c == b':') else { return false };
+        let name = line[..colon].to_ascii_lowercase();
+        (name == b"content-length" || name == b"transfer-encoding")
+            && line.last().is_some_and(|&c| c == b' ' || c == b'\t')
+    })
 }
 
 fn compare(buf: &[u8]) {
@@ -144,7 +158,8 @@ fn header() -> impl Strategy<Value = (String, String)> {
         (token(), "[ -~]{0,20}"),
         (Just("Host".to_string()), "[a-z.]{1,10}"),
         (Just("Content-Length".to_string()), "[0-9]{1,5}"),
-        (Just("Transfer-Encoding".to_string()), prop_oneof![Just("chunked".to_string()), Just("gzip".to_string())]),
+        (Just("Transfer-Encoding".to_string()), prop_oneof![Just("chunked".to_string()), Just("gzip".to_string()), Just("chunked ".to_string())]),
+        (Just("Content-Length".to_string()), "[0-9]{1,3}[ \t]"),
     ]
 }
 

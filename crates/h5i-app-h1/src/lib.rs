@@ -398,8 +398,21 @@ pub enum Added {
     Ok(Fields),
 }
 
-/// Record the field `buf[ns..ne]: buf[vs..ve]`.
-fn add_header(buf: &[u8], f: Fields, ns: usize, ne: usize, vs: usize, ve: usize, minor: u8, max_body: u64) -> Added {
+/// Record the field `buf[ns..ne]: buf[vs..ve]`, from the line ending at
+/// `le`. `Content-Length` and `Transfer-Encoding` values may not end in
+/// whitespace (`ve == le`): a parser that keeps trailing whitespace would read
+/// `chunked ` as another coding.
+fn add_header(
+    buf: &[u8],
+    f: Fields,
+    ns: usize,
+    ne: usize,
+    vs: usize,
+    ve: usize,
+    le: usize,
+    minor: u8,
+    max_body: u64,
+) -> Added {
     if f.count >= MAX_HEADERS {
         return Added::Bad(HEADERS_TOO_LARGE);
     }
@@ -411,7 +424,7 @@ fn add_header(buf: &[u8], f: Fields, ns: usize, ne: usize, vs: usize, ve: usize,
         }
         g.host = true;
     } else if kind == KIND_CONTENT_LENGTH {
-        if g.has_cl || g.te {
+        if g.has_cl || g.te || ve != le {
             return Added::Bad(BAD_REQUEST);
         }
         match content_length(buf, vs, ve, max_body) {
@@ -422,7 +435,7 @@ fn add_header(buf: &[u8], f: Fields, ns: usize, ne: usize, vs: usize, ve: usize,
             }
         }
     } else if kind == KIND_TRANSFER_ENCODING {
-        if minor == 0 || g.te || g.has_cl {
+        if minor == 0 || g.te || g.has_cl || ve != le {
             return Added::Bad(BAD_REQUEST);
         }
         if !eq_ci(buf, vs, ve, b"chunked") {
@@ -462,7 +475,7 @@ fn fields(buf: &[u8], n: usize, i: usize, f: Fields, minor: u8, max_body: u64) -
         }
         match header_line(buf, i, j) {
             HdrLine::Bad(s) => return Fielded::Bad(s),
-            HdrLine::Ok(k, vs, ve) => match add_header(buf, f, i, k, vs, ve, minor, max_body) {
+            HdrLine::Ok(k, vs, ve) => match add_header(buf, f, i, k, vs, ve, j, minor, max_body) {
                 Added::Bad(s) => return Fielded::Bad(s),
                 Added::Ok(g) => f = g,
             },

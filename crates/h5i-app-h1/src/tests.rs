@@ -40,7 +40,7 @@ fn get() {
 fn framing() {
     assert_eq!(head(b"POST / HTTP/1.1\r\nhost: x\r\ncontent-LENGTH: 12\r\n\r\n").framing, Framing::Length(12));
     assert_eq!(head(b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 0007\r\n\r\n").framing, Framing::Length(7));
-    assert_eq!(head(b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: ChUnKeD \r\n\r\n").framing, Framing::Chunked);
+    assert_eq!(head(b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding:  ChUnKeD\r\n\r\n").framing, Framing::Chunked);
     // HTTP/1.0 needs no Host.
     assert_eq!(head(b"GET / HTTP/1.0\r\n\r\n").minor, 0);
     assert_eq!(head(b"GET / HTTP/1.0\r\nContent-Length: 1024\r\n\r\n").framing, Framing::Length(1024));
@@ -75,6 +75,9 @@ fn rejects() {
         (b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: gzip, chunked\r\n\r\n", 501),
         (b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked, gzip\r\n\r\n", 501),
         (b"POST / HTTP/1.0\r\nTransfer-Encoding: chunked\r\n\r\n", 400),
+        // Framing values may not end in whitespace.
+        (b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked \r\n\r\n", 400),
+        (b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 3\t\r\n\r\n", 400),
         // Line ends.
         (b"GET / HTTP/1.1\nHost: x\r\n\r\n", 400),
         (b"GET / HTTP/1.1\r\nHost: x\n\r\n", 400),

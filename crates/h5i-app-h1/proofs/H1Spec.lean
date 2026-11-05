@@ -260,19 +260,22 @@ inductive Added where
   | ok (f : Fields)
   deriving DecidableEq, Repr
 
-def addHeader (g : Nat → Nat) (f : Fields) (ns ne vs ve minor maxBody : Nat) : Added :=
+/-- Record field `[ns, ne)` with value `[vs, ve)`, from a line ending at `le`.
+`Content-Length` and `Transfer-Encoding` values may not end in OWS
+(`ve = le`). -/
+def addHeader (g : Nat → Nat) (f : Fields) (ns ne vs ve le minor maxBody : Nat) : Added :=
   if maxHeaders ≤ f.headers.length then .bad 431 else
   let h := f.headers ++ [⟨ns, ne, vs, ve⟩]
   let kind := classify g ns ne
   if kind = 1 then
     if f.host then .bad 400 else .ok { f with headers := h, host := true }
   else if kind = 2 then
-    if f.hasCl ∨ f.te then .bad 400 else
+    if f.hasCl ∨ f.te ∨ ve ≠ le then .bad 400 else
     match contentLength g vs ve maxBody with
     | .bad s => .bad s
     | .ok v => .ok { f with headers := h, hasCl := true, cl := v }
   else if kind = 3 then
-    if minor = 0 ∨ f.te ∨ f.hasCl then .bad 400
+    if minor = 0 ∨ f.te ∨ f.hasCl ∨ ve ≠ le then .bad 400
     else if !eqCi g vs ve litChunked then .bad 501
     else .ok { f with headers := h, te := true }
   else .ok { f with headers := h }
@@ -295,7 +298,7 @@ def fields (g : Nat → Nat) (n minor maxBody i : Nat) (f : Fields) : Fielded :=
       match headerLine g i j with
       | .bad s => .bad s
       | .ok k vs ve =>
-        match addHeader g f i k vs ve minor maxBody with
+        match addHeader g f i k vs ve j minor maxBody with
         | .bad s => .bad s
         | .ok f' => fields g n minor maxBody (j + 2) f'
   else .more

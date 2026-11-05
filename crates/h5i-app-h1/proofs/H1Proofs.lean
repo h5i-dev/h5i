@@ -598,11 +598,11 @@ theorem hdrsView_length (a : Std.Array Header 16#usize) (c : Usize) (hc : c.val 
   unfold hdrsView; simp; omega
 
 @[step]
-theorem add_header_spec (buf : Slice U8) (f : Fields) (ns ne vs ve : Usize) (minor : U8) (mb : U64)
+theorem add_header_spec (buf : Slice U8) (f : Fields) (ns ne vs ve le : Usize) (minor : U8) (mb : U64)
     (g : Nat → Nat) (n : Nat) (hR : Reads buf g n) (hne : ne.val ≤ n) (hve : ve.val ≤ n)
     (hmb : mb.val ≤ 4294967295) (hc : f.count.val ≤ 16) :
-    add_header buf f ns ne vs ve minor mb ⦃ r =>
-      addedView r = Spec.addHeader g (fieldsView f) ns.val ne.val vs.val ve.val minor.val mb.val ∧
+    add_header buf f ns ne vs ve le minor mb ⦃ r =>
+      addedView r = Spec.addHeader g (fieldsView f) ns.val ne.val vs.val ve.val le.val minor.val mb.val ∧
       (∀ f', r = .Ok f' → f'.count.val ≤ 16) ⦄ := by
   unfold add_header
   have hlen := hdrsView_length f.headers f.count hc
@@ -620,7 +620,8 @@ theorem add_header_spec (buf : Slice U8) (f : Fields) (ns ne vs ve : Usize) (min
   all_goals (try simp only [← b_post])
   all_goals (simp only [UScalar.eq_equiv, UScalar.ofNatCore_val_eq, ge_iff_le, UScalar.le_equiv, not_le] at *)
   all_goals (split_ifs <;> simp_all [addedView, fieldsView, numView, hdrView] <;> (try omega) <;>
-    (try rw [hdrsView_push _ _ _ _ (by omega) i_post]) <;> (try rw [← n_post]) <;> (try simp [hdrView]))
+    (try rw [hdrsView_push _ _ _ _ (by omega) i_post]) <;> (try rw [← n_post]) <;> (try simp [hdrView]) <;>
+    (try omega))
 
 def fieldedView : Fielded → Spec.Fielded
   | .More => .more
@@ -641,7 +642,7 @@ theorem fields_unfold (g : Nat → Nat) (n minor mb i : Nat) (f : Spec.Fields) (
          match Spec.headerLine g i j with
          | .bad s => .bad s
          | .ok k vs ve =>
-           match Spec.addHeader g f i k vs ve minor mb with
+           match Spec.addHeader g f i k vs ve j minor mb with
            | .bad s => .bad s
            | .ok f' => Spec.fields g n minor mb (j + 2) f') := by
   rw [Spec.fields, if_pos h]; rfl

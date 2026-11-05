@@ -117,9 +117,9 @@ theorem kindCount_zero {g : Nat → Nat} {hs : List Field} {kind : Nat} (h : kin
 theorem FInv.empty (g : Nat → Nat) (bound mb minor : Nat) : FInv g bound mb minor Fields.empty := by
   constructor <;> simp [Fields.empty, kindCount]
 
-theorem addHeader_inv {g : Nat → Nat} {bound mb minor : Nat} {f f' : Fields} {ns ne vs ve : Nat}
+theorem addHeader_inv {g : Nat → Nat} {bound mb minor : Nat} {f f' : Fields} {ns ne vs ve le : Nat}
     (hI : FInv g bound mb minor f) (hx : NameOk g ⟨ns, ne, vs, ve⟩ ∧ ValueOk g ⟨ns, ne, vs, ve⟩ ∧ ve ≤ bound)
-    (h : addHeader g f ns ne vs ve minor mb = .ok f') : FInv g bound mb minor f' := by
+    (h : addHeader g f ns ne vs ve le minor mb = .ok f') : FInv g bound mb minor f' := by
   obtain ⟨hl, he, hh, hc, ht, htv, hcv, hex, ht11⟩ := hI
   unfold addHeader at h
   have each' : ∀ y ∈ f.headers ++ [⟨ns, ne, vs, ve⟩], NameOk g y ∧ ValueOk g y ∧ y.ve ≤ bound := by
@@ -167,8 +167,8 @@ theorem lineTerm_zero' {g : Nat → Nat} {j n : Nat} (h1 : lineTerm g j n ≠ 1)
     j + 1 < n := by
   unfold lineTerm at h1 h2; split_ifs at h1 h2 <;> omega
 
-theorem addHeader_headers {g : Nat → Nat} {f f' : Fields} {ns ne vs ve minor mb : Nat}
-    (h : addHeader g f ns ne vs ve minor mb = .ok f') : f'.headers = f.headers ++ [⟨ns, ne, vs, ve⟩] := by
+theorem addHeader_headers {g : Nat → Nat} {f f' : Fields} {ns ne vs ve le minor mb : Nat}
+    (h : addHeader g f ns ne vs ve le minor mb = .ok f') : f'.headers = f.headers ++ [⟨ns, ne, vs, ve⟩] := by
   unfold addHeader at h
   dsimp only at h
   split_ifs at h
