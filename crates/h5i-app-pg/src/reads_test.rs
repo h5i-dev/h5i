@@ -31,8 +31,7 @@ fn schema() -> Vec<Table> {
 
 #[tokio::test]
 async fn reads_match_the_reference() {
-    let Ok(url) = std::env::var("H5I_APP_TEST_DATABASE_URL") else {
-        eprintln!("H5I_APP_TEST_DATABASE_URL not set; skipping");
+    let Some(url) = crate::test_env("H5I_APP_TEST_DATABASE_URL") else {
         return;
     };
     let url = crate::with_schema(&url, "h5i_reads_test").unwrap();
@@ -105,8 +104,7 @@ async fn reads_match_the_reference() {
 /// in their numbers share one statement.
 #[tokio::test]
 async fn statement_cache_is_bounded() {
-    let Ok(url) = std::env::var("H5I_APP_TEST_DATABASE_URL") else {
-        eprintln!("H5I_APP_TEST_DATABASE_URL not set; skipping");
+    let Some(url) = crate::test_env("H5I_APP_TEST_DATABASE_URL") else {
         return;
     };
     const CAP: usize = 8;
@@ -182,8 +180,7 @@ async fn statement_cache_is_bounded() {
 #[tokio::test]
 async fn unique_membership_matches_the_reference() {
     use h5i_app_sql::{whole, Pred, Read, Val, Window};
-    let Ok(url) = std::env::var("H5I_APP_TEST_DATABASE_URL") else {
-        eprintln!("H5I_APP_TEST_DATABASE_URL not set; skipping");
+    let Some(url) = crate::test_env("H5I_APP_TEST_DATABASE_URL") else {
         return;
     };
     let url = crate::with_schema(&url, "h5i_unique_read_test").unwrap();

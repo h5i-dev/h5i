@@ -14,13 +14,9 @@ use rustls::pki_types::CertificateDer;
 use crate::{pool, pool_tls, DbError, Pool};
 
 fn env_of(var: &str) -> Option<(String, Roots)> {
-    match (std::env::var(var), std::env::var("H5I_APP_TEST_TLS_CA")) {
-        (Ok(url), Ok(ca)) => Some((url, Roots::PemFile(ca.into()))),
-        _ => {
-            eprintln!("{var} / H5I_APP_TEST_TLS_CA not set; skipping");
-            None
-        }
-    }
+    let url = crate::test_env(var)?;
+    let ca = crate::test_env("H5I_APP_TEST_TLS_CA")?;
+    Some((url, Roots::PemFile(ca.into())))
 }
 
 fn env() -> Option<(String, Roots)> {
@@ -84,8 +80,7 @@ async fn channel_binding_is_accepted_by_the_server() {
 
 #[tokio::test]
 async fn server_without_tls_is_refused() {
-    let Ok(url) = std::env::var("H5I_APP_TEST_DATABASE_URL") else {
-        eprintln!("H5I_APP_TEST_DATABASE_URL not set; skipping");
+    let Some(url) = crate::test_env("H5I_APP_TEST_DATABASE_URL") else {
         return;
     };
     let p = pool_tls(&url, 1, &Roots::WebPki).unwrap();
@@ -146,6 +141,50 @@ async fn lockdown_connection_is_verified_and_encrypted() {
         DbError::Postgres(e) => assert!(chain(&e).contains("UnknownIssuer"), "{}", chain(&e)),
         e => panic!("{e}"),
     }
+}
+
+/// Ungranted advisory locks on `key` (its low 32 bits, as `pg_locks` shows a bigint key).
+async fn waits(holder: &tokio_postgres::Client, key: i64) -> i64 {
+    holder
+        .query_one("SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted AND objid = $1::bigint::oid", &[&(key & 0xffff_ffff)])
+        .await
+        .unwrap()
+        .get(0)
+}
+
+/// A request cancelled while its statement waits on a TLS-only server: the
+/// cleanup's cancel request must go over TLS too (a plain one is rejected),
+/// so the connection is cleaned and returned rather than left waiting.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancelled_waiter_is_cleaned_over_tls() {
+    use std::sync::atomic::Ordering;
+    let Some((url, roots)) = env() else { return };
+    let p = pool_tls(&url, 2, &roots).unwrap();
+    let holder = p.0.get().await.unwrap();
+    let key: i64 = 0x7e57_c1ea;
+    holder.execute("SELECT pg_advisory_lock($1)", &[&key]).await.unwrap();
+    let (pool, cleanup) = (p.0.clone(), p.2.clone());
+    let waiter = tokio::spawn(async move {
+        let mut c = crate::cleanup::Conn::new(pool.get().await.unwrap(), cleanup);
+        c.get().execute("SELECT pg_advisory_lock($1)", &[&key]).await
+    });
+    while waits(&holder, key).await == 0 {
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    waiter.abort();
+    assert!(waiter.await.unwrap_err().is_cancelled());
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    while p.cleanup_stats().cleaned.load(Ordering::Relaxed) == 0 {
+        assert!(tokio::time::Instant::now() < deadline, "not cleaned: {:?}", p.cleanup_stats());
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert_eq!(waits(&holder, key).await, 0);
+    assert_eq!(p.cleanup_stats().detached.load(Ordering::Relaxed), 0);
+    // Back in the pool, and usable.
+    let status = p.0.status();
+    assert_eq!((status.size, status.available), (2, 1), "{status:?}");
+    drop(holder);
+    assert!(ssl_of(&p).await.unwrap().0);
 }
 
 #[test]

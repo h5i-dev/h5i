@@ -111,7 +111,7 @@
       <p class="crumbs"><a href="/">h5i</a><i>/</i><a href="/guides/">docs</a><i>/</i><span>manual</span></p>
       <p class="post-eyebrow">CLI reference</p>
       <h1>h5i Manual</h1>
-      <p class="manual-meta"><span>Updated <time datetime="2026-11-05">2026-11-05</time></span><i>|</i><span>57 min read</span><i>|</i><span class="ok">21 chapters</span></p>
+      <p class="manual-meta"><span>Updated <time datetime="2026-11-05">2026-11-05</time></span><i>|</i><span>58 min read</span><i>|</i><span class="ok">21 chapters</span></p>
       <details class="manual-mobile-toc"><summary>Chapters</summary>
 <div class="mn-group"><p class="mn-head">Start here</p>
 <a href="#what-h5i-is"><span class="mn-n">01</span><span>What h5i is</span></a>
@@ -1568,6 +1568,7 @@ cd counter
 h5i app doctor                 # Charon, Aeneas and Lean at the versions this h5i pins
 h5i app prove                  # extract to proofs/generated/, lake build, then the gate
 h5i app lint                   # routes take an Actor; no client-set identity in Command
+h5i app report                 # per route: commands, covering theorems, assumptions (--json)
 h5i app mutate                 # each [[mutant]] must break a proof
 h5i app mutate --auto --list   # mutants generated from the kernel's syntax
 h5i app mutate --security      # authorization bugs; each line names the proofs that broke
@@ -1627,6 +1628,18 @@ pieces of wiring are what stays outside the proofs), and <code>lint</code> and <
 both fail unless every <code>h5i_app_*</code> dependency is the framework's own package
 (<code>cargo metadata</code>: no <code>package =</code> renames, no copy from elsewhere). An app without <code>[authz]</code> is
 unaffected.</p>
+<p><code>report</code> lists, for each HTTP route of each project, the kernel commands it
+may build (and which run on the read-only path), whether its handler takes an
+<code>Actor</code>, the theorems that cover it with their Lean file and what the latest
+recorded <code>check</code> run observed for each (<code>passed</code> only if that run passed and
+gated the theorem on the current sources), the assumption IDs (A1 to A11) it
+rests on, and what nothing verifies. It is derived from the sources,
+<code>h5i-app.toml</code> and <code>.h5i/app/runs</code>, and runs no proof. <code>--json</code> prints the
+versioned form (<code>"version": 1</code>; unknown fields are rejected by the reader in
+<code>h5i_app_report::guarantees</code>). Routes it cannot read, such as a <code>nest</code>, are
+listed under <code>errors</code>; see
+<a href="https://github.com/h5i-dev/h5i/blob/main/docs/design/design-app-trust.md#per-route-guarantee-report"><code>docs/design/design-app-trust.md</code></a>
+for what the report does not establish.</p>
 <p><code>h5i app new</code> requires the h5i-app Lean library from git at this binary's
 release tag; <code>--h5i-path &lt;checkout&gt;</code> uses a local h5i checkout instead.</p>
 <div class="codeblock"><div class="codeblock-head"><span>toml</span><button class="copy-btn" type="button">Copy</button></div><pre><code class="language-toml"># h5i-app.toml
@@ -2326,7 +2339,7 @@ once that session has ended, so group by <code>project</code> or <code>id</code>
     <dl class="ma-meta">
       <div><dt>Updated</dt><dd>2026-11-05</dd></div>
       <div><dt>Chapters</dt><dd>21</dd></div>
-      <div><dt>Reading</dt><dd>57 min</dd></div>
+      <div><dt>Reading</dt><dd>58 min</dd></div>
       <div><dt>Flags</dt><dd><code>--help</code></dd></div>
       <div><dt>Source</dt><dd><a href="https://github.com/h5i-dev/h5i/blob/main/docs/MANUAL.md">MANUAL.md &#8599;</a></dd></div>
     </dl>

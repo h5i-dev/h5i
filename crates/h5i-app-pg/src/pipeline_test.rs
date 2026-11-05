@@ -9,8 +9,7 @@ use tokio_postgres::error::SqlState;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pipelined_statements_report_the_cause() {
-    let Ok(url) = std::env::var("H5I_APP_TEST_DATABASE_URL") else {
-        eprintln!("H5I_APP_TEST_DATABASE_URL not set; skipping");
+    let Some(url) = crate::test_env("H5I_APP_TEST_DATABASE_URL") else {
         return;
     };
     let p = pool(&url, 1).unwrap();

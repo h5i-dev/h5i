@@ -16,7 +16,7 @@ tls = ["dep:rustls", "dep:tokio-rustls", "dep:webpki-roots", "dep:ring"]
 
 [dependencies]
 h5i-app-core.workspace = true
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "signal"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "signal", "sync"] }
 tokio-postgres = "0.7"
 futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 deadpool-postgres = { version = "0.14", features = ["rt_tokio_1"] }

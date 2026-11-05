@@ -1274,6 +1274,7 @@ cd counter
 h5i app doctor                 # Charon, Aeneas and Lean at the versions this h5i pins
 h5i app prove                  # extract to proofs/generated/, lake build, then the gate
 h5i app lint                   # routes take an Actor; no client-set identity in Command
+h5i app report                 # per route: commands, covering theorems, assumptions (--json)
 h5i app mutate                 # each [[mutant]] must break a proof
 h5i app mutate --auto --list   # mutants generated from the kernel's syntax
 h5i app mutate --security      # authorization bugs; each line names the proofs that broke
@@ -1338,6 +1339,19 @@ pieces of wiring are what stays outside the proofs), and `lint` and `check`
 both fail unless every `h5i_app_*` dependency is the framework's own package
 (`cargo metadata`: no `package =` renames, no copy from elsewhere). An app without `[authz]` is
 unaffected.
+
+`report` lists, for each HTTP route of each project, the kernel commands it
+may build (and which run on the read-only path), whether its handler takes an
+`Actor`, the theorems that cover it with their Lean file and what the latest
+recorded `check` run observed for each (`passed` only if that run passed and
+gated the theorem on the current sources), the assumption IDs (A1 to A11) it
+rests on, and what nothing verifies. It is derived from the sources,
+`h5i-app.toml` and `.h5i/app/runs`, and runs no proof. `--json` prints the
+versioned form (`"version": 1`; unknown fields are rejected by the reader in
+`h5i_app_report::guarantees`). Routes it cannot read, such as a `nest`, are
+listed under `errors`; see
+[`docs/design/design-app-trust.md`](design/design-app-trust.md#per-route-guarantee-report)
+for what the report does not establish.
 
 `h5i app new` requires the h5i-app Lean library from git at this binary's
 release tag; `--h5i-path <checkout>` uses a local h5i checkout instead.

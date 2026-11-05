@@ -14,8 +14,7 @@ fn rng(state: &mut u64, n: u64) -> u64 {
 
 #[tokio::test]
 async fn store_agrees_with_apply() {
-    let Ok(url) = std::env::var("H5I_APP_TEST_DATABASE_URL") else {
-        eprintln!("H5I_APP_TEST_DATABASE_URL not set; skipping");
+    let Some(url) = h5i_app_pg::test_env("H5I_APP_TEST_DATABASE_URL") else {
         return;
     };
     let pg = Engine::<Calc, CalcStore>::new(pool(&h5i_app_pg::with_schema(&url, "calculator").unwrap(), 4).unwrap(), EngineConfig::default());

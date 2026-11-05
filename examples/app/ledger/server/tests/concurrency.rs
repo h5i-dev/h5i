@@ -88,8 +88,7 @@ fn check_inv(s: &k::Snapshot) {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn concurrent_clients_are_serial() {
-    let Ok(url) = std::env::var("H5I_APP_TEST_DATABASE_URL") else {
-        eprintln!("H5I_APP_TEST_DATABASE_URL not set; skipping");
+    let Some(url) = h5i_app_pg::test_env("H5I_APP_TEST_DATABASE_URL") else {
         return;
     };
     let url = h5i_app_pg::with_schema(&url, "ledger").unwrap();
