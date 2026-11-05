@@ -76,7 +76,8 @@ guarantee.
 | | Shell inputs in the principal are true: slugs (Wastebin), GitHub teams and download counts (crates.io), password checks (Atuin, Wastebin, Conduit), time in Conduit's commands. | Theorems hold for every value; each app's README lists them. |
 | | The clock (`Clock::System`, or `Clock::Database` via `transaction_timestamp()`) is right; `HmacAuth` expiry uses the system clock. | A wrong time only leads to decisions on that time. `H5iAppLib.ReachableT` proofs hold for database runs only under `monotonic`. |
 | | axum, hyper and tokio deliver requests and responses intact. | Widely used. |
-| | On devices: the `h5i-app-embedded` shell (routing, `Request` views, body reading, kernel binding, command decoding) is trusted; embassy, the HAL, `embedded-io`, `critical-section` and Renode's models are assumed. `write_head`'s bytes match `Spec.renderHead` by test, not proof. | Shell tests, smuggling corpus, proptest, `httparse` differential, Renode smoke test. |
+| | On devices: the `h5i-app-embedded` shell (routing, `Request` views, body reading, kernel binding, command decoding, UART framing in `link`) is trusted; embassy, the HAL, `embedded-io`, `critical-section` and Renode's models are assumed. `write_head`'s bytes match `Spec.renderHead` by test, not proof. | Shell tests, smuggling corpus, proptest, `httparse` differential, Renode smoke test. |
+| | A shared UART: connection boundaries come from `uart-gateway.py` and the device's `link` framing (one gateway connection's bytes never join another's request; each holds the line for at most 5 s; no client receives another's response). Structural and tested, not proven. The line authenticates nobody: a direct writer to the UART (or Renode's UART socket) can forge markers. | Host tests on a mock line (`h5i-app-embedded` `tests::uart`), Renode smoke (hijack, silent client, stale responses). |
 
 ## Deployment
 

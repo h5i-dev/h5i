@@ -317,7 +317,8 @@ verified core, and between the core and a kernel.
 - Work per byte: termination measures only; no step-counter theorem.
 - Shell: unit tests, smuggling corpus, proptest; `parse_head` vs `httparse`
   (9,000 cases); thermostat API proptest of the interlock through HTTP;
-  Renode smoke (25 checks).
+  the shared-UART attacks (hijack, silent client, stale responses) on a mock
+  line; Renode smoke (31 checks, through the gateway).
 
 ### Deviations from the design, and why
 
@@ -347,10 +348,38 @@ verified core, and between the core and a kernel.
    extractors: borrowed extractors (`Body<'r>`) and HRTB `AsyncFn` bounds do
    not compose without allocation. `Request::param_u32`, `header`, `body`
    play the extractors' role.
-9. **No read timeout in `Config`.** The shell has no clock; the host runner
-   wraps `serve` in `tokio::time::timeout`, the firmware uses
-   `embassy_time::with_timeout` to resynchronize the UART.
-10. **Transport: UART, not Ethernet.** The UART path (choice 2) worked first
-    try in Renode; Ethernet (embassy-net, a TAP bridge) was not attempted.
+9. **No read timeout in `Config`; the UART is framed.** The shell has no
+   clock: the host runner bounds each TCP connection with
+   `tokio::time::timeout` (30 s, at most 32 at once, accept errors back off).
+   An earlier version of the firmware ran `serve` on the raw UART and
+   resynchronized only after a closing response; an independent review showed
+   that a partial head left by one client was completed by the next client's
+   bytes (the victim's key and body ran with the attacker's method and path),
+   that a silent client blocked the line indefinitely, and that responses
+   reached later clients. No timeout can fix this soundly, since a victim may
+   follow an attacker within any gap, so the line is now framed
+   (`h5i_app_embedded::link`): `FLAG 'O' id` / `FLAG 'C' id` markers mark each
+   connection in both directions and data is escaped.
+   `scripts/embedded/uart-gateway.py` serves TCP clients one at a time,
+   escapes their bytes (no client can write a marker) and forwards to a client
+   only the device's bytes for its id. On the device, `serve_link` gives each
+   connection an empty receive buffer and at most 5 s (`CONNECTION_BOUND`); a
+   new `OPEN` aborts the current connection, whose leftover bytes are dropped
+   and whose writes fail. What this guarantees is structural and tested
+   (host tests in `h5i-app-embedded/src/tests.rs::uart`, Renode smoke), not
+   proven: bytes of one gateway connection never join another's request, a
+   connection holds the line for at most the bound, and no gateway client
+   receives another's response. What remains: the line authenticates nobody;
+   anyone who can write to the UART directly (or to Renode's UART socket,
+   which must be reachable only by the gateway) can forge markers. Clients
+   behind the gateway wait for each other, up to the bound each.
+10. **Transport: framed UART behind a gateway, not Ethernet.** The UART
+    path (choice 2) works in Renode with the framing of deviation 9; Ethernet
+    (embassy-net, a TAP bridge) was not attempted.
+12. **Bodyless responses.** `write_head` omits `Content-Length` for 1xx,
+    204 and 304 (`has_body`); the shell sends no body for them or for HEAD
+    (which runs the GET handler), and turns a handler's 1xx into a closing
+    500. Any `Connection` field listing `close` closes the connection, and the
+    fallback 500 for a bad status or content type closes it too.
 11. **`Head` holds header spans, the shell compares names** (`Request::header`)
     outside the verified code; the framing headers are classified inside it.

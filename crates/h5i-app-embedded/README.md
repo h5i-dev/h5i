@@ -31,6 +31,15 @@ async fn write(req: &Request<'_>, app: &App, out: &mut [u8]) -> Response {
   constant time), `Api` (trusted command decoding and reply encoding) and
   `respond`.
 
+- `link` frames a byte link that has no connections (a UART shared through
+  a TCP bridge): `FLAG 'O'/'C' id` markers and escaped data, `serve_link`
+  serving each connection with a fresh buffer under a time bound
+  (`Bound`), and a new connection aborting the old one. Its host side is
+  `scripts/embedded/uart-gateway.py`.
+- A HEAD request runs the GET handler without sending the body; 1xx, 204
+  and 304 get no `Content-Length` and no body; any `Connection: close` token
+  closes.
+
 Memory per connection is `rx + tx` plus the handler's future: fixed at
 compile time. The receive buffer bounds the parser's limits, so a whole
 request fits.

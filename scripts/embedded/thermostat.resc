@@ -2,8 +2,9 @@
 #
 #   renode --disable-xwt --console -e '$elf=@path/to/thermostat-firmware; $port=8080; include @scripts/embedded/thermostat.resc'
 #
-# Every byte a TCP client sends goes to USART2's receiver and every byte the
-# firmware transmits goes back, so curl talks HTTP to the device directly.
+# Every byte written to the socket goes to USART2's receiver and every byte
+# the firmware transmits comes back. The line is framed: put
+# scripts/embedded/uart-gateway.py in front of it and point clients there.
 
 :name: thermostat
 :description: h5i-app thermostat over USART2
