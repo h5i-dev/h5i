@@ -187,7 +187,7 @@ inductive h5i_app_sql.Write where
 | DelWhere : Std.U32 → Std.U32 → h5i_app_sql.Val → h5i_app_sql.Write
 
 /-- [inbox_kernel::Message]
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 95:12-98:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 108:12-111:13
     Visibility: public -/
 structure Message where
   sender : Std.U64
@@ -199,34 +199,34 @@ structure Message where
   recipient_deleted : Bool
 
 /-- [inbox_kernel::Block]
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 95:12-98:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 108:12-111:13
     Visibility: public -/
 structure Block where
   owner : Std.U64
   sender : Std.U64
 
 /-- [inbox_kernel::{inbox_kernel::Message}::TABLE]
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 135:12-135:60
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 148:12-148:60
     Visibility: public -/
 @[global_simps, irreducible] def Message.TABLE : Std.U32 := 0#u32
 
 /-- [inbox_kernel::{inbox_kernel::Block}::TABLE]
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 135:12-135:60
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 148:12-148:60
     Visibility: public -/
 @[global_simps, irreducible] def Block.TABLE : Std.U32 := 1#u32
 
 /-- [inbox_kernel::{inbox_kernel::Message}::KEY_LEN]
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 136:12-136:62
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 149:12-149:62
     Visibility: public -/
 @[global_simps, irreducible] def Message.KEY_LEN : Std.U32 := 3#u32
 
 /-- [inbox_kernel::{inbox_kernel::Block}::KEY_LEN]
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 136:12-136:62
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 149:12-149:62
     Visibility: public -/
 @[global_simps, irreducible] def Block.KEY_LEN : Std.U32 := 2#u32
 
 /-- [inbox_kernel::{inbox_kernel::Message}::to_row]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 138:12-143:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 151:12-156:13
     Visibility: public -/
 def Message.to_row
   (self : Message) : Result (alloc.vec.Vec h5i_app_sql.Val) := do
@@ -246,7 +246,7 @@ def Message.to_row
   alloc.vec.Vec.push out5 v6
 
 /-- [inbox_kernel::{inbox_kernel::Block}::to_row]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 138:12-143:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 151:12-156:13
     Visibility: public -/
 def Block.to_row (self : Block) : Result (alloc.vec.Vec h5i_app_sql.Val) := do
   let v ← U64.Insts.H5i_app_sqlColumn.to_val self.owner
@@ -255,7 +255,7 @@ def Block.to_row (self : Block) : Result (alloc.vec.Vec h5i_app_sql.Val) := do
   alloc.vec.Vec.push out v1
 
 /-- [inbox_kernel::{inbox_kernel::Message}::from_row]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 146:12-167:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 159:12-180:13
     Visibility: public -/
 def Message.from_row
   (row : alloc.vec.Vec h5i_app_sql.Val) : Result (Option Message) := do
@@ -337,7 +337,7 @@ def Message.from_row
                     })
 
 /-- [inbox_kernel::{inbox_kernel::Block}::from_row]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 146:12-167:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 159:12-180:13
     Visibility: public -/
 def Block.from_row
   (row : alloc.vec.Vec h5i_app_sql.Val) : Result (Option Block) := do
@@ -365,7 +365,7 @@ def Block.from_row
         ok (some { owner := x, sender := x1 })
 
 /-- [inbox_kernel::{inbox_kernel::Message}::from_rows]: loop body 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 174:16-180:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 187:16-193:17
     Visibility: public -/
 @[rust_loop_body]
 def Message.from_rows_loop.body
@@ -392,7 +392,7 @@ def Message.from_rows_loop.body
   else ok (done (out, ok1))
 
 /-- [inbox_kernel::{inbox_kernel::Message}::from_rows]: loop 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 174:16-180:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 187:16-193:17
     Visibility: public -/
 @[rust_loop]
 def Message.from_rows_loop
@@ -405,7 +405,7 @@ def Message.from_rows_loop
     (out, ok1, i)
 
 /-- [inbox_kernel::{inbox_kernel::Message}::from_rows]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 170:12-186:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 183:12-199:13
     Visibility: public -/
 def Message.from_rows
   (rows : alloc.vec.Vec (alloc.vec.Vec h5i_app_sql.Val)) :
@@ -418,7 +418,7 @@ def Message.from_rows
   else ok none
 
 /-- [inbox_kernel::{inbox_kernel::Block}::from_rows]: loop body 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 174:16-180:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 187:16-193:17
     Visibility: public -/
 @[rust_loop_body]
 def Block.from_rows_loop.body
@@ -445,7 +445,7 @@ def Block.from_rows_loop.body
   else ok (done (out, ok1))
 
 /-- [inbox_kernel::{inbox_kernel::Block}::from_rows]: loop 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 174:16-180:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 187:16-193:17
     Visibility: public -/
 @[rust_loop]
 def Block.from_rows_loop
@@ -458,7 +458,7 @@ def Block.from_rows_loop
     (out, ok1, i)
 
 /-- [inbox_kernel::{inbox_kernel::Block}::from_rows]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 170:12-186:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 183:12-199:13
     Visibility: public -/
 def Block.from_rows
   (rows : alloc.vec.Vec (alloc.vec.Vec h5i_app_sql.Val)) :
@@ -471,21 +471,21 @@ def Block.from_rows
   else ok none
 
 /-- [inbox_kernel::{inbox_kernel::Message}::sql_put]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 189:12-191:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 202:12-204:13
     Visibility: public -/
 def Message.sql_put (self : Message) : Result h5i_app_sql.Write := do
   let v ← Message.to_row self
   ok (h5i_app_sql.Write.Put Message.TABLE Message.KEY_LEN v)
 
 /-- [inbox_kernel::{inbox_kernel::Block}::sql_put]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 189:12-191:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 202:12-204:13
     Visibility: public -/
 def Block.sql_put (self : Block) : Result h5i_app_sql.Write := do
   let v ← Block.to_row self
   ok (h5i_app_sql.Write.Put Block.TABLE Block.KEY_LEN v)
 
 /-- [inbox_kernel::{inbox_kernel::Message}::put]: loop body 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 220:16-228:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 233:16-241:13
     Visibility: public -/
 @[rust_loop_body]
 def Message.put_loop.body
@@ -518,7 +518,7 @@ def Message.put_loop.body
        ok (done v1)
 
 /-- [inbox_kernel::{inbox_kernel::Message}::put]: loop 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 220:16-228:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 233:16-241:13
     Visibility: public -/
 @[rust_loop]
 def Message.put_loop
@@ -530,7 +530,7 @@ def Message.put_loop
     i
 
 /-- [inbox_kernel::{inbox_kernel::Message}::put]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 218:12-228:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 231:12-241:13
     Visibility: public -/
 @[reducible]
 def Message.put
@@ -540,7 +540,7 @@ def Message.put
   Message.put_loop v x 0#usize
 
 /-- [inbox_kernel::{inbox_kernel::Block}::put]: loop body 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 220:16-228:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 233:16-241:13
     Visibility: public -/
 @[rust_loop_body]
 def Block.put_loop.body
@@ -569,7 +569,7 @@ def Block.put_loop.body
        ok (done v1)
 
 /-- [inbox_kernel::{inbox_kernel::Block}::put]: loop 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 220:16-228:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 233:16-241:13
     Visibility: public -/
 @[rust_loop]
 def Block.put_loop
@@ -581,7 +581,7 @@ def Block.put_loop
     i
 
 /-- [inbox_kernel::{inbox_kernel::Block}::put]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 218:12-228:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 231:12-241:13
     Visibility: public -/
 @[reducible]
 def Block.put
@@ -611,7 +611,7 @@ def Message.Insts.CoreCloneClone.clone (self : Message) : Result Message := do
     }
 
 /-- [inbox_kernel::{inbox_kernel::Message}::del]: loop body 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 234:16-239:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 247:16-252:17
     Visibility: public -/
 @[rust_loop_body]
 def Message.del_loop.body
@@ -649,7 +649,7 @@ def Message.del_loop.body
   else ok (done out)
 
 /-- [inbox_kernel::{inbox_kernel::Message}::del]: loop 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 234:16-239:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 247:16-252:17
     Visibility: public -/
 @[rust_loop]
 def Message.del_loop
@@ -662,7 +662,7 @@ def Message.del_loop
     (out, i)
 
 /-- [inbox_kernel::{inbox_kernel::Message}::del]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 231:12-241:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 244:12-254:13
     Visibility: public -/
 @[reducible]
 def Message.del
@@ -679,7 +679,7 @@ def Block.Insts.CoreCloneClone.clone (self : Block) : Result Block := do
   ok self
 
 /-- [inbox_kernel::{inbox_kernel::Block}::del]: loop body 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 234:16-239:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 247:16-252:17
     Visibility: public -/
 @[rust_loop_body]
 def Block.del_loop.body
@@ -711,7 +711,7 @@ def Block.del_loop.body
   else ok (done out)
 
 /-- [inbox_kernel::{inbox_kernel::Block}::del]: loop 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 234:16-239:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 247:16-252:17
     Visibility: public -/
 @[rust_loop]
 def Block.del_loop
@@ -724,7 +724,7 @@ def Block.del_loop
     (out, i)
 
 /-- [inbox_kernel::{inbox_kernel::Block}::del]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 231:12-241:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 244:12-254:13
     Visibility: public -/
 @[reducible]
 def Block.del
@@ -734,7 +734,7 @@ def Block.del
   Block.del_loop v owner sender (alloc.vec.Vec.new Block) 0#usize
 
 /-- [inbox_kernel::{inbox_kernel::Message}::del_where]: loop body 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 247:16-252:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 260:16-265:17
     Visibility: public -/
 @[rust_loop_body]
 def Message.del_where_loop.body
@@ -762,7 +762,7 @@ def Message.del_where_loop.body
   else ok (done out)
 
 /-- [inbox_kernel::{inbox_kernel::Message}::del_where]: loop 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 247:16-252:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 260:16-265:17
     Visibility: public -/
 @[rust_loop]
 def Message.del_where_loop
@@ -775,7 +775,7 @@ def Message.del_where_loop
     (out, i)
 
 /-- [inbox_kernel::{inbox_kernel::Message}::del_where]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 244:12-254:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 257:12-267:13
     Visibility: public -/
 @[reducible]
 def Message.del_where
@@ -785,7 +785,7 @@ def Message.del_where
   Message.del_where_loop v col val (alloc.vec.Vec.new Message) 0#usize
 
 /-- [inbox_kernel::{inbox_kernel::Block}::del_where]: loop body 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 247:16-252:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 260:16-265:17
     Visibility: public -/
 @[rust_loop_body]
 def Block.del_where_loop.body
@@ -813,7 +813,7 @@ def Block.del_where_loop.body
   else ok (done out)
 
 /-- [inbox_kernel::{inbox_kernel::Block}::del_where]: loop 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 247:16-252:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 260:16-265:17
     Visibility: public -/
 @[rust_loop]
 def Block.del_where_loop
@@ -826,7 +826,7 @@ def Block.del_where_loop
     (out, i)
 
 /-- [inbox_kernel::{inbox_kernel::Block}::del_where]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 244:12-254:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 257:12-267:13
     Visibility: public -/
 @[reducible]
 def Block.del_where
@@ -836,7 +836,7 @@ def Block.del_where
   Block.del_where_loop v col val (alloc.vec.Vec.new Block) 0#usize
 
 /-- [inbox_kernel::{inbox_kernel::Message}::sql_del]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 257:12-261:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 270:12-274:13
     Visibility: public -/
 def Message.sql_del
   (sender : Std.U64) (recipient : Std.U64) (seq : Std.U64) :
@@ -851,7 +851,7 @@ def Message.sql_del
   ok (h5i_app_sql.Write.Del Message.TABLE key2)
 
 /-- [inbox_kernel::{inbox_kernel::Block}::sql_del]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 257:12-261:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 270:12-274:13
     Visibility: public -/
 def Block.sql_del
   (owner : Std.U64) (sender : Std.U64) : Result h5i_app_sql.Write := do
@@ -862,35 +862,35 @@ def Block.sql_del
   ok (h5i_app_sql.Write.Del Block.TABLE key1)
 
 /-- [inbox_kernel::{inbox_kernel::Message}::sql_del_where]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 264:12-266:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 277:12-279:13
     Visibility: public -/
 def Message.sql_del_where
   (col : Std.U32) (val : h5i_app_sql.Val) : Result h5i_app_sql.Write := do
   ok (h5i_app_sql.Write.DelWhere Message.TABLE col val)
 
 /-- [inbox_kernel::{inbox_kernel::Block}::sql_del_where]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 264:12-266:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 277:12-279:13
     Visibility: public -/
 def Block.sql_del_where
   (col : Std.U32) (val : h5i_app_sql.Val) : Result h5i_app_sql.Write := do
   ok (h5i_app_sql.Write.DelWhere Block.TABLE col val)
 
 /-- [inbox_kernel::Snapshot]
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 278:8-280:9
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 291:8-293:9
     Visibility: public -/
 structure Snapshot where
   messages : alloc.vec.Vec Message
   blocks : alloc.vec.Vec Block
 
 /-- [inbox_kernel::Rows]
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 284:8-286:9
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 297:8-299:9
     Visibility: public -/
 structure Rows where
   messages : alloc.vec.Vec (alloc.vec.Vec h5i_app_sql.Val)
   blocks : alloc.vec.Vec (alloc.vec.Vec h5i_app_sql.Val)
 
 /-- [inbox_kernel::decode]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 289:8-297:9
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 302:8-310:9
     Visibility: public -/
 def decode (r : Rows) : Result (Option Snapshot) := do
   let o ← Message.from_rows r.messages
@@ -964,7 +964,7 @@ def Snapshot.Insts.CoreCloneClone.clone
   ok { messages := v, blocks := v1 }
 
 /-- [inbox_kernel::apply]: loop body 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 306:12-309:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 319:12-322:13
     Visibility: public -/
 @[rust_loop_body]
 def apply_loop.body
@@ -983,7 +983,7 @@ def apply_loop.body
   else ok (done s)
 
 /-- [inbox_kernel::apply]: loop 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 306:12-309:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 319:12-322:13
     Visibility: public -/
 @[rust_loop]
 def apply_loop
@@ -995,7 +995,7 @@ def apply_loop
     (s, i)
 
 /-- [inbox_kernel::apply]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 303:8-311:9
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 316:8-324:9
     Visibility: public -/
 def apply (snap : Snapshot) (ws : alloc.vec.Vec Write) : Result Snapshot := do
   let s ← Snapshot.Insts.CoreCloneClone.clone snap
@@ -1018,7 +1018,7 @@ def sql_write
     alloc.vec.Vec.push out w1
 
 /-- [inbox_kernel::sql_writes]: loop body 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 317:12-320:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 330:12-333:13
     Visibility: public -/
 @[rust_loop_body]
 def sql_writes_loop.body
@@ -1038,7 +1038,7 @@ def sql_writes_loop.body
   else ok (done out)
 
 /-- [inbox_kernel::sql_writes]: loop 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 317:12-320:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 330:12-333:13
     Visibility: public -/
 @[rust_loop]
 def sql_writes_loop
@@ -1051,7 +1051,7 @@ def sql_writes_loop
     (out, i)
 
 /-- [inbox_kernel::sql_writes]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 314:8-322:9
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 327:8-335:9
     Visibility: public -/
 @[reducible]
 def sql_writes

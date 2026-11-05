@@ -145,14 +145,14 @@ structure Principal where
   user : Std.U64
 
 /-- [calculator_kernel::Memory]
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 95:12-98:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 108:12-111:13
     Visibility: public -/
 structure Memory where
   user : Std.U64
   value : Std.U64
 
 /-- [calculator_kernel::Snapshot]
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 278:8-280:9
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 291:8-293:9
     Visibility: public -/
 structure Snapshot where
   memories : alloc.vec.Vec Memory
@@ -311,7 +311,7 @@ def transition
     ok (core.result.Result.Ok (none, Reply.Value i))
 
 /-- [calculator_kernel::{calculator_kernel::Memory}::put]: loop body 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 220:16-228:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 233:16-241:13
     Visibility: public -/
 @[rust_loop_body]
 def Memory.put_loop.body
@@ -336,7 +336,7 @@ def Memory.put_loop.body
        ok (done v1)
 
 /-- [calculator_kernel::{calculator_kernel::Memory}::put]: loop 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 220:16-228:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 233:16-241:13
     Visibility: public -/
 @[rust_loop]
 def Memory.put_loop
@@ -348,7 +348,7 @@ def Memory.put_loop
     i
 
 /-- [calculator_kernel::{calculator_kernel::Memory}::put]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 218:12-228:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 231:12-241:13
     Visibility: public -/
 @[reducible]
 def Memory.put
@@ -366,7 +366,7 @@ def apply (snap : Snapshot) (w : Option Memory) : Result Snapshot := do
               ok { memories := v }
 
 /-- [calculator_kernel::{calculator_kernel::Memory}::to_row]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 138:12-143:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 151:12-156:13
     Visibility: public -/
 def Memory.to_row
   (self : Memory) : Result (alloc.vec.Vec h5i_app_sql.Val) := do
@@ -376,17 +376,17 @@ def Memory.to_row
   alloc.vec.Vec.push out v1
 
 /-- [calculator_kernel::{calculator_kernel::Memory}::KEY_LEN]
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 136:12-136:62
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 149:12-149:62
     Visibility: public -/
 @[global_simps, irreducible] def Memory.KEY_LEN : Std.U32 := 1#u32
 
 /-- [calculator_kernel::{calculator_kernel::Memory}::TABLE]
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 135:12-135:60
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 148:12-148:60
     Visibility: public -/
 @[global_simps, irreducible] def Memory.TABLE : Std.U32 := 0#u32
 
 /-- [calculator_kernel::{calculator_kernel::Memory}::sql_put]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 189:12-191:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 202:12-204:13
     Visibility: public -/
 def Memory.sql_put (self : Memory) : Result h5i_app_sql.Write := do
   let v ← Memory.to_row self
@@ -413,7 +413,7 @@ def read_only (cmd : Command) : Result Bool := do
   | Command.Get => ok true
 
 /-- [calculator_kernel::{calculator_kernel::Memory}::from_row]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 146:12-167:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 159:12-180:13
     Visibility: public -/
 def Memory.from_row
   (row : alloc.vec.Vec h5i_app_sql.Val) : Result (Option Memory) := do
@@ -440,7 +440,7 @@ def Memory.from_row
                    ok (some { user := x, value := x1 })
 
 /-- [calculator_kernel::{calculator_kernel::Memory}::from_rows]: loop body 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 174:16-180:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 187:16-193:17
     Visibility: public -/
 @[rust_loop_body]
 def Memory.from_rows_loop.body
@@ -467,7 +467,7 @@ def Memory.from_rows_loop.body
   else ok (done (out, ok1))
 
 /-- [calculator_kernel::{calculator_kernel::Memory}::from_rows]: loop 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 174:16-180:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 187:16-193:17
     Visibility: public -/
 @[rust_loop]
 def Memory.from_rows_loop
@@ -480,7 +480,7 @@ def Memory.from_rows_loop
     (out, ok1, i)
 
 /-- [calculator_kernel::{calculator_kernel::Memory}::from_rows]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 170:12-186:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 183:12-199:13
     Visibility: public -/
 def Memory.from_rows
   (rows : alloc.vec.Vec (alloc.vec.Vec h5i_app_sql.Val)) :
@@ -493,7 +493,7 @@ def Memory.from_rows
   else ok none
 
 /-- [calculator_kernel::{calculator_kernel::Memory}::del]: loop body 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 234:16-239:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 247:16-252:17
     Visibility: public -/
 @[rust_loop_body]
 def Memory.del_loop.body
@@ -519,7 +519,7 @@ def Memory.del_loop.body
   else ok (done out)
 
 /-- [calculator_kernel::{calculator_kernel::Memory}::del]: loop 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 234:16-239:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 247:16-252:17
     Visibility: public -/
 @[rust_loop]
 def Memory.del_loop
@@ -532,7 +532,7 @@ def Memory.del_loop
     (out, i)
 
 /-- [calculator_kernel::{calculator_kernel::Memory}::del]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 231:12-241:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 244:12-254:13
     Visibility: public -/
 @[reducible]
 def Memory.del
@@ -542,7 +542,7 @@ def Memory.del
   Memory.del_loop v user (alloc.vec.Vec.new Memory) 0#usize
 
 /-- [calculator_kernel::{calculator_kernel::Memory}::del_where]: loop body 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 247:16-252:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 260:16-265:17
     Visibility: public -/
 @[rust_loop_body]
 def Memory.del_where_loop.body
@@ -570,7 +570,7 @@ def Memory.del_where_loop.body
   else ok (done out)
 
 /-- [calculator_kernel::{calculator_kernel::Memory}::del_where]: loop 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 247:16-252:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 260:16-265:17
     Visibility: public -/
 @[rust_loop]
 def Memory.del_where_loop
@@ -583,7 +583,7 @@ def Memory.del_where_loop
     (out, i)
 
 /-- [calculator_kernel::{calculator_kernel::Memory}::del_where]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 244:12-254:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 257:12-267:13
     Visibility: public -/
 @[reducible]
 def Memory.del_where
@@ -593,7 +593,7 @@ def Memory.del_where
   Memory.del_where_loop v col val (alloc.vec.Vec.new Memory) 0#usize
 
 /-- [calculator_kernel::{calculator_kernel::Memory}::sql_del]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 257:12-261:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 270:12-274:13
     Visibility: public -/
 def Memory.sql_del (user : Std.U64) : Result h5i_app_sql.Write := do
   let v ← U64.Insts.H5i_app_sqlColumn.to_val user
@@ -601,20 +601,20 @@ def Memory.sql_del (user : Std.U64) : Result h5i_app_sql.Write := do
   ok (h5i_app_sql.Write.Del Memory.TABLE key)
 
 /-- [calculator_kernel::{calculator_kernel::Memory}::sql_del_where]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 264:12-266:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 277:12-279:13
     Visibility: public -/
 def Memory.sql_del_where
   (col : Std.U32) (val : h5i_app_sql.Val) : Result h5i_app_sql.Write := do
   ok (h5i_app_sql.Write.DelWhere Memory.TABLE col val)
 
 /-- [calculator_kernel::Rows]
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 284:8-286:9
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 297:8-299:9
     Visibility: public -/
 structure Rows where
   memories : alloc.vec.Vec (alloc.vec.Vec h5i_app_sql.Val)
 
 /-- [calculator_kernel::decode]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 289:8-297:9
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 302:8-310:9
     Visibility: public -/
 def decode (r : Rows) : Result (Option Snapshot) := do
   let o ← Memory.from_rows r.memories

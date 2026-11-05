@@ -187,7 +187,7 @@ inductive h5i_app_sql.Write where
 | DelWhere : Std.U32 → Std.U32 → h5i_app_sql.Val → h5i_app_sql.Write
 
 /-- [parallel_kernel::Bookmark]
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 95:12-98:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 108:12-111:13
     Visibility: public -/
 structure Bookmark where
   id : Std.U64
@@ -195,7 +195,7 @@ structure Bookmark where
   tags : Std.U64
 
 /-- [parallel_kernel::Event]
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 95:12-98:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 108:12-111:13
     Visibility: public -/
 structure Event where
   id : Std.U64
@@ -205,7 +205,7 @@ structure Event where
   power : Std.U64
 
 /-- [parallel_kernel::Rule]
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 95:12-98:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 108:12-111:13
     Visibility: public -/
 structure Rule where
   id : Std.U64
@@ -217,37 +217,37 @@ structure Rule where
   display : Bool
 
 /-- [parallel_kernel::{parallel_kernel::Bookmark}::TABLE]
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 135:12-135:60
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 148:12-148:60
     Visibility: public -/
 @[global_simps, irreducible] def Bookmark.TABLE : Std.U32 := 0#u32
 
 /-- [parallel_kernel::{parallel_kernel::Event}::TABLE]
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 135:12-135:60
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 148:12-148:60
     Visibility: public -/
 @[global_simps, irreducible] def Event.TABLE : Std.U32 := 1#u32
 
 /-- [parallel_kernel::{parallel_kernel::Rule}::TABLE]
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 135:12-135:60
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 148:12-148:60
     Visibility: public -/
 @[global_simps, irreducible] def Rule.TABLE : Std.U32 := 2#u32
 
 /-- [parallel_kernel::{parallel_kernel::Bookmark}::KEY_LEN]
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 136:12-136:62
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 149:12-149:62
     Visibility: public -/
 @[global_simps, irreducible] def Bookmark.KEY_LEN : Std.U32 := 1#u32
 
 /-- [parallel_kernel::{parallel_kernel::Event}::KEY_LEN]
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 136:12-136:62
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 149:12-149:62
     Visibility: public -/
 @[global_simps, irreducible] def Event.KEY_LEN : Std.U32 := 1#u32
 
 /-- [parallel_kernel::{parallel_kernel::Rule}::KEY_LEN]
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 136:12-136:62
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 149:12-149:62
     Visibility: public -/
 @[global_simps, irreducible] def Rule.KEY_LEN : Std.U32 := 1#u32
 
 /-- [parallel_kernel::{parallel_kernel::Bookmark}::to_row]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 138:12-143:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 151:12-156:13
     Visibility: public -/
 def Bookmark.to_row
   (self : Bookmark) : Result (alloc.vec.Vec h5i_app_sql.Val) := do
@@ -259,7 +259,7 @@ def Bookmark.to_row
   alloc.vec.Vec.push out1 v2
 
 /-- [parallel_kernel::{parallel_kernel::Event}::to_row]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 138:12-143:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 151:12-156:13
     Visibility: public -/
 def Event.to_row (self : Event) : Result (alloc.vec.Vec h5i_app_sql.Val) := do
   let v ← U64.Insts.H5i_app_sqlColumn.to_val self.id
@@ -274,7 +274,7 @@ def Event.to_row (self : Event) : Result (alloc.vec.Vec h5i_app_sql.Val) := do
   alloc.vec.Vec.push out3 v4
 
 /-- [parallel_kernel::{parallel_kernel::Rule}::to_row]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 138:12-143:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 151:12-156:13
     Visibility: public -/
 def Rule.to_row (self : Rule) : Result (alloc.vec.Vec h5i_app_sql.Val) := do
   let v ← U64.Insts.H5i_app_sqlColumn.to_val self.id
@@ -293,7 +293,7 @@ def Rule.to_row (self : Rule) : Result (alloc.vec.Vec h5i_app_sql.Val) := do
   alloc.vec.Vec.push out5 v6
 
 /-- [parallel_kernel::{parallel_kernel::Bookmark}::from_row]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 146:12-167:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 159:12-180:13
     Visibility: public -/
 def Bookmark.from_row
   (row : alloc.vec.Vec h5i_app_sql.Val) : Result (Option Bookmark) := do
@@ -330,7 +330,7 @@ def Bookmark.from_row
           ok (some { id := x, text := x1, tags := x2 })
 
 /-- [parallel_kernel::{parallel_kernel::Event}::from_row]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 146:12-167:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 159:12-180:13
     Visibility: public -/
 def Event.from_row
   (row : alloc.vec.Vec h5i_app_sql.Val) : Result (Option Event) := do
@@ -392,7 +392,7 @@ def Event.from_row
                 })
 
 /-- [parallel_kernel::{parallel_kernel::Rule}::from_row]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 146:12-167:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 159:12-180:13
     Visibility: public -/
 def Rule.from_row
   (row : alloc.vec.Vec h5i_app_sql.Val) : Result (Option Rule) := do
@@ -474,7 +474,7 @@ def Rule.from_row
                     })
 
 /-- [parallel_kernel::{parallel_kernel::Bookmark}::from_rows]: loop body 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 174:16-180:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 187:16-193:17
     Visibility: public -/
 @[rust_loop_body]
 def Bookmark.from_rows_loop.body
@@ -501,7 +501,7 @@ def Bookmark.from_rows_loop.body
   else ok (done (out, ok1))
 
 /-- [parallel_kernel::{parallel_kernel::Bookmark}::from_rows]: loop 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 174:16-180:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 187:16-193:17
     Visibility: public -/
 @[rust_loop]
 def Bookmark.from_rows_loop
@@ -514,7 +514,7 @@ def Bookmark.from_rows_loop
     (out, ok1, i)
 
 /-- [parallel_kernel::{parallel_kernel::Bookmark}::from_rows]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 170:12-186:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 183:12-199:13
     Visibility: public -/
 def Bookmark.from_rows
   (rows : alloc.vec.Vec (alloc.vec.Vec h5i_app_sql.Val)) :
@@ -527,7 +527,7 @@ def Bookmark.from_rows
   else ok none
 
 /-- [parallel_kernel::{parallel_kernel::Event}::from_rows]: loop body 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 174:16-180:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 187:16-193:17
     Visibility: public -/
 @[rust_loop_body]
 def Event.from_rows_loop.body
@@ -554,7 +554,7 @@ def Event.from_rows_loop.body
   else ok (done (out, ok1))
 
 /-- [parallel_kernel::{parallel_kernel::Event}::from_rows]: loop 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 174:16-180:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 187:16-193:17
     Visibility: public -/
 @[rust_loop]
 def Event.from_rows_loop
@@ -567,7 +567,7 @@ def Event.from_rows_loop
     (out, ok1, i)
 
 /-- [parallel_kernel::{parallel_kernel::Event}::from_rows]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 170:12-186:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 183:12-199:13
     Visibility: public -/
 def Event.from_rows
   (rows : alloc.vec.Vec (alloc.vec.Vec h5i_app_sql.Val)) :
@@ -580,7 +580,7 @@ def Event.from_rows
   else ok none
 
 /-- [parallel_kernel::{parallel_kernel::Rule}::from_rows]: loop body 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 174:16-180:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 187:16-193:17
     Visibility: public -/
 @[rust_loop_body]
 def Rule.from_rows_loop.body
@@ -607,7 +607,7 @@ def Rule.from_rows_loop.body
   else ok (done (out, ok1))
 
 /-- [parallel_kernel::{parallel_kernel::Rule}::from_rows]: loop 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 174:16-180:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 187:16-193:17
     Visibility: public -/
 @[rust_loop]
 def Rule.from_rows_loop
@@ -620,7 +620,7 @@ def Rule.from_rows_loop
     (out, ok1, i)
 
 /-- [parallel_kernel::{parallel_kernel::Rule}::from_rows]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 170:12-186:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 183:12-199:13
     Visibility: public -/
 def Rule.from_rows
   (rows : alloc.vec.Vec (alloc.vec.Vec h5i_app_sql.Val)) :
@@ -633,28 +633,28 @@ def Rule.from_rows
   else ok none
 
 /-- [parallel_kernel::{parallel_kernel::Bookmark}::sql_put]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 189:12-191:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 202:12-204:13
     Visibility: public -/
 def Bookmark.sql_put (self : Bookmark) : Result h5i_app_sql.Write := do
   let v ← Bookmark.to_row self
   ok (h5i_app_sql.Write.Put Bookmark.TABLE Bookmark.KEY_LEN v)
 
 /-- [parallel_kernel::{parallel_kernel::Event}::sql_put]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 189:12-191:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 202:12-204:13
     Visibility: public -/
 def Event.sql_put (self : Event) : Result h5i_app_sql.Write := do
   let v ← Event.to_row self
   ok (h5i_app_sql.Write.Put Event.TABLE Event.KEY_LEN v)
 
 /-- [parallel_kernel::{parallel_kernel::Rule}::sql_put]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 189:12-191:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 202:12-204:13
     Visibility: public -/
 def Rule.sql_put (self : Rule) : Result h5i_app_sql.Write := do
   let v ← Rule.to_row self
   ok (h5i_app_sql.Write.Put Rule.TABLE Rule.KEY_LEN v)
 
 /-- [parallel_kernel::{parallel_kernel::Bookmark}::put]: loop body 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 220:16-228:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 233:16-241:13
     Visibility: public -/
 @[rust_loop_body]
 def Bookmark.put_loop.body
@@ -679,7 +679,7 @@ def Bookmark.put_loop.body
        ok (done v1)
 
 /-- [parallel_kernel::{parallel_kernel::Bookmark}::put]: loop 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 220:16-228:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 233:16-241:13
     Visibility: public -/
 @[rust_loop]
 def Bookmark.put_loop
@@ -691,7 +691,7 @@ def Bookmark.put_loop
     i
 
 /-- [parallel_kernel::{parallel_kernel::Bookmark}::put]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 218:12-228:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 231:12-241:13
     Visibility: public -/
 @[reducible]
 def Bookmark.put
@@ -701,7 +701,7 @@ def Bookmark.put
   Bookmark.put_loop v x 0#usize
 
 /-- [parallel_kernel::{parallel_kernel::Event}::put]: loop body 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 220:16-228:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 233:16-241:13
     Visibility: public -/
 @[rust_loop_body]
 def Event.put_loop.body
@@ -726,7 +726,7 @@ def Event.put_loop.body
        ok (done v1)
 
 /-- [parallel_kernel::{parallel_kernel::Event}::put]: loop 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 220:16-228:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 233:16-241:13
     Visibility: public -/
 @[rust_loop]
 def Event.put_loop
@@ -738,7 +738,7 @@ def Event.put_loop
     i
 
 /-- [parallel_kernel::{parallel_kernel::Event}::put]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 218:12-228:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 231:12-241:13
     Visibility: public -/
 @[reducible]
 def Event.put
@@ -746,7 +746,7 @@ def Event.put
   Event.put_loop v x 0#usize
 
 /-- [parallel_kernel::{parallel_kernel::Rule}::put]: loop body 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 220:16-228:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 233:16-241:13
     Visibility: public -/
 @[rust_loop_body]
 def Rule.put_loop.body
@@ -771,7 +771,7 @@ def Rule.put_loop.body
        ok (done v1)
 
 /-- [parallel_kernel::{parallel_kernel::Rule}::put]: loop 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 220:16-228:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 233:16-241:13
     Visibility: public -/
 @[rust_loop]
 def Rule.put_loop
@@ -783,7 +783,7 @@ def Rule.put_loop
     i
 
 /-- [parallel_kernel::{parallel_kernel::Rule}::put]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 218:12-228:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 231:12-241:13
     Visibility: public -/
 @[reducible]
 def Rule.put
@@ -801,7 +801,7 @@ def Bookmark.Insts.CoreCloneClone.clone
   ok { id := i, text := v, tags := i1 }
 
 /-- [parallel_kernel::{parallel_kernel::Bookmark}::del]: loop body 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 234:16-239:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 247:16-252:17
     Visibility: public -/
 @[rust_loop_body]
 def Bookmark.del_loop.body
@@ -827,7 +827,7 @@ def Bookmark.del_loop.body
   else ok (done out)
 
 /-- [parallel_kernel::{parallel_kernel::Bookmark}::del]: loop 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 234:16-239:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 247:16-252:17
     Visibility: public -/
 @[rust_loop]
 def Bookmark.del_loop
@@ -840,7 +840,7 @@ def Bookmark.del_loop
     (out, i)
 
 /-- [parallel_kernel::{parallel_kernel::Bookmark}::del]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 231:12-241:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 244:12-254:13
     Visibility: public -/
 @[reducible]
 def Bookmark.del
@@ -861,7 +861,7 @@ def Event.Insts.CoreCloneClone.clone (self : Event) : Result Event := do
   ok { id := i, content := v, display := v1, members := i1, power := i2 }
 
 /-- [parallel_kernel::{parallel_kernel::Event}::del]: loop body 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 234:16-239:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 247:16-252:17
     Visibility: public -/
 @[rust_loop_body]
 def Event.del_loop.body
@@ -887,7 +887,7 @@ def Event.del_loop.body
   else ok (done out)
 
 /-- [parallel_kernel::{parallel_kernel::Event}::del]: loop 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 234:16-239:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 247:16-252:17
     Visibility: public -/
 @[rust_loop]
 def Event.del_loop
@@ -900,7 +900,7 @@ def Event.del_loop
     (out, i)
 
 /-- [parallel_kernel::{parallel_kernel::Event}::del]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 231:12-241:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 244:12-254:13
     Visibility: public -/
 @[reducible]
 def Event.del
@@ -930,7 +930,7 @@ def Rule.Insts.CoreCloneClone.clone (self : Rule) : Result Rule := do
     }
 
 /-- [parallel_kernel::{parallel_kernel::Rule}::del]: loop body 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 234:16-239:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 247:16-252:17
     Visibility: public -/
 @[rust_loop_body]
 def Rule.del_loop.body
@@ -955,7 +955,7 @@ def Rule.del_loop.body
   else ok (done out)
 
 /-- [parallel_kernel::{parallel_kernel::Rule}::del]: loop 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 234:16-239:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 247:16-252:17
     Visibility: public -/
 @[rust_loop]
 def Rule.del_loop
@@ -968,7 +968,7 @@ def Rule.del_loop
     (out, i)
 
 /-- [parallel_kernel::{parallel_kernel::Rule}::del]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 231:12-241:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 244:12-254:13
     Visibility: public -/
 @[reducible]
 def Rule.del
@@ -976,7 +976,7 @@ def Rule.del
   Rule.del_loop v id (alloc.vec.Vec.new Rule) 0#usize
 
 /-- [parallel_kernel::{parallel_kernel::Bookmark}::del_where]: loop body 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 247:16-252:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 260:16-265:17
     Visibility: public -/
 @[rust_loop_body]
 def Bookmark.del_where_loop.body
@@ -1004,7 +1004,7 @@ def Bookmark.del_where_loop.body
   else ok (done out)
 
 /-- [parallel_kernel::{parallel_kernel::Bookmark}::del_where]: loop 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 247:16-252:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 260:16-265:17
     Visibility: public -/
 @[rust_loop]
 def Bookmark.del_where_loop
@@ -1017,7 +1017,7 @@ def Bookmark.del_where_loop
     (out, i)
 
 /-- [parallel_kernel::{parallel_kernel::Bookmark}::del_where]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 244:12-254:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 257:12-267:13
     Visibility: public -/
 @[reducible]
 def Bookmark.del_where
@@ -1027,7 +1027,7 @@ def Bookmark.del_where
   Bookmark.del_where_loop v col val (alloc.vec.Vec.new Bookmark) 0#usize
 
 /-- [parallel_kernel::{parallel_kernel::Event}::del_where]: loop body 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 247:16-252:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 260:16-265:17
     Visibility: public -/
 @[rust_loop_body]
 def Event.del_where_loop.body
@@ -1055,7 +1055,7 @@ def Event.del_where_loop.body
   else ok (done out)
 
 /-- [parallel_kernel::{parallel_kernel::Event}::del_where]: loop 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 247:16-252:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 260:16-265:17
     Visibility: public -/
 @[rust_loop]
 def Event.del_where_loop
@@ -1068,7 +1068,7 @@ def Event.del_where_loop
     (out, i)
 
 /-- [parallel_kernel::{parallel_kernel::Event}::del_where]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 244:12-254:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 257:12-267:13
     Visibility: public -/
 @[reducible]
 def Event.del_where
@@ -1078,7 +1078,7 @@ def Event.del_where
   Event.del_where_loop v col val (alloc.vec.Vec.new Event) 0#usize
 
 /-- [parallel_kernel::{parallel_kernel::Rule}::del_where]: loop body 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 247:16-252:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 260:16-265:17
     Visibility: public -/
 @[rust_loop_body]
 def Rule.del_where_loop.body
@@ -1105,7 +1105,7 @@ def Rule.del_where_loop.body
   else ok (done out)
 
 /-- [parallel_kernel::{parallel_kernel::Rule}::del_where]: loop 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 247:16-252:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 260:16-265:17
     Visibility: public -/
 @[rust_loop]
 def Rule.del_where_loop
@@ -1118,7 +1118,7 @@ def Rule.del_where_loop
     (out, i)
 
 /-- [parallel_kernel::{parallel_kernel::Rule}::del_where]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 244:12-254:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 257:12-267:13
     Visibility: public -/
 @[reducible]
 def Rule.del_where
@@ -1128,7 +1128,7 @@ def Rule.del_where
   Rule.del_where_loop v col val (alloc.vec.Vec.new Rule) 0#usize
 
 /-- [parallel_kernel::{parallel_kernel::Bookmark}::sql_del]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 257:12-261:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 270:12-274:13
     Visibility: public -/
 def Bookmark.sql_del (id : Std.U64) : Result h5i_app_sql.Write := do
   let v ← U64.Insts.H5i_app_sqlColumn.to_val id
@@ -1136,7 +1136,7 @@ def Bookmark.sql_del (id : Std.U64) : Result h5i_app_sql.Write := do
   ok (h5i_app_sql.Write.Del Bookmark.TABLE key)
 
 /-- [parallel_kernel::{parallel_kernel::Event}::sql_del]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 257:12-261:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 270:12-274:13
     Visibility: public -/
 def Event.sql_del (id : Std.U64) : Result h5i_app_sql.Write := do
   let v ← U64.Insts.H5i_app_sqlColumn.to_val id
@@ -1144,7 +1144,7 @@ def Event.sql_del (id : Std.U64) : Result h5i_app_sql.Write := do
   ok (h5i_app_sql.Write.Del Event.TABLE key)
 
 /-- [parallel_kernel::{parallel_kernel::Rule}::sql_del]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 257:12-261:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 270:12-274:13
     Visibility: public -/
 def Rule.sql_del (id : Std.U64) : Result h5i_app_sql.Write := do
   let v ← U64.Insts.H5i_app_sqlColumn.to_val id
@@ -1152,28 +1152,28 @@ def Rule.sql_del (id : Std.U64) : Result h5i_app_sql.Write := do
   ok (h5i_app_sql.Write.Del Rule.TABLE key)
 
 /-- [parallel_kernel::{parallel_kernel::Bookmark}::sql_del_where]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 264:12-266:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 277:12-279:13
     Visibility: public -/
 def Bookmark.sql_del_where
   (col : Std.U32) (val : h5i_app_sql.Val) : Result h5i_app_sql.Write := do
   ok (h5i_app_sql.Write.DelWhere Bookmark.TABLE col val)
 
 /-- [parallel_kernel::{parallel_kernel::Event}::sql_del_where]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 264:12-266:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 277:12-279:13
     Visibility: public -/
 def Event.sql_del_where
   (col : Std.U32) (val : h5i_app_sql.Val) : Result h5i_app_sql.Write := do
   ok (h5i_app_sql.Write.DelWhere Event.TABLE col val)
 
 /-- [parallel_kernel::{parallel_kernel::Rule}::sql_del_where]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 264:12-266:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 277:12-279:13
     Visibility: public -/
 def Rule.sql_del_where
   (col : Std.U32) (val : h5i_app_sql.Val) : Result h5i_app_sql.Write := do
   ok (h5i_app_sql.Write.DelWhere Rule.TABLE col val)
 
 /-- [parallel_kernel::Snapshot]
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 278:8-280:9
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 291:8-293:9
     Visibility: public -/
 structure Snapshot where
   bookmarks : alloc.vec.Vec Bookmark
@@ -1181,7 +1181,7 @@ structure Snapshot where
   rules : alloc.vec.Vec Rule
 
 /-- [parallel_kernel::Rows]
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 284:8-286:9
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 297:8-299:9
     Visibility: public -/
 structure Rows where
   bookmarks : alloc.vec.Vec (alloc.vec.Vec h5i_app_sql.Val)
@@ -1189,7 +1189,7 @@ structure Rows where
   rules : alloc.vec.Vec (alloc.vec.Vec h5i_app_sql.Val)
 
 /-- [parallel_kernel::decode]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 289:8-297:9
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 302:8-310:9
     Visibility: public -/
 def decode (r : Rows) : Result (Option Snapshot) := do
   let o ← Bookmark.from_rows r.bookmarks
