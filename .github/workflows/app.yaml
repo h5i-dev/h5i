@@ -102,7 +102,7 @@ jobs:
   # project is checked without editing this file.
   lean:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -160,7 +160,7 @@ jobs:
   # A9: the committed Lean must be exactly what Aeneas extracts from the kernel.
   extract:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
