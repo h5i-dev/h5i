@@ -32,6 +32,11 @@ theorem colon_val : COLON.val = 58 := by unfold COLON; rfl
 theorem usize_bne_true (x y : Usize) : ((x != y) = true) ↔ x.val ≠ y.val := by
   simp [bne_iff_ne]
 
+theorem u16_ne_iff (a b : U16) : a ≠ b ↔ a.val ≠ b.val := by
+  constructor
+  · intro h h'; exact h (by scalar_tac)
+  · rintro h rfl; exact h rfl
+
 theorem u8_eq_iff' (a b : U8) : a = b ↔ a.val = b.val := by
   constructor
   · rintro rfl; rfl
@@ -1142,6 +1147,14 @@ theorem put_reason_W (o out : Slice U8) (bs : List Nat) (pos : Usize) (status : 
     put_reason o pos status ⦃ _ _ => True ⦄ := by
   unfold put_reason; split <;> step*
 
+@[step] theorem has_body_spec (status : U16) :
+    has_body status ⦃ b => b = Spec.hasBody status.val ⦄ := by
+  unfold has_body Spec.hasBody
+  split_ifs <;> simp only [WP.spec_ok, UScalar.lt_equiv, UScalar.ofNatCore_val_eq] at * <;> (try omega)
+  all_goals (rw [Bool.eq_iff_iff]; simp only [bne_iff_ne, ne_eq, Bool.and_eq_true, UScalar.eq_equiv,
+    UScalar.ofNatCore_val_eq] at *; simp_all)
+
+set_option maxHeartbeats 2000000 in
 /-- `write_head` never panics, for every buffer (of any length), status,
 content type and body length. -/
 theorem write_head_total (out : Slice U8) (status : U16) (ct : Slice U8) (bl : U32) (close : Bool) :
@@ -1151,6 +1164,9 @@ theorem write_head_total (out : Slice U8) (status : U16) (ct : Slice U8) (bl : U
     refine ⟨le_refl _, fun k hk _ => ?_⟩
     simp [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hk]
   step*
+  all_goals (try (split <;> step*))
+  all_goals (try (split <;> step*))
+  all_goals (try (split <;> step*))
   all_goals (try (split <;> step*))
   all_goals (try (split <;> step*))
   all_goals (try (split <;> step*))

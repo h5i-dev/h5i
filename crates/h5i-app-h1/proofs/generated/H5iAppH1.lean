@@ -1608,8 +1608,18 @@ def put_dec
   let s ← lift (Array.to_slice digits1)
   put_n out pos s nd
 
+/-- [h5i_app_h1::has_body]:
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 756:0-758:1
+    Visibility: public -/
+def has_body (status : Std.U16) : Result Bool := do
+  if status < 200#u16
+  then ok false
+  else if status != 204#u16
+       then ok (status != 304#u16)
+       else ok false
+
 /-- [h5i_app_h1::write_head]:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 768:0-836:1
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 776:0-849:1
     Visibility: public -/
 def write_head
   (out : Slice Std.U8) (status : Std.U16) (content_type : Slice Std.U8)
@@ -1655,6 +1665,20 @@ def write_head
                 111#u8, 110#u8, 58#u8, 32#u8, 99#u8, 108#u8, 111#u8, 115#u8,
                 101#u8, 13#u8, 10#u8
                 ]))
+          else ok (Array.to_slice (Std.Array.empty Std.U8))
+        let cl ← has_body status
+        let cl_name ←
+          if cl
+          then
+            ok (Array.to_slice
+              (Array.make 16#usize [
+                67#u8, 111#u8, 110#u8, 116#u8, 101#u8, 110#u8, 116#u8, 45#u8,
+                76#u8, 101#u8, 110#u8, 103#u8, 116#u8, 104#u8, 58#u8, 32#u8
+                ]))
+          else ok (Array.to_slice (Std.Array.empty Std.U8))
+        let cl_end ←
+          if cl
+          then ok (Array.to_slice (Array.make 2#usize [ 13#u8, 10#u8 ]))
           else ok (Array.to_slice (Std.Array.empty Std.U8))
         let s ←
           lift (Array.to_slice
@@ -1714,36 +1738,41 @@ def write_head
                           match o9 with
                           | none => ok (none, out10)
                           | some a9 =>
-                            let s2 ←
-                              lift (Array.to_slice
-                                (Array.make 16#usize [
-                                  67#u8, 111#u8, 110#u8, 116#u8, 101#u8,
-                                  110#u8, 116#u8, 45#u8, 76#u8, 101#u8, 110#u8,
-                                  103#u8, 116#u8, 104#u8, 58#u8, 32#u8
-                                  ]))
-                            let (o10, out11) ← put out10 a9 s2
+                            let (o10, out11) ← put out10 a9 cl_name
                             match o10 with
                             | none => ok (none, out11)
                             | some a10 =>
-                              let (o11, out12) ← put_dec out11 a10 body_len
-                              match o11 with
-                              | none => ok (none, out12)
-                              | some a11 =>
-                                let s3 ←
-                                  lift (Array.to_slice
-                                    (Array.make 2#usize [ 13#u8, 10#u8 ]))
-                                let (o12, out13) ← put out12 a11 s3
-                                match o12 with
-                                | none => ok (none, out13)
-                                | some a12 =>
-                                  let (o13, out14) ← put out13 a12 conn
-                                  match o13 with
-                                  | none => ok (none, out14)
-                                  | some a13 =>
-                                    let s4 ←
+                              if cl
+                              then
+                                let (o11, out12) ← put_dec out11 a10 body_len
+                                match o11 with
+                                | none => ok (none, out12)
+                                | some a11 =>
+                                  let (o12, out13) ← put out12 a11 cl_end
+                                  match o12 with
+                                  | none => ok (none, out13)
+                                  | some a12 =>
+                                    let (o13, out14) ← put out13 a12 conn
+                                    match o13 with
+                                    | none => ok (none, out14)
+                                    | some a13 =>
+                                      let s2 ←
+                                        lift (Array.to_slice
+                                          (Array.make 2#usize [ 13#u8, 10#u8 ]))
+                                      put out14 a13 s2
+                              else
+                                let (o11, out12) ← put out11 a10 cl_end
+                                match o11 with
+                                | none => ok (none, out12)
+                                | some a11 =>
+                                  let (o12, out13) ← put out12 a11 conn
+                                  match o12 with
+                                  | none => ok (none, out13)
+                                  | some a12 =>
+                                    let s2 ←
                                       lift (Array.to_slice
                                         (Array.make 2#usize [ 13#u8, 10#u8 ]))
-                                    put out14 a13 s4
+                                    put out13 a12 s2
       else ok (none, out)
 
 end h5i_app_h1

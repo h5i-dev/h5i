@@ -222,6 +222,14 @@ fn response_head() {
     assert!(out[n..].iter().all(|&c| c == b'#'));
     let n = write_head(&mut out, 431, b"", 0, true).unwrap();
     assert_eq!(&out[..n], b"HTTP/1.1 431 Request Header Fields Too Large\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+    // No Content-Length (and no body) for 1xx, 204 and 304.
+    for st in [100u16, 101, 204, 304] {
+        let n = write_head(&mut out, st, b"", 7, false).unwrap();
+        let h = core::str::from_utf8(&out[..n]).unwrap();
+        assert!(!h.contains("Content-Length") && h.ends_with("\r\n\r\n"), "{h}");
+        assert!(!has_body(st));
+    }
+    assert!(has_body(200) && has_body(205) && has_body(404));
     let n = write_head(&mut out, 299, b"", u32::MAX, false).unwrap();
     assert_eq!(&out[..n], b"HTTP/1.1 299 \r\nContent-Length: 4294967295\r\n\r\n");
     assert_eq!(write_head(&mut out, 200, b"text/plain\r\nSet-Cookie: x", 0, false), None);

@@ -751,12 +751,18 @@ fn put_n(out: &mut [u8], pos: usize, src: &[u8], n: usize) -> Option<usize> {
     Some(pos + n)
 }
 
+/// Whether a response with `status` carries a body (and `Content-Length`):
+/// not 1xx, 204 or 304.
+pub fn has_body(status: u16) -> bool {
+    if status < 200 { false } else { status != 204 && status != 304 }
+}
+
 /// Write a response head into `out`:
 ///
 /// ```text
 /// HTTP/1.1 <status> <reason>CRLF
 /// Content-Type: <content_type>CRLF        (omitted when empty)
-/// Content-Length: <body_len>CRLF
+/// Content-Length: <body_len>CRLF           (omitted for 1xx, 204 and 304)
 /// Connection: close CRLF                   (when close)
 /// CRLF
 /// ```
@@ -764,7 +770,9 @@ fn put_n(out: &mut [u8], pos: usize, src: &[u8], n: usize) -> Option<usize> {
 /// Returns the head's length, or `None` if `out` is too small, `status` is
 /// not in 100..=599, or `content_type` holds a byte that is not a field-value
 /// byte (CR, LF, NUL and other controls), so the app cannot split the
-/// response. `Content-Length` always comes from `body_len`.
+/// response. `Content-Length` always comes from `body_len`; a 1xx, 204 or 304
+/// response has no body (RFC 9112 §6.3), so it gets none and the caller must
+/// send no body bytes ([`has_body`]).
 pub fn write_head(out: &mut [u8], status: u16, content_type: &[u8], body_len: u32, close: bool) -> Option<usize> {
     if status < 100 || status > 599 {
         return None;
@@ -776,6 +784,9 @@ pub fn write_head(out: &mut [u8], status: u16, content_type: &[u8], body_len: u3
     let ct_name: &[u8] = if ct { b"Content-Type: " } else { b"" };
     let ct_end: &[u8] = if ct { b"\r\n" } else { b"" };
     let conn: &[u8] = if close { b"Connection: close\r\n" } else { b"" };
+    let cl = has_body(status);
+    let cl_name: &[u8] = if cl { b"Content-Length: " } else { b"" };
+    let cl_end: &[u8] = if cl { b"\r\n" } else { b"" };
     let mut at = match put(out, 0, b"HTTP/1.1 ") {
         None => return None,
         Some(a) => a,
@@ -816,15 +827,17 @@ pub fn write_head(out: &mut [u8], status: u16, content_type: &[u8], body_len: u3
         None => return None,
         Some(a) => a,
     };
-    at = match put(out, at, b"Content-Length: ") {
+    at = match put(out, at, cl_name) {
         None => return None,
         Some(a) => a,
     };
-    at = match put_dec(out, at, body_len) {
-        None => return None,
-        Some(a) => a,
-    };
-    at = match put(out, at, b"\r\n") {
+    if cl {
+        at = match put_dec(out, at, body_len) {
+            None => return None,
+            Some(a) => a,
+        };
+    }
+    at = match put(out, at, cl_end) {
         None => return None,
         Some(a) => a,
     };
