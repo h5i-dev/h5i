@@ -18,6 +18,8 @@ writer, and the storage path.
 | `H5iAppLib.Query` | the meaning of declarative reads, and slice lemmas for frame theorems | `crates/h5i-app-core/proofs/H5iAppLib/Query.lean` |
 | generated `PgServed`, `pg_loaded_inv` | an invariant kept by accepted write sets holds in every state of a multi-tenant database and every snapshot loaded from it | `generated/Schema.lean` |
 | `h5i_app_std::authz::guard`, `guard_viewed` | for every kernel and policy: a committed command's writes are permitted, each in the state the writes before it leave; its disclosed rows are stored as disclosed and visible; read-only commands under `guard_viewed` are noninterfering with what the view hides, and `ReadOnly.Sound` | `crates/h5i-app-std/proofs/AuthzSpecs.lean`, `generated/Authz.lean` |
+| framework-defined obligations | `H5iAppLib.Obligation`: each app's read-only, storage, panic-freedom and authorization theorems, where named or generated, have exactly the framework's statement for its extracted functions (`check` compares types); `TenantIsolation` is proven once from `Pg.compileAll_sound` and `Pg.select_sound` | `crates/h5i-app-core/proofs/H5iAppLib/Obligation.lean`, [design-app-authz.md](design-app-authz.md#obligations) |
+| `schema!` `policy` blocks | the extracted `policy::permits`, `visible` and `stored` compute `PolicySpec`, which is rendered from the block, not from the generated Rust | `generated/Schema.lean` (`examples/app/notes`) |
 
 Each server app with hand-written proofs applies `pg_loaded_inv` to its
 extracted `transition`, `sql_writes` and `decode` as `db_inv`: for the
@@ -53,7 +55,7 @@ guarantee.
 | Property | How |
 |---|---|
 | Handlers go through the kernel (A8) | App code gets `H5iApp::respond` / `Engine::execute`, never a DB handle. A `Store` gets an opaque `h5i_app_pg::Tx` with only `load_table`, `load_read`, `count_read` and `store_writes`. `cargo deny check bans` rejects database crates outside `h5i-app-pg`. `h5i_app_pg::lockdown` gives the tables to a NOLOGIN owner and row access only to the engine's role. Not confined: `H5iApp::engine()` executes as any principal, and `Engine::snapshot`/`snapshot_for` and `Engine::migrate` act outside commands (`h5i app lint` flags the first two for `[authz]` apps). A superuser bypasses all of this. |
-| Tenant isolation | Every compiled statement filters on or writes its tenant, `tenant_id` is in every primary key, and `Pg.compile_sound` proves other tenants' rows stay as they were. The engine and each `Store` must pass `K::tenant(actor)` consistently. |
+| Tenant isolation | Every compiled statement filters on or writes its tenant, `tenant_id` is in every primary key, and `Pg.compile_sound` proves other tenants' rows stay as they were; `H5iAppLib.Obligation.TenantIsolation` states it, with reads, for each app's schema. The engine and each `Store` must pass `K::tenant(actor)` consistently. |
 | Every column is persisted | `table!` must list every field to compile. |
 | Running code is the extracted code (A9) | CI re-extracts every kernel and extracted crate with pinned tools and fails on a diff. |
 

@@ -1276,6 +1276,7 @@ h5i app prove                  # extract to proofs/generated/, lake build, then 
 h5i app lint                   # routes take an Actor; no client-set identity in Command
 h5i app mutate                 # each [[mutant]] must break a proof
 h5i app mutate --auto --list   # mutants generated from the kernel's syntax
+h5i app mutate --security      # authorization bugs; each line names the proofs that broke
 ```
 
 For CI, `h5i app extract --check` changes nothing and fails if
@@ -1288,13 +1289,28 @@ theorems are only about the kernel when the generated Lean is fresh.
 on any `axiom` declaration, and on any theorem of a hand-written module that
 depends on an axiom other than `propext`, `Classical.choice` and `Quot.sound`.
 
+`check` also states the project's framework-defined obligations
+(`H5iAppLib.Obligation`: read-only soundness, panic freedom, tenant isolation,
+storage, a hand-written authorization theorem, and for a `schema!` policy its
+spec), each instantiated with the extracted functions. A theorem named for one
+under `[obligations]` (or `[authz] storage`) must have exactly that statement,
+up to definitional equality, or `check` fails and prints the expected type. An
+obligation no theorem is named for is tried by automation in a separate Lean
+run and reported `open` if that fails. `h5i app report` lists each with its
+status.
+
 `mutate` runs each mutant in a copy of the project: it edits the kernel,
 re-extracts it and rebuilds the proofs. A mutant is caught when the proofs stop
 building. One that survives is a behaviour the spec does not pin down, such as
 a theorem that holds because the kernel refuses everything. `--auto` adds
 mutants generated from the kernel's syntax: comparison boundaries, `==` and
 `!=`, `&&` and `||`, dropped `!`, and `if` conditions forced to `true` or
-`false`.
+`false`. `--security` adds authorization bugs: a conjunct of a hand-written
+`Policy::permits` dropped, `visible` or `stored` made `true`, a comparison with
+the actor made `true`, the guard removed or its write check skipped, every
+principal put in tenant 0, and for a policy from `schema!` the same changes made
+to its generator. Each caught mutant's line names the declarations whose proofs
+broke.
 
 `[authz] guarded` opts a kernel into framework-proven authorization
 ([`docs/design/design-app-authz.md`](design/design-app-authz.md)). The kernel invokes
@@ -1309,7 +1325,8 @@ instantiating the framework's theorem, with no hand-written Lean,
 `apply`) and `Committed.pg_stored` (the kernel's `sql_writes` and `decode`
 store and load what that `apply` computes). If `sql_write` is not a plain
 list of `schema!` table writes, `extract` fails unless
-`[authz] storage = "<theorem>"` names a hand-written storage proof. `check`
+`[authz] storage = "<theorem>"` names a hand-written storage proof, which
+`check` requires to state `H5iAppLib.Obligation.Storage` for the kernel. `check`
 builds `Authz` itself and gates these and `<fn>.read_only_sound`. `lint`
 flags a hand-written `impl Kernel`, `impl Store` or `impl AuthzKernel` and a
 kernel without exactly one `h5i_app_std::authz_kernel!` (hygiene: those two
@@ -1336,6 +1353,12 @@ guarded = ["guarded_transition"]   # written by h5i_app_std::authz_kernel! (guar
 
 [check]
 theorems = ["my_kernel.inv_preserved"]   # must exist and pass the gate
+
+[obligations]                            # each must state exactly H5iAppLib.Obligation.<X> for this kernel
+read-only = "my_kernel.ReadOnly.sound"   # ReadOnlySound: required when a Kernel overrides read_only
+panic-free = "my_kernel.panic_free"      # PanicFree
+# authorized = "..."                     # Authorized, with the app's own allowed/visible (printed)
+# storage = "..."                        # Storage; the same slot as [authz] storage
 
 [mutate]
 targets = ["Theorems"]        # Lake targets a mutant must break (default: all)

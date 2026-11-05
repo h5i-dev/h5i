@@ -111,7 +111,7 @@
       <p class="crumbs"><a href="/">h5i</a><i>/</i><a href="/guides/">docs</a><i>/</i><span>manual</span></p>
       <p class="post-eyebrow">CLI reference</p>
       <h1>h5i Manual</h1>
-      <p class="manual-meta"><span>Updated <time datetime="2026-10-28">2026-10-28</time></span><i>|</i><span>56 min read</span><i>|</i><span class="ok">21 chapters</span></p>
+      <p class="manual-meta"><span>Updated <time datetime="2026-10-28">2026-10-28</time></span><i>|</i><span>57 min read</span><i>|</i><span class="ok">21 chapters</span></p>
       <details class="manual-mobile-toc"><summary>Chapters</summary>
 <div class="mn-group"><p class="mn-head">Start here</p>
 <a href="#what-h5i-is"><span class="mn-n">01</span><span>What h5i is</span></a>
@@ -1570,6 +1570,7 @@ h5i app prove                  # extract to proofs/generated/, lake build, then 
 h5i app lint                   # routes take an Actor; no client-set identity in Command
 h5i app mutate                 # each [[mutant]] must break a proof
 h5i app mutate --auto --list   # mutants generated from the kernel's syntax
+h5i app mutate --security      # authorization bugs; each line names the proofs that broke
 </code></pre></div>
 <p>For CI, <code>h5i app extract --check</code> changes nothing and fails if
 <code>proofs/generated/</code> is not what the kernel extracts to, and <code>--all</code> runs a verb
@@ -1579,13 +1580,27 @@ theorems are only about the kernel when the generated Lean is fresh.</p>
 <p><code>check</code> (and <code>prove</code>) fail on <code>sorry</code> or <code>native_decide</code> in hand-written Lean,
 on any <code>axiom</code> declaration, and on any theorem of a hand-written module that
 depends on an axiom other than <code>propext</code>, <code>Classical.choice</code> and <code>Quot.sound</code>.</p>
+<p><code>check</code> also states the project's framework-defined obligations
+(<code>H5iAppLib.Obligation</code>: read-only soundness, panic freedom, tenant isolation,
+storage, a hand-written authorization theorem, and for a <code>schema!</code> policy its
+spec), each instantiated with the extracted functions. A theorem named for one
+under <code>[obligations]</code> (or <code>[authz] storage</code>) must have exactly that statement,
+up to definitional equality, or <code>check</code> fails and prints the expected type. An
+obligation no theorem is named for is tried by automation in a separate Lean
+run and reported <code>open</code> if that fails. <code>h5i app report</code> lists each with its
+status.</p>
 <p><code>mutate</code> runs each mutant in a copy of the project: it edits the kernel,
 re-extracts it and rebuilds the proofs. A mutant is caught when the proofs stop
 building. One that survives is a behaviour the spec does not pin down, such as
 a theorem that holds because the kernel refuses everything. <code>--auto</code> adds
 mutants generated from the kernel's syntax: comparison boundaries, <code>==</code> and
 <code>!=</code>, <code>&amp;&amp;</code> and <code>||</code>, dropped <code>!</code>, and <code>if</code> conditions forced to <code>true</code> or
-<code>false</code>.</p>
+<code>false</code>. <code>--security</code> adds authorization bugs: a conjunct of a hand-written
+<code>Policy::permits</code> dropped, <code>visible</code> or <code>stored</code> made <code>true</code>, a comparison with
+the actor made <code>true</code>, the guard removed or its write check skipped, every
+principal put in tenant 0, and for a policy from <code>schema!</code> the same changes made
+to its generator. Each caught mutant's line names the declarations whose proofs
+broke.</p>
 <p><code>[authz] guarded</code> opts a kernel into framework-proven authorization
 (<a href="https://github.com/h5i-dev/h5i/blob/main/docs/design/design-app-authz.md"><code>docs/design/design-app-authz.md</code></a>). The kernel invokes
 <code>h5i_app_std::authz_kernel!</code>, which writes <code>guarded_transition</code> (the only
@@ -1599,7 +1614,8 @@ instantiating the framework's theorem, with no hand-written Lean,
 <code>apply</code>) and <code>Committed.pg_stored</code> (the kernel's <code>sql_writes</code> and <code>decode</code>
 store and load what that <code>apply</code> computes). If <code>sql_write</code> is not a plain
 list of <code>schema!</code> table writes, <code>extract</code> fails unless
-<code>[authz] storage = "&lt;theorem&gt;"</code> names a hand-written storage proof. <code>check</code>
+<code>[authz] storage = "&lt;theorem&gt;"</code> names a hand-written storage proof, which
+<code>check</code> requires to state <code>H5iAppLib.Obligation.Storage</code> for the kernel. <code>check</code>
 builds <code>Authz</code> itself and gates these and <code>&lt;fn&gt;.read_only_sound</code>. <code>lint</code>
 flags a hand-written <code>impl Kernel</code>, <code>impl Store</code> or <code>impl AuthzKernel</code> and a
 kernel without exactly one <code>h5i_app_std::authz_kernel!</code> (hygiene: those two
@@ -1623,6 +1639,12 @@ guarded = [&quot;guarded_transition&quot;]   # written by h5i_app_std::authz_ker
 
 [check]
 theorems = [&quot;my_kernel.inv_preserved&quot;]   # must exist and pass the gate
+
+[obligations]                            # each must state exactly H5iAppLib.Obligation.&lt;X&gt; for this kernel
+read-only = &quot;my_kernel.ReadOnly.sound&quot;   # ReadOnlySound: required when a Kernel overrides read_only
+panic-free = &quot;my_kernel.panic_free&quot;      # PanicFree
+# authorized = &quot;...&quot;                     # Authorized, with the app's own allowed/visible (printed)
+# storage = &quot;...&quot;                        # Storage; the same slot as [authz] storage
 
 [mutate]
 targets = [&quot;Theorems&quot;]        # Lake targets a mutant must break (default: all)
@@ -2300,7 +2322,7 @@ once that session has ended, so group by <code>project</code> or <code>id</code>
     <dl class="ma-meta">
       <div><dt>Updated</dt><dd>2026-10-28</dd></div>
       <div><dt>Chapters</dt><dd>21</dd></div>
-      <div><dt>Reading</dt><dd>56 min</dd></div>
+      <div><dt>Reading</dt><dd>57 min</dd></div>
       <div><dt>Flags</dt><dd><code>--help</code></dd></div>
       <div><dt>Source</dt><dd><a href="https://github.com/h5i-dev/h5i/blob/main/docs/MANUAL.md">MANUAL.md &#8599;</a></dd></div>
     </dl>
