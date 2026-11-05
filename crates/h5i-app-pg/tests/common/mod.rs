@@ -330,19 +330,13 @@ pub struct Db {
     pub base_url: String,
 }
 
-/// The test database, or `None` after printing "skipping" (which
-/// `scripts/app/ci-rust-tests.sh` turns into a failure).
+/// The test database, or `None` after printing "skipping" (`test_env`; with
+/// `H5I_APP_TEST_REQUIRE_DB` set, as in CI, a missing URL panics instead).
 pub async fn setup(name: &str) -> Option<Db> {
-    let Ok(base_url) = std::env::var("H5I_APP_TEST_DATABASE_URL") else {
-        eprintln!("H5I_APP_TEST_DATABASE_URL not set; skipping");
-        return None;
-    };
+    let base_url = h5i_app_pg::test_env("H5I_APP_TEST_DATABASE_URL")?;
     // Terminating backends and reading every backend's locks needs a
     // superuser (or pg_signal_backend and pg_read_all_stats).
-    let Ok(admin_url) = std::env::var("H5I_APP_TEST_ADMIN_URL") else {
-        eprintln!("H5I_APP_TEST_ADMIN_URL not set; skipping");
-        return None;
-    };
+    let admin_url = h5i_app_pg::test_env("H5I_APP_TEST_ADMIN_URL")?;
     let admin = Arc::new(connect(&admin_url).await);
     admin.batch_execute(&format!("DROP SCHEMA IF EXISTS {name} CASCADE")).await.unwrap();
     let url = format!("{}&application_name={name}", h5i_app_pg::with_schema(&base_url, name).unwrap());

@@ -55,6 +55,8 @@ jobs:
       # The service's own user is a superuser: h5i-app-pg's fault tests
       # terminate backends and read every backend's locks with it.
       H5I_APP_TEST_ADMIN_URL: postgres://h5i:h5i@127.0.0.1:5432/h5i
+      # A database test whose URL is missing fails instead of skipping.
+      H5I_APP_TEST_REQUIRE_DB: "1"
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable

@@ -5,7 +5,9 @@ use h5i_app_pg::{Engine, EngineConfig, pool};
 use std::{sync::{Arc, atomic::Ordering}, time::{SystemTime, UNIX_EPOCH}};
 #[tokio::test]
 async fn committed_writes_keep_warm_cache_and_replays_do_not_apply_twice() {
-    let Ok(url) = std::env::var("H5I_APP_TEST_DATABASE_URL") else { return; };
+    let Some(url) = h5i_app_pg::test_env("H5I_APP_TEST_DATABASE_URL") else {
+        return;
+    };
     let pg = Arc::new(Engine::<Calculator, CalculatorStore>::new(pool(&h5i_app_pg::with_schema(&url,"calculator_ram").unwrap(),4).unwrap(),EngineConfig::default()));
     pg.install_schema().await.unwrap();
     let ram = h5i_app_mem::MemoryPgEngine::new(pg.clone());

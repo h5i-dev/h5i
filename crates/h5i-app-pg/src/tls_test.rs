@@ -14,13 +14,9 @@ use rustls::pki_types::CertificateDer;
 use crate::{pool, pool_tls, DbError, Pool};
 
 fn env_of(var: &str) -> Option<(String, Roots)> {
-    match (std::env::var(var), std::env::var("H5I_APP_TEST_TLS_CA")) {
-        (Ok(url), Ok(ca)) => Some((url, Roots::PemFile(ca.into()))),
-        _ => {
-            eprintln!("{var} / H5I_APP_TEST_TLS_CA not set; skipping");
-            None
-        }
-    }
+    let url = crate::test_env(var)?;
+    let ca = crate::test_env("H5I_APP_TEST_TLS_CA")?;
+    Some((url, Roots::PemFile(ca.into())))
 }
 
 fn env() -> Option<(String, Roots)> {
@@ -84,8 +80,7 @@ async fn channel_binding_is_accepted_by_the_server() {
 
 #[tokio::test]
 async fn server_without_tls_is_refused() {
-    let Ok(url) = std::env::var("H5I_APP_TEST_DATABASE_URL") else {
-        eprintln!("H5I_APP_TEST_DATABASE_URL not set; skipping");
+    let Some(url) = crate::test_env("H5I_APP_TEST_DATABASE_URL") else {
         return;
     };
     let p = pool_tls(&url, 1, &Roots::WebPki).unwrap();

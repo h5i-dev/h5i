@@ -23,8 +23,7 @@ fn sorted(mut s: k::Snapshot) -> k::Snapshot {
 
 #[tokio::test]
 async fn store_agrees_with_apply() {
-    let Ok(url) = std::env::var("H5I_APP_TEST_DATABASE_URL") else {
-        eprintln!("H5I_APP_TEST_DATABASE_URL not set; skipping");
+    let Some(url) = h5i_app_pg::test_env("H5I_APP_TEST_DATABASE_URL") else {
         return;
     };
     let clock = ManualClock::default();
@@ -116,8 +115,7 @@ async fn cancel_after_clock_went_back(url: &str, monotonic: bool) -> Result<k::R
 
 #[tokio::test]
 async fn monotonic_time_keeps_started_bookings() {
-    let Ok(url) = std::env::var("H5I_APP_TEST_DATABASE_URL") else {
-        eprintln!("H5I_APP_TEST_DATABASE_URL not set; skipping");
+    let Some(url) = h5i_app_pg::test_env("H5I_APP_TEST_DATABASE_URL") else {
         return;
     };
     assert_eq!(cancel_after_clock_went_back(&url, false).await, Ok(k::Reply::Done));
@@ -129,8 +127,7 @@ async fn monotonic_time_keeps_started_bookings() {
 /// test's clock before and after the request.
 #[tokio::test]
 async fn database_clock_is_the_transactions() {
-    let Ok(url) = std::env::var("H5I_APP_TEST_DATABASE_URL") else {
-        eprintln!("H5I_APP_TEST_DATABASE_URL not set; skipping");
+    let Some(url) = h5i_app_pg::test_env("H5I_APP_TEST_DATABASE_URL") else {
         return;
     };
     let url = h5i_app_pg::with_schema(&url, "booking").unwrap();

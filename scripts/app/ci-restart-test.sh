@@ -8,6 +8,7 @@ set -uo pipefail
 : "${H5I_APP_TEST_DATABASE_URL:?set H5I_APP_TEST_DATABASE_URL}"
 : "${H5I_APP_TEST_ADMIN_URL:?set H5I_APP_TEST_ADMIN_URL}"
 : "${H5I_APP_TEST_RESTART_CMD:?set H5I_APP_TEST_RESTART_CMD}"
+export H5I_APP_TEST_REQUIRE_DB=1
 log=$(mktemp)
 root=$(cd "$(dirname "$0")/../.." && pwd)
 (cd "$root" && cargo test --locked -p h5i-app-pg --features testing --test restart "$@" -- --ignored --nocapture 2>&1) | tee "$log"

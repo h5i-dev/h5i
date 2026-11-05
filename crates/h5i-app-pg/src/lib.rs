@@ -207,6 +207,28 @@ impl DbError {
     }
 }
 
+/// For integration tests: the environment variable `var` naming a test
+/// database (or another resource a test needs). Unset, the test should
+/// skip: this prints "`var` not set; skipping" and returns `None`. With
+/// `H5I_APP_TEST_REQUIRE_DB` set (CI sets it), it panics instead, so a run
+/// that lacks the database fails rather than passing every test: libtest
+/// hides what passing tests print, so a printed skip alone goes unseen.
+pub fn test_env(var: &str) -> Option<String> {
+    let required = std::env::var_os("H5I_APP_TEST_REQUIRE_DB").is_some_and(|v| !v.is_empty());
+    test_env_of(var, std::env::var(var).ok(), required)
+}
+
+fn test_env_of(var: &str, value: Option<String>, required: bool) -> Option<String> {
+    match value {
+        Some(v) => Some(v),
+        None if required => panic!("{var} not set, and H5I_APP_TEST_REQUIRE_DB requires this test to run"),
+        None => {
+            eprintln!("{var} not set; skipping");
+            None
+        }
+    }
+}
+
 /// SERIALIZABLE ran out of its shared structures: the read/write conflict
 /// pool (sized from `max_connections`) or the predicate lock table
 /// (`max_pred_locks_per_transaction`). PostgreSQL reports both as 53200
@@ -908,6 +930,18 @@ mod lock_tests {
         // Two servers must agree on a key, so it may not depend on the process.
         assert_eq!(Lock::key("article", b"hello"), 0xe58c_2868_5d42_b9e9);
         assert_ne!(Lock::key("article", b"x"), Lock::key("articlex", b""));
+    }
+}
+
+#[cfg(test)]
+mod test_env_tests {
+    use super::test_env_of;
+
+    #[test]
+    fn a_missing_database_skips_unless_required() {
+        assert_eq!(test_env_of("X", Some("u".into()), true), Some("u".into()));
+        assert_eq!(test_env_of("X", None, false), None);
+        assert!(std::panic::catch_unwind(|| test_env_of("X", None, true)).is_err());
     }
 }
 

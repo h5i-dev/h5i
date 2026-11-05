@@ -6,8 +6,8 @@
 //!
 //! Needs H5I_APP_TEST_DATABASE_URL (the engine's database) and
 //! H5I_APP_TEST_ADMIN_URL (a superuser on the same server, to terminate
-//! backends and read every backend's locks); skips otherwise, which
-//! `scripts/app/ci-rust-tests.sh` reports as a failure. Each test uses its own
+//! backends and read every backend's locks); skips otherwise, and fails
+//! instead with `H5I_APP_TEST_REQUIRE_DB` set (as in CI; `h5i_app_pg::test_env`). Each test uses its own
 //! PostgreSQL schema and tenants. Build with `--features testing`.
 
 mod common;

@@ -40,8 +40,7 @@ fn allowed(e: &DbError) -> bool {
 #[ignore = "restarts the database server; run alone with --ignored and H5I_APP_TEST_RESTART_CMD"]
 async fn database_restart_under_load() {
     let Some(db) = setup("h5i_fault_restart").await else { return };
-    let Ok(restart) = std::env::var("H5I_APP_TEST_RESTART_CMD") else {
-        eprintln!("H5I_APP_TEST_RESTART_CMD not set; skipping");
+    let Some(restart) = h5i_app_pg::test_env("H5I_APP_TEST_RESTART_CMD") else {
         return;
     };
     let pg = Arc::new(db.engine(16, EngineConfig::default()).await);

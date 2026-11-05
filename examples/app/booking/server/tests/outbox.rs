@@ -20,7 +20,7 @@ type Pg = Engine<BookingApp, BookingStore>;
 
 /// The test database, in its own schema so no other dispatcher sees its outbox.
 fn database() -> Option<String> {
-    let url = std::env::var("H5I_APP_TEST_DATABASE_URL").ok()?;
+    let url = h5i_app_pg::test_env("H5I_APP_TEST_DATABASE_URL")?;
     Some(h5i_app_pg::with_schema(&url, "booking_outbox").unwrap())
 }
 
@@ -106,10 +106,8 @@ macro_rules! setup_or_skip {
     () => {
         match setup().await {
             Some(v) => v,
-            None => {
-                eprintln!("H5I_APP_TEST_DATABASE_URL not set; skipping");
-                return;
-            }
+            // `test_env` printed the skip, or panicked if the database is required.
+            None => return,
         }
     };
 }

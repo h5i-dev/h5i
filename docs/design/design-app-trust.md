@@ -118,8 +118,11 @@ call, block it or race an outside transaction there. A TCP proxy in the test
 loses a COMMIT either before forwarding it or after the server answered it.
 The only engine change for this is `Tx::info`, behind the `testing` feature.
 `H5I_APP_TEST_ADMIN_URL` (a superuser) is needed besides
-`H5I_APP_TEST_DATABASE_URL`; `scripts/app/ci-rust-tests.sh` requires both
-and fails a run in which any test printed "skipping".
+`H5I_APP_TEST_DATABASE_URL`. A database test skips when its variables are
+unset, except with `H5I_APP_TEST_REQUIRE_DB` set: then it fails
+(`h5i_app_pg::test_env`). CI and `scripts/app/ci-rust-tests.sh` set it, so
+a run without the database fails instead of passing every test (libtest
+hides what passing tests print, so a printed skip alone goes unseen).
 
 | Contract bullet | Tests |
 |---|---|
