@@ -107,6 +107,8 @@ fn check_recorded(
     let mut problems = scan(&proofs)?;
     if !is_framework_project(p) {
         problems.extend(scan_extensions(&proofs)?);
+        problems.extend(scan_generated_extensions(&proofs)?);
+        problems.extend(crate::extract::stale_spec_copies(p)?);
     }
     problems.extend(crate::deps::framework_problems(p)?);
     let (mut built, unbuilt) = hand_written_modules(&proofs, &p.manifest.check.targets)?;
@@ -127,12 +129,28 @@ fn check_recorded(
         .filter_map(|o| o.theorem.as_ref().map(|t| (o.name.to_string(), t.clone(), o.statement.clone())))
         .collect();
     let mut results: Vec<h5i_app_report::ObligationResult> = Vec::new();
+    // Every marker the gate and the automation print carries this number.
+    let nonce = nonce();
+    // The framework and the generated Lean: what statements are elaborated
+    // in and what automation runs on, never a hand-written module.
+    let clean = generated_modules(&proofs, p);
+    let statement_errors = if checks.is_empty() {
+        Default::default()
+    } else {
+        crate::report::step(record, "obligation_statements", out, |log| statements(&proofs, &clean, &checks, &nonce, log))?
+    };
     if built.is_empty() && theorems.is_empty() {
         out.note("note: no hand-written modules built; nothing to gate");
     } else {
-        let (issues, declarations, outcomes) = crate::report::step(record, "axiom_gate", out, |log| {
-            gate(&proofs, &built, theorems, &checks, log)
+        let (issues, declarations, mut outcomes) = crate::report::step(record, "axiom_gate", out, |log| {
+            gate(&proofs, &built, theorems, &checks, &nonce, log)
         })?;
+        for g in &mut outcomes {
+            if let Some(e) = statement_errors.get(&g.name) {
+                g.status = "error".into();
+                g.message = e.clone();
+            }
+        }
         problems.extend(issues);
         problems.extend(storage_problems(p, &declarations, out)?);
         for o in obligations.iter().filter(|o| o.theorem.is_some()) {
@@ -151,9 +169,7 @@ fn check_recorded(
     let mut proven = std::collections::BTreeMap::new();
     let tried = !tries.is_empty() && problems.is_empty();
     if tried {
-        let mut modules = built.clone();
-        modules.extend(generated_modules(&proofs, p));
-        proven = crate::report::step(record, "obligation_automation", out, |log| automation(&proofs, &modules, &tries, log))?;
+        proven = crate::report::step(record, "obligation_automation", out, |log| automation(&proofs, &clean, &tries, &nonce, log))?;
     }
     for o in obligations.iter().filter(|o| o.theorem.is_none()) {
         let status = match proven.get(o.name) {
@@ -406,6 +422,26 @@ pub fn scan_extensions(proofs: &Path) -> Result<Vec<String>> {
     let mut bad = Vec::new();
     for f in files {
         if is_generated(proofs, &f) {
+            continue;
+        }
+        let rel = f.strip_prefix(proofs).unwrap_or(&f).display().to_string();
+        bad.extend(extension_problems(&rel, &std::fs::read_to_string(&f)?));
+    }
+    Ok(bad)
+}
+
+/// [`scan_extensions`] for `proofs/generated/`: the extraction, the schema's
+/// Lean and `Authz.lean`, which the obligation statements are elaborated
+/// against. The two spec copies define the framework's commands and are
+/// compared with their source instead (`extract::stale_spec_copies`).
+pub fn scan_generated_extensions(proofs: &Path) -> Result<Vec<String>> {
+    let mut files = Vec::new();
+    lean_files(&proofs.join("generated"), &mut files);
+    files.sort();
+    let mut bad = Vec::new();
+    for f in files {
+        let name = f.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        if name == "StdSpecs.lean" || name == "AuthzSpecs.lean" {
             continue;
         }
         let rel = f.strip_prefix(proofs).unwrap_or(&f).display().to_string();
@@ -805,11 +841,14 @@ fn generated_modules(proofs: &Path, p: &Project) -> Vec<String> {
 /// Try each obligation's `auto` proof in `Auto.lean`. A failed tactic is an
 /// error in that file only; the obligation is proven by automation only if
 /// its theorem exists and uses the standard axioms (no `sorryAx` from error
-/// recovery). Returns, per obligation, whether it was proven.
+/// recovery). `modules` are the generated ones: like the statements, the
+/// automation never sees a hand-written module, and its markers carry the
+/// run's nonce. Returns, per obligation, whether it was proven.
 fn automation(
     proofs: &Path,
     modules: &[String],
     tries: &[&crate::obligations::Obligation],
+    nonce: &str,
     out: &Out,
 ) -> Result<std::collections::BTreeMap<&'static str, bool>> {
     let mut s = String::from("import Lean\n");
@@ -826,8 +865,8 @@ fn automation(
     s.push_str(&format!(
         "\nend H5iAuto\n\nopen Lean Elab Command in\n#eval show CommandElabM Unit from do\n  let std : List Name := [{std}]\n  \
          for n in ([{names}] : List Name) do\n    if (← getEnv).contains n then\n      let axs ← collectAxioms n\n      \
-         let ok := axs.all (fun a => std.contains a)\n      IO.println s!\"H5I-AUTO {{n}} {{if ok then \"proven\" else \"open\"}}\"\n    \
-         else\n      IO.println s!\"H5I-AUTO {{n}} open\"\n"
+         let ok := axs.all (fun a => std.contains a)\n      IO.println s!\"H5I-AUTO-{nonce} {{n}} {{if ok then \"proven\" else \"open\"}}\"\n    \
+         else\n      IO.println s!\"H5I-AUTO-{nonce} {{n}} open\"\n"
     ));
     let dir = proofs.join(".lake/h5i");
     std::fs::create_dir_all(&dir)?;
@@ -838,7 +877,7 @@ fn automation(
     out.note(&text);
     let mut result = std::collections::BTreeMap::new();
     for o in tries {
-        let want = format!("H5I-AUTO H5iAuto.{} proven", ident(o.name));
+        let want = format!("H5I-AUTO-{nonce} H5iAuto.{} proven", ident(o.name));
         result.insert(o.name, text.lines().any(|l| l.trim() == want));
     }
     Ok(result)
@@ -885,19 +924,25 @@ fn run_with_timeout(cmd: &mut Command, secs: u64) -> Result<String> {
 /// The Lean program that imports the modules and reports every theorem whose
 /// axioms go beyond the standard three, and checks each obligation's theorem
 /// (`checks`: name, theorem, statement) against the statement.
-fn gate_program(modules: &[String], theorems: &[String], checks: &[(String, String, String)]) -> String {
+fn gate_program(modules: &[String], theorems: &[String], checks: &[(String, String, String)], nonce: &str) -> String {
     let mut s = String::from("import Lean\n");
+    // The statements, elaborated by `statements_program` without any
+    // hand-written module; imported first, as finished declarations.
+    if !checks.is_empty() {
+        s.push_str(&format!("import {STATEMENTS_MODULE}\n"));
+    }
     for m in modules {
         s.push_str(&format!("import {m}\n"));
     }
-    if !checks.is_empty() && !modules.iter().any(|m| m == OBLIGATION_MODULE) && checks.iter().any(|c| c.2.contains("H5iAppLib.Obligation.")) {
-        s.push_str(&format!("import {OBLIGATION_MODULE}\n"));
-    }
     let obls = checks
         .iter()
-        .map(|(n, t, st)| format!("({}, `{}, {})", lean_str(n), lean_name(t), lean_str(st)))
+        .enumerate()
+        .map(|(i, (n, t, _))| format!("({}, `{}, `{}.s{i})", lean_str(n), lean_name(t), STATEMENT_NS))
         .collect::<Vec<_>>()
         .join(",\n    ");
+    let mark = format!("{MARK}-{nonce}");
+    let catalog = format!("H5I-CATALOG-{nonce}");
+    let obligation = format!("H5I-OBLIGATION-{nonce}");
     let mods = modules
         .iter()
         .map(|m| format!("`{}", lean_name(m)))
@@ -932,14 +977,14 @@ open Lean Elab Command in
     if env.contains n then
       unless todo.contains n do todo := todo.push n
     else
-      out := out.push s!"{MARK} missing {{n}}"
+      out := out.push s!"{mark} missing {{n}}"
   let mut bad := 0
   for n in todo do
     let axs ← collectAxioms n
     let extra := axs.filter (fun a => !std.contains a)
     unless extra.isEmpty do
       bad := bad + 1
-      out := out.push s!"{MARK} bad {{n}} {{extra.toList}}"
+      out := out.push s!"{mark} bad {{n}} {{extra.toList}}"
   -- This catalog comes from the elaborated environment, including implicit
   -- binders and definitions. It is not a source-text approximation.
   for (n, ci) in env.constants.map₁.toList do
@@ -958,37 +1003,40 @@ open Lean Elab Command in
       let row := Json.mkObj [("name", toJson n.toString), ("kind", toJson kind),
         ("signature", toJson signature), ("definition", body),
         ("dependencies", toJson deps), ("axioms", toJson (axs.toList.map Name.toString))]
-      liftIO <| IO.println ("H5I-CATALOG " ++ row.compress)
+      liftIO <| IO.println ("{catalog} " ++ row.compress)
   -- Each obligation's theorem states exactly the obligation, instantiated
-  -- for this app: its type is definitionally equal to the statement. `_` in
-  -- the statement is the app's part; the resolved statement is printed.
-  let obls : List (String × Name × String) := [
+  -- for this app. The statement is a declaration elaborated without any
+  -- hand-written module (`{STATEMENTS_MODULE}`), its holes (the app's part)
+  -- abstracted as binders. They are filled by unification here, and the
+  -- verdict is the kernel's: the filled statement and the theorem's type are
+  -- definitionally equal (`Kernel.isDefEq`).
+  let obls : List (String × Name × Name) := [
     {obls}]
-  for (slot, n, src) in obls do
+  for (slot, n, sn) in obls do
     let row ← liftTermElabM do
       let obj := fun (st : String) (fs : List (String × Json)) =>
         Json.mkObj ([("name", toJson slot), ("status", toJson st)] ++ fs)
       let ppS : Expr → Term.TermElabM String := fun e => do return (← Meta.ppExpr e).pretty
-      match env.find? n with
-      | none => return obj "missing" []
-      | some ci =>
-        match Parser.runParserCategory env `term src with
-        | .error e => return obj "error" [("message", toJson e)]
-        | .ok stx =>
-          try
-            let expected ← Term.withoutErrToSorry (Term.elabType stx)
-            Term.synthesizeSyntheticMVarsNoPostponing
-            if ← Meta.isDefEq expected ci.type then
-              let e ← instantiateMVars expected
-              if e.hasExprMVar then
-                return obj "undetermined" [("expected", toJson (← ppS e))]
-              return obj "ok" [("expected", toJson (← ppS e))]
-            else
-              return obj "mismatch" [("expected", toJson (← ppS (← instantiateMVars expected))),
-                ("stated", toJson (← ppS ci.type))]
-          catch ex => return obj "error" [("message", toJson (← ex.toMessageData.toString))]
-    liftIO <| IO.println ("H5I-OBLIGATION " ++ row.compress)
-  out := out.push s!"{MARK} done {{todo.size}} {{bad}}"
+      match env.find? sn, env.find? n with
+      | none, _ => return obj "error" [("message", toJson "the statement did not elaborate")]
+      | _, none => return obj "missing" []
+      | some sci, some ci =>
+        try
+          let v := sci.value!.instantiateLevelParams sci.levelParams (← sci.levelParams.mapM fun _ => Meta.mkFreshLevelMVar)
+          let (_, _, expected) ← Meta.lambdaMetaTelescope v
+          if ← Meta.isDefEq expected ci.type then
+            let e ← instantiateMVars expected
+            if e.hasMVar then
+              return obj "undetermined" [("expected", toJson (← ppS e))]
+            match Kernel.isDefEq env {{}} e ci.type with
+            | .ok true => return obj "ok" [("expected", toJson (← ppS e))]
+            | _ => return obj "mismatch" [("expected", toJson (← ppS e)), ("stated", toJson (← ppS ci.type))]
+          else
+            return obj "mismatch" [("expected", toJson (← ppS (← instantiateMVars expected))),
+              ("stated", toJson (← ppS ci.type))]
+        catch ex => return obj "error" [("message", toJson (← ex.toMessageData.toString))]
+    liftIO <| IO.println ("{obligation} " ++ row.compress)
+  out := out.push s!"{mark} done {{todo.size}} {{bad}}"
   logInfo (String.intercalate "\n" out.toList)
 "#
     ));
@@ -1000,12 +1048,13 @@ fn gate(
     modules: &[String],
     theorems: &[String],
     checks: &[(String, String, String)],
+    nonce: &str,
     out: &Out,
 ) -> Result<(Vec<String>, Vec<h5i_app_report::Declaration>, Vec<GateObligation>)> {
     let dir = proofs.join(".lake/h5i");
     std::fs::create_dir_all(&dir)?;
     let file = dir.join("Gate.lean");
-    std::fs::write(&file, gate_program(modules, theorems, checks))?;
+    std::fs::write(&file, gate_program(modules, theorems, checks, nonce))?;
     out.note(&format!("$ lake env lean {}", file.display()));
     let o = Command::new("lake")
         .args(["env", "lean"])
@@ -1017,21 +1066,40 @@ fn gate(
         String::from_utf8_lossy(&o.stdout),
         String::from_utf8_lossy(&o.stderr)
     );
+    let (problems, declarations, obligations, total) = parse_gate(&text, nonce, o.status.success())?;
+    out.note(&format!(
+        "gate: {total} theorems in {} modules checked against {}",
+        modules.len(),
+        STANDARD_AXIOMS.join(", ")
+    ));
+    Ok((problems, declarations, obligations))
+}
+
+/// What the gate printed, read only from lines carrying this run's `nonce`:
+/// a module the gate imports could print markers of its own, but not one
+/// with a number chosen after it was built. Fails unless the process exited
+/// successfully and printed its `done` line.
+type GateOutput = (Vec<String>, Vec<h5i_app_report::Declaration>, Vec<GateObligation>, String);
+
+fn parse_gate(text: &str, nonce: &str, success: bool) -> Result<GateOutput> {
+    let mark = format!("{MARK}-{nonce}");
+    let catalog = format!("H5I-CATALOG-{nonce} ");
+    let obligation = format!("H5I-OBLIGATION-{nonce} ");
     let mut problems = Vec::new();
     let mut declarations = Vec::new();
     let mut obligations = Vec::new();
     let mut done = None;
     for line in text.lines() {
-        if let Some((_, json)) = line.split_once("H5I-CATALOG ") {
+        if let Some((_, json)) = line.split_once(&catalog) {
             declarations.push(serde_json::from_str(json)?);
             continue;
         }
-        if let Some((_, json)) = line.split_once("H5I-OBLIGATION ") {
+        if let Some((_, json)) = line.split_once(&obligation) {
             obligations.push(serde_json::from_str(json)?);
             continue;
         }
-        let Some(i) = line.find(MARK) else { continue };
-        let mut words = line[i + MARK.len()..].trim().splitn(2, ' ');
+        let Some(i) = line.find(&mark) else { continue };
+        let mut words = line[i + mark.len()..].trim().splitn(2, ' ');
         match (words.next(), words.next()) {
             (Some("missing"), Some(n)) => {
                 problems.push(format!("theorem {n} named in h5i-app.toml does not exist"))
@@ -1044,19 +1112,114 @@ fn gate(
             _ => {}
         }
     }
-    if !o.status.success() {
+    if !success {
         bail!("the axiom gate failed:\n{}", text.trim_end());
     }
     let Some(done) = done else {
-        bail!("the axiom gate did not run:\n{}", text.trim_end());
+        bail!("the axiom gate did not run (no `done` line of this run):\n{}", text.trim_end());
     };
-    let total = done.split(' ').next().unwrap_or("0");
-    out.note(&format!(
-        "gate: {total} theorems in {} modules checked against {}",
-        modules.len(),
-        STANDARD_AXIOMS.join(", ")
+    let total = done.split(' ').next().unwrap_or("0").to_string();
+    Ok((problems, declarations, obligations, total))
+}
+
+/// The module holding the obligation statements, elaborated for the gate.
+pub const STATEMENTS_MODULE: &str = "H5iGateStatements";
+/// The namespace of its declarations: `s<i>` for the gate's `i`th check.
+const STATEMENT_NS: &str = "H5iGateStatement";
+
+/// A number no module the gate imports can know when it was built.
+fn nonce() -> String {
+    use std::hash::{BuildHasher, Hasher};
+    let a = std::collections::hash_map::RandomState::new().build_hasher().finish();
+    let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+    h.write_u128(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos());
+    h.write_u32(std::process::id());
+    format!("{a:016x}{:016x}", h.finish())
+}
+
+/// The Lean program that elaborates each obligation statement (`checks`:
+/// name, theorem, statement) and adds it as `H5iGateStatement.s<i>`, a
+/// definition whose binders are the statement's holes. `modules` are the
+/// framework (`H5iAppLib.Obligation`) and the generated modules, never a
+/// hand-written one, so no app macro, notation or definition changes what a
+/// statement means.
+fn statements_program(modules: &[String], checks: &[(String, String, String)], nonce: &str) -> String {
+    let mut s = String::from("import Lean\n");
+    for m in modules {
+        s.push_str(&format!("import {m}\n"));
+    }
+    let srcs = checks
+        .iter()
+        .enumerate()
+        .map(|(i, (n, _, st))| format!("({}, `{STATEMENT_NS}.s{i}, {})", lean_str(n), lean_str(st)))
+        .collect::<Vec<_>>()
+        .join(",\n    ");
+    s.push_str(&format!(
+        r#"
+open Lean Elab Command Meta in
+#eval show CommandElabM Unit from do
+  let srcs : List (String × Name × String) := [
+    {srcs}]
+  for (slot, n, src) in srcs do
+    match Parser.runParserCategory (← getEnv) `term src with
+    | .error e => liftIO <| IO.println s!"H5I-STATEMENT-{nonce} {{slot}} error {{e}}"
+    | .ok stx =>
+      try
+        liftTermElabM do
+          let e ← Term.withoutErrToSorry (Term.elabType stx)
+          Term.synthesizeSyntheticMVarsNoPostponing
+          let r ← abstractMVars (← instantiateMVars e)
+          let ty ← instantiateMVars (← inferType r.expr)
+          addDecl <| .defnDecl (mkDefinitionValEx n r.paramNames.toList ty r.expr .abbrev .safe [n])
+        liftIO <| IO.println s!"H5I-STATEMENT-{nonce} {{slot}} ok"
+      catch ex => liftIO <| IO.println s!"H5I-STATEMENT-{nonce} {{slot}} error {{(← ex.toMessageData.toString)}}"
+"#
     ));
-    Ok((problems, declarations, obligations))
+    s
+}
+
+/// Elaborate the statements (`statements_program`) and compile them to
+/// `.lake/build/lib/lean/H5iGateStatements.olean`, where the gate imports
+/// them. Returns, per obligation name, the elaboration error if any.
+fn statements(
+    proofs: &Path,
+    modules: &[String],
+    checks: &[(String, String, String)],
+    nonce: &str,
+    out: &Out,
+) -> Result<std::collections::BTreeMap<String, String>> {
+    let dir = proofs.join(".lake/h5i/statements");
+    std::fs::create_dir_all(&dir)?;
+    let file = dir.join(format!("{STATEMENTS_MODULE}.lean"));
+    let imports: Vec<String> = std::iter::once(OBLIGATION_MODULE.to_string()).chain(modules.iter().cloned()).collect();
+    std::fs::write(&file, statements_program(&imports, checks, nonce))?;
+    let olean = proofs.join(".lake/build/lib/lean").join(format!("{STATEMENTS_MODULE}.olean"));
+    std::fs::create_dir_all(olean.parent().unwrap())?;
+    let _ = std::fs::remove_file(&olean);
+    let mut cmd = Command::new("lake");
+    cmd.args(["env", "lean", "-R"]).arg(&dir).arg("-o").arg(&olean).arg(&file).current_dir(proofs);
+    out.note(&format!("$ {}", util::show(&cmd)));
+    let o = cmd.output()?;
+    let text = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+    out.note(&text);
+    if !o.status.success() {
+        bail!("elaborating the obligation statements failed:\n{}", text.trim_end());
+    }
+    let tag = format!("H5I-STATEMENT-{nonce} ");
+    let mut errors = std::collections::BTreeMap::new();
+    let mut seen = 0;
+    for line in text.lines() {
+        let Some((_, rest)) = line.split_once(&tag) else { continue };
+        seen += 1;
+        let (slot, verdict) = rest.split_once(' ').unwrap_or((rest, ""));
+        if let Some(e) = verdict.strip_prefix("error ") {
+            errors.insert(slot.to_string(), e.to_string());
+        }
+    }
+    if seen != checks.len() {
+        bail!("elaborating the obligation statements: {seen} of {} reported:\n{}", checks.len(), text.trim_end());
+    }
+    Ok(errors)
 }
 
 #[cfg(test)]
@@ -1079,7 +1242,7 @@ mod tests {
             "{}",
             String::from_utf8_lossy(&compiled.stdout)
         );
-        let program = gate_program(&["Fixture".into()], &["Fixture.safe".into()], &[]);
+        let program = gate_program(&["Fixture".into()], &["Fixture.safe".into()], &[], "n0");
         let path = d.path().join("Catalog.lean");
         std::fs::write(&path, program).unwrap();
         let o = Command::new("lean")
@@ -1098,7 +1261,7 @@ mod tests {
         let rows: Vec<h5i_app_report::Declaration> = text
             .lines()
             .filter_map(|l| {
-                l.split_once("H5I-CATALOG ")
+                l.split_once("H5I-CATALOG-n0 ")
                     .map(|(_, row)| serde_json::from_str(row).unwrap())
             })
             .collect();
@@ -1114,7 +1277,7 @@ mod tests {
             rows.iter()
                 .any(|d| d.name == "Fixture.Valid" && d.definition.is_some())
         );
-        assert!(text.contains("H5I-GATE done 1 0"));
+        assert!(text.contains("H5I-GATE-n0 done 1 0"));
     }
 
     #[test]
@@ -1141,6 +1304,34 @@ mod tests {
             .output()
             .unwrap();
         assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stdout));
+        // An app module that rewrites the statement's syntax to `True`, and
+        // a theorem of `True` named for it.
+        std::fs::write(
+            d.path().join("Evil.lean"),
+            "import Fixture\nopen Lean in\nmacro_rules\n  | `(Fixture.Obl $_f $_p) => `(True)\n\
+             namespace Fixture\ntheorem evil : Fixture.Obl Fixture.f (fun m => 0 < m) := trivial\nend Fixture\n",
+        )
+        .unwrap();
+        // An app module that prints the gate's markers when imported, and exits.
+        std::fs::write(
+            d.path().join("Forge.lean"),
+            "import Fixture\ninitialize do\n  IO.println \"H5I-OBLIGATION {\\\"name\\\":\\\"good\\\",\\\"status\\\":\\\"ok\\\"}\"\n\
+             \x20 IO.println \"H5I-GATE done 0 0\"\n  IO.Process.exit 0\n",
+        )
+        .unwrap();
+        let lean = |args: &[&str]| {
+            Command::new("lean")
+                .arg(format!("+{}", crate::pins::LEAN_TOOLCHAIN))
+                .args(args)
+                .env("LEAN_PATH", d.path())
+                .current_dir(d.path())
+                .output()
+                .unwrap()
+        };
+        for m in ["Evil", "Forge"] {
+            let o = lean(&["-o", &format!("{m}.olean"), &format!("{m}.lean")]);
+            assert!(o.status.success(), "{m}: {}", String::from_utf8_lossy(&o.stdout));
+        }
         let stmt = "Fixture.Obl Fixture.f (fun m => 0 < m)";
         let checks: Vec<(String, String, String)> = [
             ("good", "Fixture.good", stmt),
@@ -1149,28 +1340,27 @@ mod tests {
             ("other_fn", "Fixture.other_fn", stmt),
             ("hole", "Fixture.weaker", "Fixture.Obl Fixture.f _"),
             ("missing", "Fixture.nothing", stmt),
+            ("rewritten", "Fixture.evil", stmt),
+            ("bad_statement", "Fixture.good", "Fixture.nope"),
         ]
         .iter()
         .map(|(a, b, c)| (a.to_string(), b.to_string(), c.to_string()))
         .collect();
-        let program = gate_program(&["Fixture".into()], &[], &checks);
-        let path = d.path().join("Gate.lean");
-        std::fs::write(&path, program).unwrap();
-        let o = Command::new("lean")
-            .arg(format!("+{}", crate::pins::LEAN_TOOLCHAIN))
-            .arg(&path)
-            .env("LEAN_PATH", d.path())
-            .current_dir(d.path())
-            .output()
-            .unwrap();
+        // The statements, without the app's modules.
+        let nonce = nonce();
+        std::fs::create_dir_all(d.path().join("st")).unwrap();
+        std::fs::write(d.path().join("st/H5iGateStatements.lean"), statements_program(&["Fixture".into()], &checks, &nonce)).unwrap();
+        let o = lean(&["-R", "st", "-o", "H5iGateStatements.olean", "st/H5iGateStatements.lean"]);
         let text = String::from_utf8_lossy(&o.stdout);
-        assert!(o.status.success(), "{text}\n{}", String::from_utf8_lossy(&o.stderr));
-        let got: std::collections::BTreeMap<String, String> = text
-            .lines()
-            .filter_map(|l| l.split_once("H5I-OBLIGATION "))
-            .map(|(_, j)| serde_json::from_str::<GateObligation>(j).unwrap())
-            .map(|g| (g.name, g.status))
-            .collect();
+        assert!(o.status.success(), "{text}");
+        assert_eq!(text.matches(&format!("H5I-STATEMENT-{nonce} ")).count(), checks.len(), "{text}");
+        assert!(text.contains(&format!("H5I-STATEMENT-{nonce} bad_statement error")), "{text}");
+        // The gate, with them.
+        std::fs::write(d.path().join("Gate.lean"), gate_program(&["Fixture".into(), "Evil".into()], &[], &checks, &nonce)).unwrap();
+        let o = lean(&["Gate.lean"]);
+        let text = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+        let (_, _, outcomes, _) = parse_gate(&text, &nonce, o.status.success()).unwrap_or_else(|e| panic!("{e:#}"));
+        let got: std::collections::BTreeMap<String, String> = outcomes.into_iter().map(|g| (g.name, g.status)).collect();
         assert_eq!(got["good"], "ok");
         assert_eq!(got["unfolded"], "ok", "the statement unfolded is the same statement");
         assert_eq!(got["weaker"], "mismatch", "a weaker postcondition is another statement");
@@ -1179,6 +1369,26 @@ mod tests {
         assert_eq!(got["other_fn"], "mismatch", "the same property of another function");
         assert_eq!(got["hole"], "ok", "the app's part resolves to what the theorem chose");
         assert_eq!(got["missing"], "missing");
+        assert_eq!(got["rewritten"], "mismatch", "an app macro does not change the statement");
+        assert_eq!(got["bad_statement"], "error");
+        // A module that prints markers at import: none carries the nonce.
+        std::fs::write(d.path().join("Gate2.lean"), gate_program(&["Fixture".into(), "Forge".into()], &[], &checks, &nonce)).unwrap();
+        let o = lean(&["Gate2.lean"]);
+        let text = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+        assert!(text.contains("H5I-GATE done 0 0"), "the forged line was printed: {text}");
+        let e = parse_gate(&text, &nonce, o.status.success()).unwrap_err();
+        assert!(format!("{e:#}").contains("did not run"), "{e:#}");
+    }
+
+    #[test]
+    fn forged_markers_without_the_nonce_are_not_read() {
+        let forged = "H5I-OBLIGATION {\"name\":\"panic-free\",\"status\":\"ok\"}\nH5I-GATE done 0 0\n";
+        assert!(parse_gate(forged, "abc", true).is_err());
+        let real = format!("{forged}H5I-OBLIGATION-abc {{\"name\":\"x\",\"status\":\"mismatch\"}}\nH5I-GATE-abc done 3 0\n");
+        let (problems, _, obligations, total) = parse_gate(&real, "abc", true).unwrap();
+        assert!(problems.is_empty());
+        assert_eq!((obligations.len(), obligations[0].status.as_str(), total.as_str()), (1, "mismatch", "3"));
+        assert!(parse_gate(&real, "abc", false).is_err(), "a failed process is a failed gate");
     }
 
     #[test]
