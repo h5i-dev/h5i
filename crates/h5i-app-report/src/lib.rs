@@ -5,6 +5,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
 
+pub mod assumptions;
+pub mod guarantees;
+
 pub const MODEL: &str = "h5i-app.ui.json";
 pub const RUNS: &str = ".h5i/app/runs";
 pub const MAX_FILE: u64 = 4 * 1024 * 1024;
