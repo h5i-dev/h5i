@@ -1,0 +1,7 @@
+# The embedded h5i-app examples: their own workspace, depending on the h5i-app
+# crates by path as an application would. The firmware builds for
+# thumbv7em-none-eabihf and is a workspace of its own (thermostat/firmware).
+[workspace]
+members = ["thermostat/kernel", "thermostat/app", "thermostat/host"]
+exclude = ["thermostat/firmware"]
+resolver = "3"

@@ -48,6 +48,7 @@ mod tests {
         }
         walk(&root.join("crates"), &mut out);
         walk(&root.join("examples/app"), &mut out);
+        walk(&root.join("examples/embedded"), &mut out);
         out
     }
 
