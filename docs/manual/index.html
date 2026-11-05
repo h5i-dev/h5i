@@ -1588,7 +1588,11 @@ under <code>[obligations]</code> (or <code>[authz] storage</code>) must have exa
 up to definitional equality, or <code>check</code> fails and prints the expected type. An
 obligation no theorem is named for is tried by automation in a separate Lean
 run and reported <code>open</code> if that fails. <code>h5i app report</code> lists each with its
-status.</p>
+status. The statements are elaborated without the project's hand-written Lean,
+the verdict is the Lean kernel's, and hand-written modules may not use
+<code>initialize</code>, <code>implemented_by</code>, <code>extern</code>, <code>unsafe</code>, term syntax, or macros and
+elaborators outside the <code>tactic</code> category. A <code>passed</code> run recorded under
+<code>.h5i/app/runs</code> is a local record, not evidence; rerun <code>check</code> to establish it.</p>
 <p><code>mutate</code> runs each mutant in a copy of the project: it edits the kernel,
 re-extracts it and rebuilds the proofs. A mutant is caught when the proofs stop
 building. One that survives is a behaviour the spec does not pin down, such as

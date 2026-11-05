@@ -244,8 +244,9 @@ statement. Each obligation is a `def … : Prop` in
 `crates/h5i-app-core/proofs/H5iAppLib/Obligation.lean`, parameterised by the
 app's extracted functions. `crates/h5i-app-cli/src/obligations.rs`
 instantiates it for a project from the extraction and the schema, never from
-the app's proofs, and `check`'s gate program elaborates that statement and
-requires the theorem's type to be definitionally equal to it. A weaker or
+the app's proofs, and `check` elaborates that statement without the app's
+hand-written Lean and requires the theorem's type to be definitionally equal
+to it, by the kernel's check ([below](#what-keeps-the-apps-lean-out-of-the-verdict)). A weaker or
 different statement fails with the expected type printed:
 
 ```text
@@ -284,6 +285,47 @@ theorem with `sorryAx`, so it is reported `open`, and the check still passes.
 `failed`) in its run, and `h5i app report` lists them per project, with the
 ones not stated and why.
 
+### What keeps the app's Lean out of the verdict
+
+The author runs `check` on their own code, so the threat is not an outside
+attacker but an agent working around a failing proof, or an app definition
+changing what a framework statement means by accident. `check`:
+
+- Elaborates the statements without the app's Lean. `H5iGateStatements`
+  (`.lake/h5i/statements/`, compiled to an `.olean`) imports only
+  `H5iAppLib.Obligation` and the generated modules, never a hand-written
+  one, and adds each statement as a definition whose binders are its holes.
+  The automation file imports the same and nothing else.
+- Takes the verdict from the kernel. The gate, which must import the app's
+  modules to read the theorem's type, imports the finished statements,
+  fills the holes by unification, and accepts only if `Kernel.isDefEq`
+  says the filled statement and the theorem's type are equal. App
+  attributes or unification hints can make the gate reject, not accept.
+- Rejects, in every hand-written module of an app project (`scan_extensions`,
+  comments and strings ignored), what runs code at import or changes later
+  elaboration: `initialize`, `builtin_initialize`, `implemented_by`, `extern`,
+  `unsafe`, term syntax (`notation`, `infix`, `prefix`, `postfix`, ...), and
+  `macro_rules`, `syntax`, `macro`, `elab`, `elab_rules` outside the
+  `tactic` category. Tactic macros only build proofs the kernel checks, and
+  stay allowed (`ledger`'s `run`, h5i-app-pgsql's `bpush` and `emit`). The
+  generated files get the same scan, except `StdSpecs.lean` and
+  `AuthzSpecs.lean`, which define the framework's commands and must equal
+  what `extract` copies from h5i-app-std. The framework's own crates, whose
+  libraries define tactics, attributes and commands, are not scanned.
+- Reads only marker lines with a nonce chosen for the run, and fails unless
+  the gate process exits successfully and prints its `done` line. A module
+  that printed forged markers at import and exited would leave no `done`
+  line of this run. This is defence in depth behind the scan: imported code
+  that ran anyway could read the gate's file.
+
+Limits: the gate still runs the app's modules' import-time code if the scan
+misses it (code produced by a command the scan does not know, or by a
+framework-crate project); for an app without `[authz]`, `check` does not
+re-extract, so its generated Lean is scanned but not compared with the
+kernel (`extract --check`, CI's drift job, does that); and a `passed` run
+under `.h5i/app/runs` is a local record of a run, not evidence: a repository
+can ship a forged one, and only re-running `check` establishes a result.
+
 Group A, the statements that need no input from the app, on the examples
 (`h5i app check` on 5 November 2026):
 
@@ -291,7 +333,7 @@ Group A, the statements that need no input from the app, on the examples
 |---|---|---|---|---|
 | forum | proven (guard) | proven (`Committed.storage`) | open | proven (library) |
 | notes | proven (guard) | proven (`Committed.storage`) | open | proven (library) |
-| calculator | proven (`ReadOnly.sound`) | not stated (no `[authz]`; `pg_stored` is the app's) | proven (automation) | proven (library) |
+| calculator | proven (`ReadOnly.sound`) | not stated (no `[authz]`; `pg_stored` is the app's) | proven (`Proofs.panic_free`; `step*` alone needs its hand-written loop specs, which the automation does not see) | proven (library) |
 | board, booking, inbox, ledger | none (no read-only commands) | not stated (`db_inv` is the app's) | proven (`Theorems.panic_free`, from `transition_total`) | proven (library) |
 | parallel | none | not stated | no `transition` | proven (library) |
 
