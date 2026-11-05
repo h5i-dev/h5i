@@ -8,6 +8,13 @@ repository = "https://github.com/h5i-dev/h5i"
 homepage = "https://github.com/h5i-dev/h5i"
 readme = "../../README.md"
 
+[features]
+default = ["std"]
+# `MemoryEngine`, `Timestamp::now` and the `[authz]` binding.
+std = ["alloc", "dep:h5i-app-std"]
+# `ReplyCodec`, `Executor`, `sorted_by_key`.
+alloc = []
+
 [dependencies]
-# The authorization guard `Authz` runs; see `authz`.
-h5i-app-std.workspace = true
+# The authorization guard `Authz` runs; see `authz`. Needs `std`.
+h5i-app-std = { workspace = true, optional = true }
