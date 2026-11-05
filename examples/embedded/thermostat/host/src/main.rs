@@ -12,13 +12,12 @@
 
 use std::time::Duration;
 
-use embedded_io_adapters::tokio_1::FromTokio;
-use h5i_app_embedded::{Config, serve};
-use thermostat_app::{App, router};
+use thermostat_app::App;
 
-/// The firmware's buffers.
-pub const RX: usize = 2048;
-pub const TX: usize = 1024;
+/// Connections served at once; more wait in the listen backlog.
+const MAX_CONNS: usize = 32;
+/// The longest one connection may stay open.
+const PER_CONN: Duration = Duration::from_secs(30);
 
 fn main() {
     let addr = std::env::var("THERMOSTAT_ADDR").unwrap_or_else(|_| "127.0.0.1:8080".into());
@@ -29,31 +28,6 @@ fn main() {
     local.block_on(&rt, async move {
         let listener = tokio::net::TcpListener::bind(&addr).await.expect("bind");
         eprintln!("thermostat listening on http://{addr}");
-        loop {
-            let (sock, peer) = match listener.accept().await {
-                Ok(s) => s,
-                Err(e) => {
-                    eprintln!("accept: {e}");
-                    continue;
-                }
-            };
-            tokio::task::spawn_local(async move {
-                let mut io = FromTokio::new(sock);
-                let mut rx = [0u8; RX];
-                let mut tx = [0u8; TX];
-                let routes = router();
-                // The shell has no clock: an idle connection is closed here.
-                let r = tokio::time::timeout(
-                    Duration::from_secs(30),
-                    serve(&Config::default(), &routes, app, &mut rx, &mut tx, &mut io),
-                )
-                .await;
-                match r {
-                    Ok(Ok(n)) => eprintln!("{peer}: {n} request(s)"),
-                    Ok(Err(e)) => eprintln!("{peer}: {e:?}"),
-                    Err(_) => eprintln!("{peer}: timed out"),
-                }
-            });
-        }
+        thermostat_host::run(listener, app, MAX_CONNS, PER_CONN).await;
     });
 }
