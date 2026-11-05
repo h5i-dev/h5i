@@ -1,0 +1,2768 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH h5i 1  "h5i 0.5.3" 
+.SH NAME
+h5i \- h5i unifies web development, formal verification with Lean 4, and red\-teaming around a composable Rust framework
+.SH SYNOPSIS
+\fBh5i\fR [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIsubcommands\fR>
+.SH DESCRIPTION
+h5i unifies web development, formal verification with Lean 4, and red\-teaming around a composable Rust framework
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.SH SUBCOMMANDS
+.TP
+h5i\-box(1)
+Disposable, confined development boxes. `h5i box` with no verb creates one from the current repository; `h5i box \-\-help` has the verb table
+.TP
+h5i\-ui(1)
+Open the box console in a browser: one read\-only screen over the whole fleet. What each box is, what its policy actually allows, what ran inside it, and what pressed on a boundary
+.TP
+h5i\-browser(1)
+Browser sessions: open one, drive it, close it
+.TP
+h5i\-plugin(1)
+Install, list or remove a plugin. Plugins add top\-level commands: `h5i websec` (HTTP workbench: edit, resend and compare captured requests), `h5i recon` (endpoint ledger) and `h5i test` (security regression tests). `h5i plugin list` shows which are installed
+.TP
+h5i\-project(1)
+The engagement that outlives its sessions: notes, findings, evidence, checklists and reports
+.TP
+h5i\-app(1)
+Build verified applications with h5i\-app: extract the kernel to Lean, gate the proofs, and test the spec with mutants
+.TP
+h5i\-skill(1)
+Write or print the agent skill this binary carries
+.TP
+h5i\-completion(1)
+Generate a shell completion script (bash, zsh, fish, ...); e.g. `h5i completion bash > /etc/bash_completion.d/h5i`
+.TP
+h5i\-help(1)
+Print this message or the help of the given subcommand(s)
+.SH VERSION
+v0.5.3
+.SH "H5I BOX"
+Disposable, confined development boxes. `h5i box` with no verb creates one from the current repository; `h5i box --help` has the verb table
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBbox\fR [\fB\-\-pr\fR] [\fB\-\-new\fR] [\fB\-\-name\fR] [\fB\-\-from\fR] [\fB\-\-remote\fR] [\fB\-\-profile\fR] [\fB\-\-isolation\fR] [\fB\-\-image\fR] [\fB\-\-engine\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fISOURCE\fR] [\fIsubcommands\fR]
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-pr\fR \fI<NUMBER|URL>\fR
+Base the box on a GitHub pull request (number, #number, or URL)
+.TP
+\fB\-\-new\fR
+Start from an empty box instead of any source
+.TP
+\fB\-\-name\fR \fI<NAME>\fR
+Name for the box. Derived from the source when omitted
+.TP
+\fB\-\-from\fR \fI<FROM>\fR
+Base revision, when the source is this repository. Pinned immutably.
+
+Same conflicts as the explicit `box create` form. Without them the short form parsed `\-\-new \-\-from <rev>` and `\-\-pr N \-\-from <rev>` happily and then discarded the base: `into_command()` builds `Create` *after* clap has validated, so the explicit form\*(Aqs rules never applied. A silently unpinned base is an integrity gap in a tool whose pitch is that the base is pinned immutably.
+.TP
+\fB\-\-remote\fR \fI<REMOTE>\fR [default: origin]
+Remote to fetch a pull request head from
+.TP
+\fB\-\-profile\fR \fI<PROFILE>\fR
+Policy profile from .h5i/env.toml (see `h5i box create \-\-help`)
+.TP
+\fB\-\-isolation\fR \fI<ISOLATION>\fR
+Isolation tier: auto (default) | workspace | process | supervised | container | ...
+.TP
+\fB\-\-image\fR \fI<IMAGE>\fR
+Container base image for isolation=container
+.TP
+\fB\-\-engine\fR \fI<ENGINE>\fR
+Browser engine for the `browser` profile: chromium | lightpanda | h5i
+.TP
+\fB\-\-json\fR
+Emit the created box\*(Aqs manifest as JSON instead of the human summary
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+[\fISOURCE\fR]
+Where the code comes from: `.` for this repository (the default), or a repository URL to copy into the box. A pull request is `\-\-pr`
+.SH "H5I BOX CREATE"
+Create a box explicitly. `h5i box [SOURCE]` is the short form and takes the same flags; this is what it dispatches to
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBcreate\fR [\fB\-\-from\fR] [\fB\-\-pr\fR] [\fB\-\-clone\fR] [\fB\-\-new\fR] [\fB\-\-remote\fR] [\fB\-\-profile\fR] [\fB\-\-isolation\fR] [\fB\-\-image\fR] [\fB\-\-engine\fR] [\fB\-\-backend\fR] [\fB\-\-audit\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-from\fR \fI<FROM>\fR
+Base revision (default: HEAD). Pinned immutably
+.TP
+\fB\-\-pr\fR \fI<NUMBER|URL>\fR
+Base the env on a GitHub pull request (number, #number, or URL): fetches refs/pull/<n>/head from the remote, pins it as the immutable base, and points the env\*(Aqs parent branch at a local `pr/<n>` tracking branch, so propose/apply review the PR head, and apply prints the push\-back command. Needs only `git`; `gh` (optional) enriches the push\-back hint with the PR\*(Aqs head branch name
+.TP
+\fB\-\-clone\fR \fI<URL>\fR
+Copy an external repository into the box instead of taking a worktree of this one. The box is *detached*: this repository is never touched, and `h5i box export` is the only way out
+.TP
+\fB\-\-new\fR
+Start from an empty box (a fresh repository with one empty commit), for letting an agent build something from nothing. Also detached
+.TP
+\fB\-\-remote\fR \fI<REMOTE>\fR [default: origin]
+Remote to fetch the PR head from (with \-\-pr)
+.TP
+\fB\-\-profile\fR \fI<PROFILE>\fR
+Policy profile from .h5i/env.toml. Built\-ins need no file: `agent` (agent\-in\-box, scoped to $H5I_AGENT\*(Aqs runtime), `agent\-claude` / `agent\-codex` (pin one runtime: only that agent\*(Aqs HOME state + API egress), `browser` (the agent profile plus headless Chrome and the agent\-browser daemon, so the agent can drive a real browser against the dev server it just started), and `default` (fail\-closed build/test confinement). Unset auto\-picks the creating runtime\*(Aqs agent profile when this host can enforce it, else `default`
+.TP
+\fB\-\-isolation\fR \fI<ISOLATION>\fR
+Isolation: auto (default) | workspace | process | supervised | container | microvm. `auto` (or unset) picks the strongest tier the host can run; an explicit tier fails closed if the host cannot satisfy it (never silently downgrades). `microvm` boots a hardware\-isolated guest via microsandbox (`msb`) and is the only tier whose net.egress allowlist is enforced by address rather than by an HTTP proxy; it needs an image and host virtualization
+.TP
+\fB\-\-image\fR \fI<IMAGE>\fR
+Base image for isolation=container and isolation=microvm (pre\-pulled; runs never pull). Overrides the profile\*(Aqs `container.image` and the repo\-level `[container] image` default in .h5i/env.toml. Passing it makes both image\-backed tiers candidates for the isolation auto\-pick
+.TP
+\fB\-\-engine\fR \fI<ENGINE>\fR
+Browser engine for the `browser` profile: chromium (default), lightpanda, or h5i. Overrides the profile\*(Aqs `engine`. Pinned in the policy digest, and never falls back: a box whose engine cannot serve a page fails and names the recreate, because switching engine changes what a page is able to do
+.TP
+\fB\-\-backend\fR \fI<BACKEND>\fR [default: auto]
+Workspace backend (auto|worktree)
+.TP
+\fB\-\-audit\fR \fI<AUDIT>\fR [default: signal]
+Audit capture mode for wrapped in\-env commands: signal (default) | all. `all` records every wrapped command, including small successful output
+.TP
+\fB\-\-json\fR
+Emit the created box\*(Aqs manifest as JSON (the `status \-\-json` shape, plus the workspace path) instead of the human summary. Notes still go to stderr, so stdout stays parseable
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fINAME\fR>
+Environment name (lowercase slug, e.g. `fix\-auth`)
+.SH "H5I BOX RUN"
+Run one command inside a box, policy-enforced: the exit code passes through and the run is recorded as a receipt tagged with the box id and the policy digest that was actually enforced
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBrun\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> [\fICOMMAND\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+Emit a JSON envelope on stdout (receipt, exit code, timing, the recorded output) instead of streaming the raw output. Put the flag before the name: everything after `\-\-` belongs to the command. The exit code still passes through
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+Environment name (slug, `agent/slug`, or full `env/agent/slug`)
+.TP
+[\fICOMMAND\fR]
+The command to run, after `\-\-`
+.SH "H5I BOX SHELL"
+Open an interactive, confined session INSIDE the environment. The "agent-in-box". stdio is inherited (a real terminal), so every command the session spawns is contained by the box, not by the agent choosing to wrap each call. Defaults to a login shell when no command is given
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBshell\fR [\fB\-\-readonly\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> [\fICOMMAND\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-readonly\fR
+Attach as a READ\-ONLY observer: `$WORK` is pinned read\-only, the box gets an ephemeral per\-session HOME/tmp, and no env state (status, captures, manifest) is touched. Multiple `\-\-readonly` sessions can run on one env at once (they take a shared lock); they still exclude a live read\-write session. Requires isolation=process or supervised
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+Environment name (slug, `agent/slug`, or full `env/agent/slug`)
+.TP
+[\fICOMMAND\fR]
+Command to run inside the box (after `\-\-`); default: an interactive shell
+.SH "H5I BOX ALLOW"
+Manage the persistent user-level egress allowlist: extra hosts merged into every container- or microvm-tier env whose profile already sets net.egress (a deny-all profile is never widened). Stored host-side under ~/.config/h5i/, outside every box-granted path; takes effect at the next `env run`/`env shell`. With no rule, lists the current entries
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBallow\fR [\fB\-\-remove\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIRULE\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-remove\fR
+Remove the rule instead of adding it
+.TP
+\fB\-\-json\fR
+Emit the current allowlist as JSON
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fIRULE\fR]
+Host rule: exact `api.example.com`, wildcard `.example.com` / `*.example.com`, optionally with a `:port` suffix
+.SH "H5I BOX PROBE"
+Probe what isolation this host can actually provide (Landlock, user namespaces, seccomp) and which claims are satisfiable
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBprobe\fR [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I BOX CAPABILITIES"
+Machine-readable host enforcement report: isolation tier, egress-enforced yes/no, resource-limit support, and per-claim satisfiable/runnable, so a product can adapt to the real host without scraping `env probe` text
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBcapabilities\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fINAME\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+Emit the structured report as JSON instead of the human view
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fINAME\fR]
+Optional box name: report what THAT box actually received (its enforced policy), instead of the host\-wide capability probe
+.SH "H5I BOX LIST"
+List environments on this clone (the fleet view)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBlist\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+Emit a machine\-readable JSON array (manifest + base drift per env)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I BOX STATUS"
+Show one environment's status: lifecycle, enforced policy, evidence, and base drift
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBstatus\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+Emit the raw manifest JSON instead of the human view
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
+.SH "H5I BOX VIEW"
+Watch this box's browser from the host, and take over when you want to
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBview\fR [\fB\-\-port\fR] [\fB\-\-term\fR] [\fB\-\-fps\fR] [\fB\-\-assume\-graphics\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-port\fR \fI<PORT>\fR [default: 7331]
+Loopback port to bind. 0 picks a free one and prints it
+.TP
+\fB\-\-term\fR
+Draw the page in this terminal instead of serving it to a browser
+.TP
+\fB\-\-fps\fR \fI<FPS>\fR [default: 10]
+Frame\-rate ceiling asked of the box, for `\-\-term`
+.TP
+\fB\-\-assume\-graphics\fR
+Skip the graphics probe and render anyway, for `\-\-term`. Frames are then sent uncompressed (about six times the bytes), because the probe is also what asks whether this terminal accepts deflated ones
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
+.SH "H5I BOX DOCTOR"
+Check one environment's enforcement readiness and structural health (can it actually enforce its isolation claim here? are its refs intact?)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBdoctor\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+Emit the structured report as JSON instead of the human view
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
+.SH "H5I BOX SECRETS"
+List the secret grants an environment's policy declares, with a dry-run resolution status (never the value: only a fingerprint when resolvable)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBsecrets\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+Emit the status as JSON instead of the human view
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
+.SH "H5I BOX SERVICE"
+Manage long-lived services declared in the env's `.h5i/env.toml` (`[service.<name>]`), confined and pid-tracked, no daemon
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBservice\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I BOX SERVICE START"
+Start a declared service as a confined background process
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBstart\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIENV\fR> <\fISERVICE\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIENV\fR>
+Environment name (slug, `agent/slug`, or full `env/agent/slug`)
+.TP
+<\fISERVICE\fR>
+Service name (a `[service.<name>]` in the env\*(Aqs `.h5i/env.toml`)
+.SH "H5I BOX SERVICE STOP"
+Stop a running service (and capture its log as evidence)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBstop\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIENV\fR> <\fISERVICE\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIENV\fR>
+
+.TP
+<\fISERVICE\fR>
+
+.SH "H5I BOX SERVICE STATUS"
+Show every recorded service for an env and its liveness
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBstatus\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIENV\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIENV\fR>
+
+.SH "H5I BOX SERVICE LOGS"
+Tail a running service's log
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBlogs\fR [\fB\-\-tail\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIENV\fR> <\fISERVICE\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-tail\fR \fI<TAIL>\fR [default: 200]
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIENV\fR>
+
+.TP
+<\fISERVICE\fR>
+
+.SH "H5I BOX PORTS"
+Show the per-env dynamic port map (services with a declared port)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBports\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+Emit the port map as JSON instead of the human view
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
+.SH "H5I BOX REBASE"
+Rebase the environment onto its parent branch's current tip, re-pinning the base (use when `status` reports the parent has advanced)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBrebase\fR [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
+.SH "H5I BOX LOG"
+Show the event log (refs/h5i/env) for one environment
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBlog\fR [\fB\-\-limit\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-limit\fR \fI<LIMIT>\fR [default: 0]
+Show only the newest N events (0 shows the full log)
+.TP
+\fB\-\-json\fR
+Emit the event records as JSON instead of the human view
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
+.SH "H5I BOX WATCH"
+Stream this box's policy decisions, one line each, as they happen
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBwatch\fR [\fB\-\-deny\-only\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-deny\-only\fR
+Print only refusals: a denied request, the verdict that refused it, and any agent action the mediator turned away
+.TP
+\fB\-\-json\fR
+Emit one JSON object per line instead of the human view
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fINAME\fR>
+
+.SH "H5I BOX DIFF"
+Diff the environment's work against its pinned base
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBdiff\fR [\fB\-\-stat\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-stat\fR
+Show a diffstat instead of the full patch
+.TP
+\fB\-\-json\fR
+Output a machine\-readable diffstat
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
+.SH "H5I BOX INSPECT"
+Inspect one of an environment's evidence captures (structured findings, exit code, policy digest, redactions)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBinspect\fR <\fB\-\-capture\fR> [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-capture\fR \fI<CAPTURE>\fR
+Capture id (from `h5i box status`/`log`)
+.TP
+\fB\-\-json\fR
+Emit the stored capture manifest as JSON instead of the human view
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
+.SH "H5I BOX COMPARE"
+Compare environments side by side. Changes + latest run results (the "arena" reviewer comparison). Best on envs sharing one base
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBcompare\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAMES\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+Emit JSON instead of the table
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAMES\fR>
+Two or more environment names
+.SH "H5I BOX EXPORT"
+The output gate: freeze the box and write an inspectable bundle (patch.diff, report.md, receipt.json) for a human to review and apply. Nothing reaches the host repository without that human step
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBexport\fR [\fB\-\-out\fR] [\fB\-\-force\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-out\fR \fI<OUT>\fR
+Where to write the bundle (default: ./h5i\-export/<name>)
+.TP
+\fB\-\-force\fR
+Replace a non\-empty output directory
+.TP
+\fB\-\-json\fR
+Emit the export summary as JSON instead of the human view
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
+.SH "H5I BOX PROPOSE"
+Snapshot the worktree (mediated commit, path-allowlist enforced) and mark the box proposed. Produces a review brief. Never writes the parent branch. `export` runs this as its freeze step
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBpropose\fR [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
+.SH "H5I BOX APPLY"
+Apply a proposed environment onto its parent branch (reviewer-selected, never automatic). Default is a merge (fast-forward when possible)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBapply\fR [\fB\-\-patch\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-patch\fR
+Squash the env\*(Aqs changes into a single commit instead of merging
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
+.SH "H5I BOX ABORT"
+Abort an environment. Manifest and workspace preserved for forensics
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBabort\fR [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
+.SH "H5I BOX CACHE"
+Warm dependency caches: one per project and ecosystem, keyed by that ecosystem's lockfiles, mounted read-only into a box
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBcache\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I BOX CACHE LIST"
+List the caches on this clone
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBlist\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I BOX CACHE MOUNTS"
+Show which caches a box created right now would be given, and where they would appear inside it
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBmounts\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I BOX CACHE REFRESH"
+Populate a cache by fetching this project's dependencies
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBrefresh\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIECO\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIECO\fR>
+Ecosystem to refresh (cargo, npm, uv, go)
+.SH "H5I BOX CACHE RM"
+Remove a cache. Without --key, removes every cache for the ecosystem
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBrm\fR [\fB\-\-key\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIECO\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-key\fR \fI<KEY>\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIECO\fR>
+
+.SH "H5I BOX RM"
+Permanently remove one or more environments from this clone: prune their worktrees, delete their code + reasoning branches, and erase their manifests. Destroys local provenance (only the `removed` event in refs/h5i/env survives). A still-live env (created/running/proposed) needs --force. Multiple names are processed in order; a failure for one env is reported but does not abort the rest
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBrm\fR [\fB\-\-force\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAMES\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-force\fR
+Remove even if the env is still live (not applied/aborted). Applies to every listed env
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAMES\fR>
+One or more environment names (slug, `agent/slug`, or full `env/agent/slug`)
+.SH "H5I BOX GC"
+Reclaim workspaces of applied/aborted environments (worktree prune). Manifests, branches, and captures are retained
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBgc\fR [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I UI"
+Open the box console in a browser: one read-only screen over the whole fleet. What each box is, what its policy actually allows, what ran inside it, and what pressed on a boundary
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBui\fR [\fB\-\-port\fR] [\fB\-\-open\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-port\fR \fI<PORT>\fR [default: 8765]
+Port to bind on 127.0.0.1. `0` asks the OS for a free one
+.TP
+\fB\-\-open\fR
+Also hand the URL to this desktop\*(Aqs browser
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.SH "H5I BROWSER"
+Browser sessions: open one, drive it, close it
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBbrowser\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I BROWSER OPEN"
+Open a URL, making a session if there is not one already
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBopen\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-new\fR] [\fB\-\-project\fR] [\fB\-\-allow\fR] [\fB\-\-no\-loopback\fR] [\fB\-\-expires\-in\fR] [\fB\-\-dom\-instrument\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIURL\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Name this session, so several can run at once. A name is reusable once its session ends; the id in `\-\-json` is the durable reference
+.TP
+\fB\-\-new\fR
+Make a new session even if one is already open, rather than navigating it
+.TP
+\fB\-\-project\fR \fI<NAME>\fR
+The engagement this session belongs to. When `~/.config/h5i/projects/<name>.toml` exists it is also the scope: its grants join `\-\-allow` and its deny rules are checked before the wire
+.TP
+\fB\-\-allow\fR \fI<ORIGIN>\fR
+Grant another origin. Repeatable. Without any, nothing remote is reachable except the URL\*(Aqs own origin
+.TP
+\fB\-\-no\-loopback\fR
+Refuse loopback too. It is reachable by default: it is the dev server
+.TP
+\fB\-\-expires\-in\fR \fI<SECONDS>\fR
+End the session automatically after this many seconds. `status` still answers afterwards, and says it expired
+.TP
+\fB\-\-dom\-instrument\fR
+Instrument pages for prototype pollution and DOM\-XSS: inject the DOM instrument into HTML and collect what reaches a sink, for `h5i websec dom scan`
+.TP
+\fB\-\-json\fR
+Print the session record as JSON instead of a summary
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fIURL\fR>
+The URL to open
+.SH "H5I BROWSER PROXY"
+Start a capture session: an h5i HTTP/S proxy for a Chromium to go through
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBproxy\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-project\fR] [\fB\-\-allow\fR] [\fB\-\-no\-loopback\fR] [\fB\-\-expires\-in\fR] [\fB\-\-dom\-instrument\fR] [\fB\-\-no\-browser\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIURL\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Name this session
+.TP
+\fB\-\-project\fR \fI<NAME>\fR
+The engagement this session belongs to. When `~/.config/h5i/projects/<name>.toml` exists it is also the scope: its grants join `\-\-allow` and its deny rules are checked before the wire
+.TP
+\fB\-\-allow\fR \fI<ORIGIN>\fR
+Grant another origin. Repeatable. Without any, nothing remote is reachable except the URL\*(Aqs own origin
+.TP
+\fB\-\-no\-loopback\fR
+Refuse loopback too. It is reachable by default: it is the dev server
+.TP
+\fB\-\-expires\-in\fR \fI<SECONDS>\fR
+End the session automatically after this many seconds. `status` still answers afterwards, and says it expired
+.TP
+\fB\-\-dom\-instrument\fR
+Instrument pages for prototype pollution and DOM\-XSS: inject the DOM instrument into HTML and collect what reaches a sink, for `h5i websec dom scan`
+.TP
+\fB\-\-no\-browser\fR
+Start without a browser: for a session driven only by `resend` and the plugins, or a browser you point at the proxy yourself
+.TP
+\fB\-\-json\fR
+Print the session record as JSON
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fIURL\fR>
+The first target, used to seed the origin allowlist
+.SH "H5I BROWSER PROXY-OPEN"
+Open a URL in the Chromium a session drives. The same as `navigate`
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBproxy\-open\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIURL\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+The session to drive
+.TP
+\fB\-\-json\fR
+Print the result as JSON
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIURL\fR>
+The URL to open
+.SH "H5I BROWSER LIST"
+List the browser sessions on this machine
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBlist\fR [\fB\-\-all\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-all\fR
+Include sessions that have ended. They are kept: the record of how a session ended is the part a reviewer needs
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I BROWSER STATUS"
+What a session is, where it runs, and who saw its network
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBstatus\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I BROWSER CLOSE"
+End a session: its proxy and its Chromium. Its record stays
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBclose\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-all\fR] [\fB\-\-capture\-drop\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
+.TP
+\fB\-\-all\fR
+End every live session on this machine
+.TP
+\fB\-\-capture\-drop\fR
+Delete the captured messages (bodies and credentials in full) as well. The record and the request log stay
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I BROWSER RM"
+Erase sessions: their records, logs and stored messages
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBrm\fR [\fB\-\-ended\fR] [\fB\-\-all\fR] [\fB\-\-older\-than\fR] [\fB\-\-dry\-run\fR] [\fB\-\-force\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fINAMES\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-ended\fR
+Remove every session that has ended, rather than naming them
+.TP
+\fB\-\-all\fR
+Remove every record on this machine. A live session still needs `\-\-force`
+.TP
+\fB\-\-older\-than\fR \fI<DAYS>\fR
+Only sessions that ended at least this long ago, in days. On its own it means `\-\-ended`, since a live session has no ending to be older than
+.TP
+\fB\-\-dry\-run\fR
+Say what would be removed, and remove nothing
+.TP
+\fB\-\-force\fR
+Remove even a session that is still live. Its proxy is asked to stop first
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+[\fINAMES\fR]
+One or more session names or ids
+.SH "H5I BROWSER GC"
+Reclaim the stored messages of ended sessions, keeping their records, request logs and recon ledgers. The bulk form of `close --capture-drop`
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBgc\fR [\fB\-\-older\-than\fR] [\fB\-\-dry\-run\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-older\-than\fR \fI<DAYS>\fR [default: 7]
+Only sessions that ended at least this long ago, in days. `0` reclaims from every ended session
+.TP
+\fB\-\-dry\-run\fR
+Say what would be reclaimed, and reclaim nothing
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I BROWSER SNAPSHOT"
+The page as a model should read it: the accessibility outline, with `@ref` handles the other page verbs take
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBsnapshot\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-i\fR|\fB\-\-interactive\fR] [\fB\-\-delta\fR] [\fB\-\-url\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open
+.TP
+\fB\-i\fR, \fB\-\-interactive\fR
+Only the interactive elements: what can be clicked, typed into or chosen
+.TP
+\fB\-\-delta\fR
+Report only what changed since the last snapshot
+.TP
+\fB\-\-url\fR \fI<URL>\fR
+Go here first, then read
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I BROWSER NAVIGATE"
+Go to a URL in this session's Chromium
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBnavigate\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIURL\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIURL\fR>
+
+.SH "H5I BROWSER RELOAD"
+Load the current page again
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBreload\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I BROWSER SCREENSHOT"
+Write a PNG of the page this session is on
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBscreenshot\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-out\fR] [\fB\-\-full\fR] [\fB\-\-url\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open
+.TP
+\fB\-\-out\fR \fI<PATH>\fR
+Where to write it. Defaults to a file h5i names in the session\*(Aqs own artifacts directory
+.TP
+\fB\-\-full\fR
+The whole page, not only the viewport
+.TP
+\fB\-\-url\fR \fI<URL>\fR
+Go here first, then paint
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I BROWSER CLICK"
+Click an element: `@e3` from a snapshot, or a CSS selector
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBclick\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITARGET\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fITARGET\fR>
+`@e3` from a `snapshot`, or a CSS selector
+.SH "H5I BROWSER TYPE"
+Put text into a field, replacing what was there
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBtype\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITARGET\fR> <\fITEXT\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fITARGET\fR>
+`@e3` from a `snapshot`, or a CSS selector
+.TP
+<\fITEXT\fR>
+The text
+.SH "H5I BROWSER PRESS"
+Press a key that *does* something: Enter, Escape, Tab. To enter text use `type`
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBpress\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIKEY\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIKEY\fR>
+The key, as `Enter`, `Tab` or `Control+a`
+.SH "H5I BROWSER SELECT"
+Choose an option in a `<select>`, by its value
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBselect\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITARGET\fR> <\fIOPTION\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fITARGET\fR>
+`@e3` from a `snapshot`, or a CSS selector
+.TP
+<\fIOPTION\fR>
+The option\*(Aqs value
+.SH "H5I BROWSER SET-CHECKED"
+Set a checkbox or radio to a state, rather than toggling it with a click
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBset\-checked\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITARGET\fR> <\fICHECKED\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fITARGET\fR>
+`@e3` from a `snapshot`, or a CSS selector
+.TP
+<\fICHECKED\fR>
+`true` or `false`
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+true
+.IP \(bu 2
+false
+.RE
+.SH "H5I BROWSER SCROLL"
+Scroll the page by this many pixels. Negative scrolls up
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBscroll\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIBY\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIBY\fR>
+
+.SH "H5I BROWSER WAIT-FOR"
+Wait until an element, or some text, is on the page
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBwait\-for\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-selector\fR] [\fB\-\-text\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open
+.TP
+\fB\-\-selector\fR \fI<CSS>\fR
+A CSS selector or `@ref` to wait for
+.TP
+\fB\-\-text\fR \fI<TEXT>\fR
+Text to wait for
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I BROWSER WAIT-FOR-SCRIPT"
+Wait until a page expression is true
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBwait\-for\-script\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIEXPR\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIEXPR\fR>
+The JavaScript expression
+.SH "H5I BROWSER EVAL"
+Run JavaScript in the page this session's Chromium is on, and print the result. How a DOM-side effect (an XSS that fires) is confirmed; the result is kept in the session's artifacts
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBeval\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIJS\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIJS\fR>
+The JavaScript to evaluate in the current page
+.SH "H5I BROWSER CONSOLE"
+Print the console log of this session's Chromium. Kept in the session's artifacts
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBconsole\fR [\fB\-\-clear\fR] [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-clear\fR
+Clear the log after reading it
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I BROWSER SOCKET"
+Open a WebSocket, send frames, and report what came back
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBsocket\fR [\fB\-\-send\fR] [\fB\-\-wait\-ms\fR] [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIURL\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-send\fR \fI<TEXT>\fR
+A text frame to send. Repeatable, and sent in the order given
+.TP
+\fB\-\-wait\-ms\fR \fI<MS>\fR [default: 5000]
+How long to listen for replies, in milliseconds
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fIURL\fR>
+The `ws://` or `wss://` endpoint to open
+.SH "H5I BROWSER GRPC"
+Make one gRPC call over HTTP/2, through the same policy, budget and receipts as `resend`. Framed bytes in and out; `h5i websec grpc` speaks JSON
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBgrpc\fR <\fB\-\-path\fR> [\fB\-\-request\-frame\fR] [\fB\-\-metadata\fR] [\fB\-\-insecure\fR] [\fB\-\-timeout\-ms\fR] [\fB\-\-authority\fR] [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIURL\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-path\fR \fI<PATH>\fR
+The `:path`, `/package.Service/Method`
+.TP
+\fB\-\-request\-frame\fR \fI<BASE64>\fR
+The base64 of the already\-framed request body
+.TP
+\fB\-\-metadata\fR \fI<NAME:VALUE>\fR
+`name:value` gRPC metadata. Repeatable
+.TP
+\fB\-\-insecure\fR
+Skip TLS certificate verification, for a target under test
+.TP
+\fB\-\-timeout\-ms\fR \fI<MS>\fR
+Give up after this many milliseconds
+.TP
+\fB\-\-authority\fR \fI<HOST>\fR
+Override the `:authority` header
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIURL\fR>
+The http(s) endpoint, e.g. `http://host:50051`
+.SH "H5I BROWSER AUDIT"
+Everything recorded about this session, in one ordered timeline: verbs, requests, who was driving, and how it ended
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBaudit\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I BROWSER REQUESTS"
+The request log: what this session sent, and what was refused. Written before the bytes moved
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBrequests\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-since\fR] [\fB\-\-method\fR] [\fB\-\-url\-contains\fR] [\fB\-\-status\fR] [\fB\-\-initiator\fR] [\fB\-\-denied\-only\fR] [\fB\-\-limit\fR] [\fB\-\-json\fR] [\fB\-\-human\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
+.TP
+\fB\-\-since\fR \fI<SEQ>\fR
+Only what happened after this sequence number
+.TP
+\fB\-\-method\fR \fI<METHOD>\fR
+Only this method
+.TP
+\fB\-\-url\-contains\fR \fI<TEXT>\fR
+Only rows whose URL contains this
+.TP
+\fB\-\-status\fR \fI<CODE>\fR
+Only responses with this status
+.TP
+\fB\-\-initiator\fR \fI<KIND>\fR
+Only `subresource` (what the browser sent through the proxy), `redirect`, or `replay` (what h5i sent)
+.TP
+\fB\-\-denied\-only\fR
+Only what policy refused
+.TP
+\fB\-\-limit\fR \fI<N>\fR
+At most this many rows, newest last
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-\-human\fR
+Emit the human\-readable view (the default)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I BROWSER SEQUENCE"
+Run a multi-step flow: send, extract, send again with what was found
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBsequence\fR [\fB\-\-var\fR] [\fB\-\-keep\-going\fR] [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIFILE\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-var\fR \fI<NAME=VALUE>\fR
+Bind a name before the first step, as `name=value`. Repeatable
+.TP
+\fB\-\-keep\-going\fR
+Run every step even after one fails, to read a whole file\*(Aqs failures at once
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fIFILE\fR>
+The sequence file
+.SH "H5I BROWSER RESEND"
+Send one of this session's own requests again, with changes
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBresend\fR [\fB\-\-set\fR] [\fB\-\-set\-file\fR] [\fB\-\-unset\fR] [\fB\-\-create\fR] [\fB\-\-repeat\fR] [\fB\-\-race\fR] [\fB\-\-no\-follow\fR] [\fB\-\-reset\-budget\fR] [\fB\-\-as\fR] [\fB\-\-keep\-credentials\fR] [\fB\-\-raw\-target\fR] [\fB\-\-raw\-headers\fR] [\fB\-\-set\-each\fR] [\fB\-\-raw\-request\fR] [\fB\-\-walk\fR] [\fB\-\-rate\fR] [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISEQ\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-set\fR \fI<TARGET=VALUE>\fR
+Change one part of it: `query.id=456`, `header.X\-Real\-IP=127.0.0.1`, `cookie.session=forged`, `json.role=admin`, `form.user=admin`, `path=/admin`, `method=POST`, `body.raw=<bytes>`. Repeatable, in order; the value is everything after the first `=`.
+
+A `json.` value is typed the way it reads (`json.id=99` is a number); quote it to insist on a string.
+.TP
+\fB\-\-set\-file\fR \fI<TARGET=PATH>\fR
+Set one part of it to a file\*(Aqs bytes: `multipart.userfile=./payload.jpg`. Applied after every `\-\-set`
+.TP
+\fB\-\-unset\fR \fI<TARGET>\fR
+Remove one part of it, by the same names
+.TP
+\fB\-\-create\fR
+Add a target that is not there rather than refusing it as a typo
+.TP
+\fB\-\-repeat\fR \fI<N>\fR [default: 1]
+Send it this many times and report every sample, with a median and a median absolute deviation, for a timing test
+.TP
+\fB\-\-race\fR
+Release the repeated sends together, for a check\-then\-act race. A burst from threads that meet at a barrier, not a single\-packet attack
+.TP
+\fB\-\-no\-follow\fR
+Stop at the first redirect and report it, rather than following it
+.TP
+\fB\-\-reset\-budget\fR
+Start this session\*(Aqs request allowance again before sending, for a long walk that would otherwise stop partway
+.TP
+\fB\-\-as\fR \fI<SESSION>\fR
+Send it from another session instead: the authorization test. The message comes from `\-\-session`, with its credentials dropped; the cookies, policy and receipts are the named session\*(Aqs
+.TP
+\fB\-\-keep\-credentials\fR
+Carry the source session\*(Aqs `Cookie` and `Authorization` headers into the other session. Only meaningful with `\-\-as`
+.TP
+\fB\-\-raw\-target\fR \fI<TARGET>\fR
+Send this request\-target unchanged, without URL normalization
+.TP
+\fB\-\-raw\-headers\fR
+Preserve header\-name casing while retaining edits and cookies
+.TP
+\fB\-\-set\-each\fR \fI<TARGET=PATH>\fR
+Send once per line, as `query.id=./ids.txt`, after shared edits
+.TP
+\fB\-\-raw\-request\fR \fI<PATH>\fR
+Send a complete request unchanged from this file; `\-` reads stdin.
+
+The stored URL supplies the authority for policy checks and dialing.
+.TP
+\fB\-\-walk\fR \fI<PATH>\fR
+Walk a list of sends from this file (`\-` reads stdin): `{"steps":[{"label":"a","set":["query.user=alice"]},...]}`
+.TP
+\fB\-\-rate\fR \fI<PER_SECOND>\fR
+Send at most this many requests per second
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fISEQ\fR>
+The sequence number to send again, as `requests` lists them
+.SH "H5I BROWSER RPC"
+Speak one request per line, and answer one per line, without a process per verb. Each line carries an `id` and a `verb`; the reply has the `id`
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBrpc\fR [\fB\-\-stdio\fR] [\fB\-s\fR|\fB\-\-session\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-stdio\fR
+Read requests from stdin and write replies to stdout
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I BROWSER ENV"
+Which credentials this session can use, by name. Never their values
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBenv\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I BROWSER TAKE"
+Take control as a human. The agent's automation pauses at its next verb
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBtake\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I BROWSER RELEASE"
+Hand control back to the agent. It must re-snapshot before acting, because the page moved while you were driving
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBrelease\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I BROWSER URL"
+Print the loopback viewer URL for a box, token included. `h5i box view` is what actually serves it; this is for pasting into a browser when a forward is already running
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBurl\fR [\fB\-\-port\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-port\fR \fI<PORT>\fR [default: 7331]
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+A box name
+.SH "H5I PLUGIN"
+Install, list or remove a plugin. Plugins add top-level commands: `h5i websec` (HTTP workbench: edit, resend and compare captured requests), `h5i recon` (endpoint ledger) and `h5i test` (security regression tests). `h5i plugin list` shows which are installed
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBplugin\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.SH "H5I PLUGIN INSTALL"
+Install a plugin from a file
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBinstall\fR <\fB\-\-from\fR> [\fB\-\-force\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-from\fR \fI<PATH>\fR
+The executable to install
+.TP
+\fB\-\-force\fR
+Replace one that is already installed
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fINAME\fR>
+The plugin\*(Aqs name, as it will be typed: `websec` for `h5i websec`
+.SH "H5I PLUGIN LIST"
+What is installed, and what could be
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBlist\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I PLUGIN REMOVE"
+Remove an installed plugin
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBremove\fR [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
+.SH "H5I PROJECT"
+The engagement that outlives its sessions: notes, findings, evidence, checklists and reports
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBproject\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.SH "H5I PROJECT INIT"
+Start a project. Findings and reports hang off it from here on
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBinit\fR [\fB\-\-title\fR] [\fB\-\-describe\fR] [\fB\-\-target\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-title\fR \fI<TEXT>\fR
+
+.TP
+\fB\-\-describe\fR \fI<TEXT>\fR
+
+.TP
+\fB\-\-target\fR \fI<TEXT>\fR
+What is being assessed; repeatable
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
+.SH "H5I PROJECT LIST"
+Every project on this machine
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBlist\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I PROJECT SHOW"
+A project's state: findings by severity, coverage, reports
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBshow\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I PROJECT NOTE"
+Free notes: hypotheses, what the owner said, what is missing
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBnote\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I PROJECT NOTE ADD"
+Write one down
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBadd\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-tag\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fITEXT\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-tag\fR \fI<TAG>\fR
+
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fITEXT\fR]
+The note. Read from stdin when omitted
+.SH "H5I PROJECT NOTE LIST"
+Every note, oldest first
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBlist\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-archived\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-archived\fR
+Include archived notes
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I PROJECT NOTE EDIT"
+Change a note, tag it, or archive it
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBedit\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-text\fR] [\fB\-\-tag\fR] [\fB\-\-archive\fR] [\fB\-\-unarchive\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIID\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-text\fR \fI<TEXT>\fR
+
+.TP
+\fB\-\-tag\fR \fI<TAG>\fR
+
+.TP
+\fB\-\-archive\fR
+
+.TP
+\fB\-\-unarchive\fR
+
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIID\fR>
+
+.SH "H5I PROJECT FINDING"
+What was concluded, and how it stands
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBfinding\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I PROJECT FINDING CREATE"
+Write a finding
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBcreate\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-title\fR] [\fB\-\-summary\fR] [\fB\-\-state\fR] [\fB\-\-severity\fR] [\fB\-\-severity\-reason\fR] [\fB\-\-impact\fR] [\fB\-\-affected\fR] [\fB\-\-remediation\fR] [\fB\-\-status\fR] [\fB\-\-owner\fR] [\fB\-\-due\fR] [\fB\-\-body\fR] [\fB\-\-note\fR] [\fB\-\-evidence\fR] [\fB\-\-repro\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-title\fR \fI<TEXT>\fR
+
+.TP
+\fB\-\-summary\fR \fI<TEXT>\fR
+A plain\-language explanation for a non\-specialist reader
+.TP
+\fB\-\-state\fR \fI<TEXT>\fR
+How sure you are. Free text: nothing here reads it
+.TP
+\fB\-\-severity\fR \fI<LEVEL>\fR
+critical, high, medium, low or info
+.TP
+\fB\-\-severity\-reason\fR \fI<TEXT>\fR
+
+.TP
+\fB\-\-impact\fR \fI<TEXT>\fR
+
+.TP
+\fB\-\-affected\fR \fI<TEXT>\fR
+
+.TP
+\fB\-\-remediation\fR \fI<TEXT>\fR
+
+.TP
+\fB\-\-status\fR \fI<STATE>\fR
+open, in\-progress, fix\-claimed, fixed\-verified or risk\-accepted
+.TP
+\fB\-\-owner\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-due\fR \fI<DATE>\fR
+
+.TP
+\fB\-\-body\fR \fI<TEXT>\fR
+Free Markdown, for whatever else the finding needs said
+.TP
+\fB\-\-note\fR \fI<TEXT>\fR
+Add a note; repeatable over the finding\*(Aqs life
+.TP
+\fB\-\-evidence\fR \fI<IDS>\fR
+Project evidence ids it rests on, as `E\-1,E\-2`
+.TP
+\fB\-\-repro\fR \fI<PATH>\fR
+
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I PROJECT FINDING UPDATE"
+Change one. Title, severity, status and the prose fields replace; notes and evidence add
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBupdate\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-title\fR] [\fB\-\-summary\fR] [\fB\-\-state\fR] [\fB\-\-severity\fR] [\fB\-\-severity\-reason\fR] [\fB\-\-impact\fR] [\fB\-\-affected\fR] [\fB\-\-remediation\fR] [\fB\-\-status\fR] [\fB\-\-owner\fR] [\fB\-\-due\fR] [\fB\-\-body\fR] [\fB\-\-note\fR] [\fB\-\-evidence\fR] [\fB\-\-repro\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIID\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-title\fR \fI<TEXT>\fR
+
+.TP
+\fB\-\-summary\fR \fI<TEXT>\fR
+A plain\-language explanation for a non\-specialist reader
+.TP
+\fB\-\-state\fR \fI<TEXT>\fR
+How sure you are. Free text: nothing here reads it
+.TP
+\fB\-\-severity\fR \fI<LEVEL>\fR
+critical, high, medium, low or info
+.TP
+\fB\-\-severity\-reason\fR \fI<TEXT>\fR
+
+.TP
+\fB\-\-impact\fR \fI<TEXT>\fR
+
+.TP
+\fB\-\-affected\fR \fI<TEXT>\fR
+
+.TP
+\fB\-\-remediation\fR \fI<TEXT>\fR
+
+.TP
+\fB\-\-status\fR \fI<STATE>\fR
+open, in\-progress, fix\-claimed, fixed\-verified or risk\-accepted
+.TP
+\fB\-\-owner\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-due\fR \fI<DATE>\fR
+
+.TP
+\fB\-\-body\fR \fI<TEXT>\fR
+Free Markdown, for whatever else the finding needs said
+.TP
+\fB\-\-note\fR \fI<TEXT>\fR
+Add a note; repeatable over the finding\*(Aqs life
+.TP
+\fB\-\-evidence\fR \fI<IDS>\fR
+Project evidence ids it rests on, as `E\-1,E\-2`
+.TP
+\fB\-\-repro\fR \fI<PATH>\fR
+
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIID\fR>
+
+.SH "H5I PROJECT FINDING LIST"
+Every finding, worst first
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBlist\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I PROJECT FINDING SHOW"
+One finding in full
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBshow\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIID\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIID\fR>
+
+.SH "H5I PROJECT FINDING PROMOTE"
+Copy a session finding into the project, with its evidence
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBpromote\fR [\fB\-p\fR|\fB\-\-project\fR] <\fB\-s\fR|\fB\-\-session\fR> [\fB\-\-all\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIID\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session holds the finding(s)
+.TP
+\fB\-\-all\fR
+
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+[\fIID\fR]
+A session finding id (`finding_3` or `3`). With `\-\-all`, every one
+.SH "H5I PROJECT EVIDENCE"
+Copies of the requests, responses and screenshots findings rest on
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBevidence\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I PROJECT EVIDENCE ADD"
+Copy one captured message into the project, secrets removed
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBadd\fR [\fB\-p\fR|\fB\-\-project\fR] <\fB\-s\fR|\fB\-\-session\fR> [\fB\-\-caption\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIID\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-caption\fR \fI<TEXT>\fR
+
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIID\fR>
+`req_42`, `res_42` or `42`
+.SH "H5I PROJECT EVIDENCE ADD-TEXT"
+Keep a log excerpt or note as evidence. Text from stdin when omitted
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBadd\-text\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-caption\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fITEXT\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-caption\fR \fI<TEXT>\fR
+
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fITEXT\fR]
+
+.SH "H5I PROJECT EVIDENCE ADD-FILE"
+Keep a screenshot (png, jpeg, gif or webp) as evidence
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBadd\-file\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-caption\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIPATH\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-caption\fR \fI<TEXT>\fR
+
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIPATH\fR>
+
+.SH "H5I PROJECT EVIDENCE LIST"
+Every evidence copy
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBlist\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I PROJECT EVIDENCE SHOW"
+One evidence copy, as an HTTP message or text
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBshow\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIID\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIID\fR>
+
+.SH "H5I PROJECT CHECKLIST"
+Checks to cover, imported from Markdown
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBchecklist\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I PROJECT CHECKLIST IMPORT"
+Import a Markdown checklist. Its list items become tracked items
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBimport\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-name\fR] [\fB\-\-required\fR] [\fB\-\-replace\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIFILE\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-name\fR \fI<SLUG>\fR
+The short name to file it under. Derived from the title otherwise
+.TP
+\fB\-\-required\fR
+Each item must end with a recorded outcome, rather than being advice
+.TP
+\fB\-\-replace\fR
+Revise an existing checklist, keeping ids and recording what dropped
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIFILE\fR>
+The Markdown file, or `\-` for stdin
+.SH "H5I PROJECT CHECKLIST LIST"
+Every checklist and its coverage
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBlist\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I PROJECT CHECKLIST SHOW"
+One checklist, its items and their outcomes
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBshow\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISLUG\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fISLUG\fR>
+
+.SH "H5I PROJECT CHECKLIST MARK"
+Record an outcome against an item
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBmark\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-status\fR] [\fB\-\-note\fR] [\fB\-\-link\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISLUG\fR> <\fIITEM\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-status\fR \fI<STATE>\fR
+open, in\-progress, recorded, blocked or not\-applicable
+.TP
+\fB\-\-note\fR \fI<TEXT>\fR
+
+.TP
+\fB\-\-link\fR \fI<ID>\fR
+Link the outcome to a finding, note or evidence id; repeatable
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fISLUG\fR>
+
+.TP
+<\fIITEM\fR>
+`C3` or `3`
+.SH "H5I PROJECT CHECKLIST COVERAGE"
+Coverage counts, for one checklist or all of them
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBcoverage\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fISLUG\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fISLUG\fR]
+
+.SH "H5I PROJECT REPORT"
+The report: a free document with `{{finding F-1}}`-style references
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBreport\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I PROJECT REPORT NEW"
+Start the report draft from a template
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBnew\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-template\fR] [\fB\-\-force\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-template\fR \fI<FILE>\fR
+A Markdown template to start from, instead of the built\-in one
+.TP
+\fB\-\-force\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I PROJECT REPORT PATH"
+Print where the draft is, for an editor to open
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBpath\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I PROJECT REPORT SHOW"
+Print the draft, directives unresolved
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBshow\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I PROJECT REPORT SET"
+Replace the draft with this file (or stdin). How the report gets written
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBset\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIFILE\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fIFILE\fR] [default: \-]
+The Markdown file, or `\-` for stdin
+.SH "H5I PROJECT REPORT CHECK"
+Lint the draft: dangling ids and missing outcomes are errors, gaps advice
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBcheck\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I PROJECT REPORT ISSUE"
+Freeze the draft as an issued version, with its evidence snapshot
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBissue\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-force\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-force\fR
+Issue even while `check` reports errors
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I PROJECT REPORT LIST"
+Every issued version
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBlist\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I PROJECT REPORT EXPORT"
+Write the report as HTML or PDF
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBexport\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-version\fR] [\fB\-\-format\fR] [\fB\-\-out\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-version\fR \fI<N>\fR
+A version number, or the working draft when omitted
+.TP
+\fB\-\-format\fR \fI<FORMAT>\fR [default: html]
+`html` or `pdf`. PDF needs a local Chromium
+.TP
+\fB\-\-out\fR \fI<PATH>\fR
+Where to write it. Defaults beside the report
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I PROJECT GLOSSARY"
+Look up a security term in plain language
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBglossary\fR [\fB\-p\fR|\fB\-\-project\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fITERM\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-project\fR \fI<NAME>\fR
+
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fITERM\fR]
+The term, or nothing to list them all
+.SH "H5I APP"
+Build verified applications with h5i-app: extract the kernel to Lean, gate the proofs, and test the spec with mutants
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBapp\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.SH "H5I APP NEW"
+Start a project: a kernel crate, a Lake project that proves it, and the h5i-app.toml that ties them together
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBnew\fR [\fB\-\-name\fR] [\fB\-\-h5i\-path\fR] [\fB\-\-rev\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIDIR\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-name\fR \fI<NAME>\fR
+Crate name prefix (default: the directory\*(Aqs name)
+.TP
+\fB\-\-h5i\-path\fR \fI<H5I_CHECKOUT>\fR
+Require the h5i\-app Lean library from this local h5i checkout instead of from git
+.TP
+\fB\-\-rev\fR \fI<REV>\fR
+The h5i git revision to require the Lean library at (default: this binary\*(Aqs release tag)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIDIR\fR>
+Directory to create
+.SH "H5I APP EXTRACT"
+Extract the kernel to Lean: Rust -> LLBC (Charon) -> Lean (Aeneas), into proofs/generated/. With `schema = true`, also write the Lean that `schema!` renders to its `lean "..."` path
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBextract\fR [\fB\-\-all\fR] [\fB\-\-check\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATHS\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-all\fR
+Every project under the given directories (default: the current one)
+.TP
+\fB\-\-check\fR
+Change nothing; fail if proofs/generated/ is not what the kernel extracts to (for CI)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fIPATHS\fR]
+Project directories or h5i\-app.toml files (default: the project the current directory is in)
+.SH "H5I APP CHECK"
+Build the proofs and gate them: no sorry, native_decide or axiom, and every theorem in a hand-written module uses only propext, Classical.choice and Quot.sound
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBcheck\fR [\fB\-\-all\fR] [\fB\-\-refetch\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATHS\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-all\fR
+Every project under the given directories (default: the current one)
+.TP
+\fB\-\-refetch\fR
+Discard the project\*(Aqs Lake packages and fetch them again, for a fetch that left them broken. Shared packages are discarded for every project that uses them
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fIPATHS\fR]
+Project directories or h5i\-app.toml files (default: the project the current directory is in)
+.SH "H5I APP PROVE"
+`extract`, then `check`
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBprove\fR [\fB\-\-all\fR] [\fB\-\-refetch\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATHS\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-all\fR
+Every project under the given directories (default: the current one)
+.TP
+\fB\-\-refetch\fR
+Discard the project\*(Aqs Lake packages and fetch them again, for a fetch that left them broken. Shared packages are discarded for every project that uses them
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fIPATHS\fR]
+Project directories or h5i\-app.toml files (default: the project the current directory is in)
+.SH "H5I APP LINT"
+Check the source for what the proofs assume but cannot see: every mutating route takes an authenticated `Actor`, and no `Command` field lets the client set its own identity or privilege. Reports whether the proofs state a universal authorization theorem
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBlint\fR [\fB\-\-all\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATHS\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-all\fR
+Every project under the given directories (default: the current one)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fIPATHS\fR]
+Project directories or h5i\-app.toml files (default: the project the current directory is in)
+.SH "H5I APP REPORT"
+For each HTTP route: the kernel commands it builds, whether it takes an `Actor`, the theorems that cover it and what the last recorded `check` observed for each, the assumptions (A1-A11) it rests on, and what nothing verifies. Derived from the sources and h5i-app.toml; it runs no proof
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBreport\fR [\fB\-\-all\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATHS\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-all\fR
+Every project under the given directories (default: the current one)
+.TP
+\fB\-\-json\fR
+The versioned JSON form instead of text
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fIPATHS\fR]
+Project directories or h5i\-app.toml files (default: the project the current directory is in)
+.SH "H5I APP MUTATE"
+Put bugs in the kernel and make sure each one breaks a proof. A bug that survives is behaviour the spec does not pin down
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBmutate\fR [\fB\-\-all\fR] [\fB\-\-only\fR] [\fB\-\-auto\fR] [\fB\-\-security\fR] [\fB\-\-limit\fR] [\fB\-\-list\fR] [\fB\-j\fR|\fB\-\-jobs\fR] [\fB\-\-keep\fR] [\fB\-\-no\-baseline\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATHS\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-all\fR
+Every project under the given directories (default: the current one)
+.TP
+\fB\-\-only\fR \fI<TEXT>\fR
+Only mutants whose name contains this (repeatable)
+.TP
+\fB\-\-auto\fR
+Also generate mutants from the kernel\*(Aqs syntax: comparison boundaries, flipped equalities, swapped `&&`/`||`, dropped `!`, forced `if` conditions
+.TP
+\fB\-\-security\fR
+Also generate security mutants: a `Policy` conjunct dropped, `visible`/`stored` made `true`, a comparison with the actor made `true`, the guard removed or weakened, the tenant fixed; for a policy from `schema!`, the same in its generator. Each line says which proofs broke
+.TP
+\fB\-\-limit\fR \fI<LIMIT>\fR
+With \-\-auto: at most this many generated mutants per project
+.TP
+\fB\-\-list\fR
+List the mutants and exit
+.TP
+\fB\-j\fR, \fB\-\-jobs\fR \fI<JOBS>\fR [default: 1]
+Mutants to run at once. Each is a full Lean build; mind memory
+.TP
+\fB\-\-keep\fR
+Keep each mutant\*(Aqs directory and log
+.TP
+\fB\-\-no\-baseline\fR
+Skip building the unmodified copy first
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fIPATHS\fR]
+Project directories or h5i\-app.toml files (default: the project the current directory is in)
+.SH "H5I APP DOCTOR"
+Check that Charon, Aeneas and Lean are installed at the versions this h5i extracts with, and that the project pins the same ones
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBdoctor\fR [\fB\-h\fR|\fB\-\-help\fR] [\fIPATH\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fIPATH\fR]
+Project directory or h5i\-app.toml (default: the one the current directory is in, if any)
+.SH "H5I SKILL"
+Write or print the agent skill this binary carries
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBskill\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I SKILL INSTALL"
+Write the skill to disk. Defaults to the per-user skill directory for the current runtime; inside a box, bootstrap points `$H5I_SKILL_DIR` at the in-box location
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBinstall\fR [\fB\-\-target\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-target\fR \fI<TARGET>\fR
+Write here instead of the default target
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I SKILL SHOW"
+Print a page to stdout: the skill itself, or one reference (`boxes`, `policy`, `export`, `troubleshooting`)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBshow\fR [\fB\-h\fR|\fB\-\-help\fR] [\fIPAGE\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fIPAGE\fR]
+
+.SH "H5I SKILL PATH"
+Print where `install` would write
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBpath\fR [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I COMPLETION"
+Generate a shell completion script (bash, zsh, fish, ...); e.g. `h5i completion bash > /etc/bash_completion.d/h5i`
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBcompletion\fR [\fB\-h\fR|\fB\-\-help\fR] <\fISHELL\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fISHELL\fR>
+Shell to generate completions for
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+bash
+.IP \(bu 2
+elvish
+.IP \(bu 2
+fish
+.IP \(bu 2
+powershell
+.IP \(bu 2
+zsh
+.RE
+.SH SEE ALSO
+Full narrative manual: \fBdocs/MANUAL.md\fR in the source tree, or the rendered \fB/manual/\fR page on the project site.
