@@ -947,6 +947,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "notes-kernel"
+version = "0.1.0"
+dependencies = [
+ "h5i-app-core",
+ "h5i-app-schema",
+ "h5i-app-sql",
+ "h5i-app-std",
+]
+
+[[package]]
 name = "nu-ansi-term"
 version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

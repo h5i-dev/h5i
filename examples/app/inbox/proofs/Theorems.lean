@@ -75,6 +75,11 @@ theorem transition_total (a : Principal) (s : Snapshot) (c : Command) : ∃ r, t
   · simp [one_eq]
   · simp [one_eq]
 
+/-- Panic freedom, as `H5iAppLib.Obligation.PanicFree` states it: `transition`
+returns for every actor, state and command (`[obligations] panic-free`). -/
+theorem panic_free : H5iAppLib.Obligation.PanicFree transition :=
+  H5iAppLib.Obligation.panicFree_of_total transition_total
+
 /-! ## Confinement -/
 
 theorem keyIs_of {f t q : U64} {ms : List Message} {m : Message} (h : ms.find? (keyIs f t q) = some m) :

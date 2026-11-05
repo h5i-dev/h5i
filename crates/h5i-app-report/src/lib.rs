@@ -5,6 +5,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
 
+pub mod assumptions;
+pub mod guarantees;
+
 pub const MODEL: &str = "h5i-app.ui.json";
 pub const RUNS: &str = ".h5i/app/runs";
 pub const MAX_FILE: u64 = 4 * 1024 * 1024;
@@ -302,7 +305,29 @@ pub struct Run {
     /// for `[authz]`, the generated ones.
     #[serde(default)]
     pub required_theorems: Vec<String>,
+    /// Each framework-defined obligation of the project and what this check
+    /// found for it (`crates/h5i-app-cli/src/obligations.rs`).
+    #[serde(default)]
+    pub obligations: Vec<ObligationResult>,
     pub error: Option<String>,
+}
+
+/// One framework-defined obligation (`H5iAppLib.Obligation`), as a check run
+/// found it.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ObligationResult {
+    /// `read-only`, `storage`, `panic-free`, `authorized`, `tenant-isolation`, `authz`.
+    pub name: String,
+    /// The statement, as a Lean term, instantiated for the app.
+    pub statement: String,
+    /// `proven` (the theorem has exactly this statement and passed the
+    /// gate), `automation` (`check` proved it), `open`, `failed`, or, in
+    /// `h5i app report` without a passed run, `not_run`.
+    pub status: String,
+    /// The theorem that discharges it, if one is named or generated.
+    pub theorem: Option<String>,
+    pub note: Option<String>,
 }
 
 pub fn now() -> u64 {
@@ -354,6 +379,7 @@ impl Recorder {
             unbuilt_modules: Vec::new(),
             authorization: String::new(),
             required_theorems: Vec::new(),
+            obligations: Vec::new(),
             error: None,
         };
         let r = Self {

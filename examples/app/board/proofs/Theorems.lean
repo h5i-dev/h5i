@@ -61,6 +61,11 @@ theorem transition_total (a : Principal) (s : Snapshot) (c : Command) : ∃ r, t
   · exact ok_of (promote_spec _ _ _)
   · exact ok_of (demote_spec _ _ _)
 
+/-- Panic freedom, as `H5iAppLib.Obligation.PanicFree` states it: `transition`
+returns for every actor, state and command (`[obligations] panic-free`). -/
+theorem panic_free : H5iAppLib.Obligation.PanicFree transition :=
+  H5iAppLib.Obligation.panicFree_of_total transition_total
+
 /-! ## Permissions -/
 
 /-- With distinct users, two or more moderators include one other than `t`. -/

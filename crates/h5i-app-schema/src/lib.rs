@@ -39,9 +39,22 @@
 
 #[doc(hidden)]
 pub mod lean;
+mod policy;
 
 #[macro_export]
 macro_rules! schema {
+    (
+        mapping $mapping:ident for $krate:ident $(, writes $w:ident)? $(, lean $lean:literal)?;
+        policy $pname:ident { $($pol:tt)* }
+        $(#[$sattr:meta])*
+        $svis:vis struct $snap:ident { $($sfields:tt)* }
+        $($rows:tt)*
+    ) => {
+        $crate::__snapshot! {
+            @parse [$mapping $krate [$($w)?] [$($lean)?] [$snap $pname { $($pol)* }]] [$(#[$sattr])*] [$svis] $snap [] [$($sfields)*] [$($rows)*]
+        }
+        $crate::__policy! { $snap $pname { $($pol)* } }
+    };
     (
         mapping $mapping:ident for $krate:ident $(, writes $w:ident)? $(, lean $lean:literal)?;
         $(#[$sattr:meta])*
@@ -49,14 +62,14 @@ macro_rules! schema {
         $($rows:tt)*
     ) => {
         $crate::__snapshot! {
-            @parse [$mapping $krate [$($w)?] [$($lean)?]] [$(#[$sattr])*] [$svis] $snap [] [$($sfields)*] [$($rows)*]
+            @parse [$mapping $krate [$($w)?] [$($lean)?] []] [$(#[$sattr])*] [$svis] $snap [] [$($sfields)*] [$($rows)*]
         }
     };
     (
         mapping $mapping:ident for $krate:ident $(, writes $w:ident)? $(, lean $lean:literal)?;
         $($rows:tt)*
     ) => {
-        $crate::__schema! { [$mapping $krate [$($w)?] [$($lean)?]] [] $($rows)* }
+        $crate::__schema! { [$mapping $krate [$($w)?] [$($lean)?] []] [] $($rows)* }
     };
 }
 
@@ -81,7 +94,7 @@ macro_rules! __snapshot {
 #[macro_export]
 macro_rules! __schema {
     (
-        [$mapping:ident $krate:ident [$($w:ident)?] [$($lean:literal)?]] $snap:tt
+        [$mapping:ident $krate:ident [$($w:ident)?] [$($lean:literal)?] $pol:tt] $snap:tt
         $(
             $(#[$attr:meta])*
             $vis:vis struct $name:ident in $table:literal {
@@ -109,7 +122,7 @@ macro_rules! __schema {
         $crate::__rows! { [] $( $name [$($k)*] [$($c)*] )* }
         $( $crate::__keyed! { $name [$($k : $kt),*] [$($c)*] } )*
         $crate::__snap_items! { [$($w)?] $snap }
-        $crate::__lean! { [$($lean)?] $krate [$($w)?] $snap; $( $name $table [$($k : $kt),*] [$($c : $ct),*] )* }
+        $crate::__lean! { [$($lean)?] $krate [$($w)?] $snap $pol; $( $name $table [$($k : $kt),*] [$($c : $ct),*] )* }
         $crate::__mapping! { ($) $mapping $krate [$($w)?] $snap; $( $name $table [$($k)*] [$($c)*] )* }
     };
 }
@@ -339,7 +352,7 @@ macro_rules! __from_table {
 #[macro_export]
 macro_rules! __lean {
     ([] $($rest:tt)*) => {};
-    ([$lean:literal] $krate:ident [$($w:ident)?] $snap:tt; $( $name:ident $table:literal [$($k:ident : $kt:ty),*] [$($c:ident : $ct:ty),*] )*) => {
+    ([$lean:literal] $krate:ident [$($w:ident)?] $snap:tt $pol:tt; $( $name:ident $table:literal [$($k:ident : $kt:ty),*] [$($c:ident : $ct:ty),*] )*) => {
         #[doc(hidden)]
         pub fn __h5i_app_lean_schema() -> ::std::string::String {
             let rows: ::std::vec::Vec<$crate::lean::RowDecl> = ::std::vec![
@@ -355,7 +368,9 @@ macro_rules! __lean {
             ];
             let snap: ::std::option::Option<(&str, ::std::vec::Vec<(&str, &str)>)> = $crate::__lean_snap!($snap);
             let writes: ::std::option::Option<&str> = $crate::__lean_opt!($($w)?);
-            $crate::lean::render(stringify!($krate), &rows, snap.as_ref(), writes)
+            let mut text = $crate::lean::render(stringify!($krate), &rows, snap.as_ref(), writes);
+            $crate::__lean_policy!(text $krate $pol);
+            text
         }
 
         #[cfg(test)]

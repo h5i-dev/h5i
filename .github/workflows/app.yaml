@@ -89,15 +89,36 @@ jobs:
 
   lean:
     runs-on: ubuntu-latest
+    # About 40 minutes when it works; a hung download must not hold a runner for hours.
+    timeout-minutes: 100
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Install elan
         run: |
-          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+          curl -sSfL --retry 5 --retry-all-errors https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
             | sh -s -- -y --default-toolchain none
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      # The pinned Lean toolchains, from cache or downloaded once here with
+      # retries, so a transient release-server error (504) fails or recovers
+      # in this step instead of failing every project's `lake build`.
+      - uses: actions/cache@v4
+        continue-on-error: true
+        with:
+          path: ~/.elan/toolchains
+          key: elan-${{ hashFiles('**/proofs/lean-toolchain') }}
+      - name: Install the pinned Lean toolchains
+        timeout-minutes: 20
+        run: |
+          for tc in $(cat $(git ls-files '*proofs/lean-toolchain') | sort -u); do
+            for try in 1 2 3 4 5; do
+              "$HOME/.elan/bin/elan" toolchain install "$tc" && break
+              [ "$try" = 5 ] && { echo "::error::could not install $tc"; exit 1; }
+              echo "::warning::installing $tc failed (try $try); retrying"
+              sleep $((try * 20))
+            done
+          done
       # `h5i app check` fetches the Lake packages (Aeneas, Mathlib) once into
       # this cache, shared by every proof project with the same requires.
       - uses: actions/cache@v4
@@ -115,11 +136,28 @@ jobs:
           extra_nix_config: |
             extra-substituters = https://hacl.cachix.org
             extra-trusted-public-keys = hacl.cachix.org-1:FzsZ2xsByOwKwIWNPII7yMOelJNDZ12mDAj3d1eGX0c=
+            fallback = true
+            connect-timeout = 10
+            stalled-download-timeout = 120
+      # Only a cache: when the GitHub Actions cache service fails, it disables
+      # itself mid-build, so Nix must be able to go on without it (fallback
+      # and the timeouts above) and the job must not wait on it.
       - uses: DeterminateSystems/magic-nix-cache-action@v8
+        continue-on-error: true
+      # Usually about 10 minutes. Bounded, and tried twice: a second run
+      # reuses what the first one fetched or built.
       - name: Build Charon and Aeneas at the pinned commit
+        timeout-minutes: 50
         run: |
-          nix build "github:AeneasVerif/aeneas/$AENEAS_REV" -o "$RUNNER_TEMP/aeneas" -L
-          nix build "github:AeneasVerif/aeneas/$AENEAS_REV#charon" -o "$RUNNER_TEMP/charon" -L
+          build() {
+            for try in 1 2; do
+              timeout 20m nix build "$1" -o "$2" -L && return 0
+              echo "::warning::nix build $1 failed or timed out (try $try)"
+            done
+            return 1
+          }
+          build "github:AeneasVerif/aeneas/$AENEAS_REV" "$RUNNER_TEMP/aeneas"
+          build "github:AeneasVerif/aeneas/$AENEAS_REV#charon" "$RUNNER_TEMP/charon"
           echo "$RUNNER_TEMP/aeneas/bin" >> "$GITHUB_PATH"
           echo "$RUNNER_TEMP/charon/bin" >> "$GITHUB_PATH"
       # Build every proof project and gate it: no sorry, native_decide or
@@ -129,6 +167,8 @@ jobs:
   # A9: the committed Lean must be exactly what Aeneas extracts from the kernel.
   extract:
     runs-on: ubuntu-latest
+    # About 20 minutes when it works.
+    timeout-minutes: 70
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -141,11 +181,28 @@ jobs:
           extra_nix_config: |
             extra-substituters = https://hacl.cachix.org
             extra-trusted-public-keys = hacl.cachix.org-1:FzsZ2xsByOwKwIWNPII7yMOelJNDZ12mDAj3d1eGX0c=
+            fallback = true
+            connect-timeout = 10
+            stalled-download-timeout = 120
+      # Only a cache: when the GitHub Actions cache service fails, it disables
+      # itself mid-build, so Nix must be able to go on without it (fallback
+      # and the timeouts above) and the job must not wait on it.
       - uses: DeterminateSystems/magic-nix-cache-action@v8
+        continue-on-error: true
+      # Usually about 10 minutes. Bounded, and tried twice: a second run
+      # reuses what the first one fetched or built.
       - name: Build Charon and Aeneas at the pinned commit
+        timeout-minutes: 50
         run: |
-          nix build "github:AeneasVerif/aeneas/$AENEAS_REV" -o "$RUNNER_TEMP/aeneas" -L
-          nix build "github:AeneasVerif/aeneas/$AENEAS_REV#charon" -o "$RUNNER_TEMP/charon" -L
+          build() {
+            for try in 1 2; do
+              timeout 20m nix build "$1" -o "$2" -L && return 0
+              echo "::warning::nix build $1 failed or timed out (try $try)"
+            done
+            return 1
+          }
+          build "github:AeneasVerif/aeneas/$AENEAS_REV" "$RUNNER_TEMP/aeneas"
+          build "github:AeneasVerif/aeneas/$AENEAS_REV#charon" "$RUNNER_TEMP/charon"
           echo "$RUNNER_TEMP/aeneas/bin" >> "$GITHUB_PATH"
           echo "$RUNNER_TEMP/charon/bin" >> "$GITHUB_PATH"
       - run: target/release/h5i-app-xtask extract --check --all crates examples/app examples/embedded
