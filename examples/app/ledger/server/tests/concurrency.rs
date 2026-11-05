@@ -11,6 +11,7 @@ use h5i_app_core::{Kernel, TenantId};
 use h5i_app_pg::{pool, DbError, Engine, EngineConfig};
 use ledger_kernel as k;
 use ledger_server::{Ledger, LedgerStore};
+use std::collections::HashSet;
 use std::sync::Arc;
 
 const CLIENTS: u64 = 64;
@@ -25,33 +26,55 @@ fn sorted(mut s: k::Snapshot) -> k::Snapshot {
 }
 
 /// Depth-first search for an order of `done` that `transition` accepts with
-/// the same writes and reply at every step; the state it ends in.
-fn serial_order(start: &k::Snapshot, done: &[Done]) -> Option<k::Snapshot> {
-    fn go(s: &k::Snapshot, done: &[Done], used: &mut [bool], left: usize, budget: &mut u64) -> Option<k::Snapshot> {
-        if left == 0 {
-            return Some(s.clone());
-        }
-        for i in 0..done.len() {
-            if used[i] || *budget == 0 {
-                continue;
-            }
-            *budget -= 1;
-            let (a, c, r, ws) = &done[i];
-            if let Ok((ws2, r2)) = Ledger::transition(a, s, c)
-                && ws2 == *ws
-                && r2 == *r
-            {
-                used[i] = true;
-                if let Some(end) = go(&Ledger::apply(s, ws), done, used, left - 1, budget) {
-                    return Some(end);
-                }
-                used[i] = false;
-            }
-        }
-        None
+/// the same writes and reply at every step; the state it ends in. Each
+/// command writes every row it reads, with absolute values, so in every
+/// order `transition` accepts the set run so far leaves the same state; a
+/// set from which no order completes is never searched again: the search is
+/// complete, and `Err` says whether it proved there is no order or ran out
+/// of budget.
+fn serial_order(start: &k::Snapshot, done: &[Done]) -> Result<k::Snapshot, String> {
+    struct Search<'a> {
+        done: &'a [Done],
+        used: Vec<bool>,
+        dead: HashSet<Vec<bool>>,
+        budget: u64,
     }
-    let mut used = vec![false; done.len()];
-    go(start, done, &mut used, done.len(), &mut 100_000_000)
+    impl Search<'_> {
+        fn go(&mut self, s: &k::Snapshot, left: usize) -> Result<Option<k::Snapshot>, ()> {
+            if left == 0 {
+                return Ok(Some(s.clone()));
+            }
+            if self.dead.contains(&self.used) {
+                return Ok(None);
+            }
+            for i in 0..self.done.len() {
+                if self.used[i] {
+                    continue;
+                }
+                self.budget = self.budget.checked_sub(1).ok_or(())?;
+                let (a, c, r, ws) = &self.done[i];
+                if let Ok((ws2, r2)) = Ledger::transition(a, s, c)
+                    && ws2 == *ws
+                    && r2 == *r
+                {
+                    self.used[i] = true;
+                    let end = self.go(&Ledger::apply(s, ws), left - 1);
+                    self.used[i] = false;
+                    if let Some(end) = end? {
+                        return Ok(Some(end));
+                    }
+                }
+            }
+            self.dead.insert(self.used.clone());
+            Ok(None)
+        }
+    }
+    let mut search = Search { done, used: vec![false; done.len()], dead: HashSet::new(), budget: 200_000_000 };
+    match search.go(start, done.len()) {
+        Ok(Some(end)) => Ok(end),
+        Ok(None) => Err(format!("no serial order of the {} commits exists", done.len())),
+        Err(()) => Err(format!("search budget exhausted ({} dead sets); undecided", search.dead.len())),
+    }
 }
 
 fn check_inv(s: &k::Snapshot) {
@@ -129,8 +152,8 @@ async fn concurrent_clients_are_serial() {
         // One commit per successful reply (the setup made 2 per user).
         let commits = pg.stats.commits.load(std::sync::atomic::Ordering::Relaxed) as usize;
         assert_eq!(commits - 2 * USERS as usize, done.len(), "tenant_lock={tenant_lock}");
-        let serial = serial_order(&start, &done).map(sorted);
-        assert_eq!(serial.as_ref(), Some(&end), "tenant_lock={tenant_lock}: no serial order of the {} commits gives the final state", done.len());
+        let serial = serial_order(&start, &done).map(sorted).unwrap_or_else(|e| panic!("tenant_lock={tenant_lock}: {e}"));
+        assert_eq!(serial, end, "tenant_lock={tenant_lock}: the serial order ends elsewhere");
         let retries = pg.stats.retries.load(std::sync::atomic::Ordering::Relaxed);
         eprintln!("tenant_lock={tenant_lock}: {} commits, {refused} refused, {exhausted} out of attempts, {retries} retries", done.len());
         assert!(done.len() >= CLIENTS as usize, "tenant_lock={tenant_lock}: too few commits to mean anything");

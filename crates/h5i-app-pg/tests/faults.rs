@@ -732,40 +732,59 @@ async fn cancelled_requests_leave_no_write_and_no_lock() {
 
 /// A serial order of `done` (actor, command, reply, writes) through
 /// `transition` from `start` that reproduces every reply and write set, by
-/// depth-first search; and the state it ends in.
-fn serial_order(start: Snap, done: &[(Actor, Cmd, Reply, Vec<W>)]) -> Option<Snap> {
+/// depth-first search; and the state it ends in. Each command writes every
+/// row it reads, with absolute values, so in every order `transition`
+/// accepts the set of commands run so far leaves the same state; a set
+/// from which no order completes is remembered and never searched again: the search is
+/// complete, and `Err` says whether it proved there is no order or ran out
+/// of budget.
+fn serial_order(start: Snap, done: &[(Actor, Cmd, Reply, Vec<W>)]) -> Result<Snap, String> {
     use h5i_app_core::Kernel;
-    fn go(s: &Snap, done: &[(Actor, Cmd, Reply, Vec<W>)], used: &mut Vec<bool>, left: usize, budget: &mut u64) -> Option<Snap> {
-        if left == 0 {
-            return Some(s.clone());
-        }
-        for i in 0..done.len() {
-            if used[i] {
-                continue;
-            }
-            if *budget == 0 {
-                return None;
-            }
-            *budget -= 1;
-            let (a, c, r, ws) = &done[i];
-            let mut a = a.clone();
-            a.now = r.now;
-            if let Ok((ws2, r2)) = Bank::transition(&a, s, c)
-                && ws2 == *ws
-                && r2 == *r
-            {
-                used[i] = true;
-                if let Some(end) = go(&Bank::apply(s, ws), done, used, left - 1, budget) {
-                    return Some(end);
-                }
-                used[i] = false;
-            }
-        }
-        None
+    use std::collections::HashSet;
+    struct Search<'a> {
+        done: &'a [(Actor, Cmd, Reply, Vec<W>)],
+        used: Vec<bool>,
+        dead: HashSet<Vec<bool>>,
+        budget: u64,
     }
-    let mut used = vec![false; done.len()];
-    let mut budget = 50_000_000;
-    go(&start, done, &mut used, done.len(), &mut budget)
+    impl Search<'_> {
+        fn go(&mut self, s: &Snap, left: usize) -> Result<Option<Snap>, ()> {
+            if left == 0 {
+                return Ok(Some(s.clone()));
+            }
+            if self.dead.contains(&self.used) {
+                return Ok(None);
+            }
+            for i in 0..self.done.len() {
+                if self.used[i] {
+                    continue;
+                }
+                self.budget = self.budget.checked_sub(1).ok_or(())?;
+                let (a, c, r, ws) = &self.done[i];
+                let mut a = a.clone();
+                a.now = r.now;
+                if let Ok((ws2, r2)) = Bank::transition(&a, s, c)
+                    && ws2 == *ws
+                    && r2 == *r
+                {
+                    self.used[i] = true;
+                    let end = self.go(&Bank::apply(s, ws), left - 1);
+                    self.used[i] = false;
+                    if let Some(end) = end? {
+                        return Ok(Some(end));
+                    }
+                }
+            }
+            self.dead.insert(self.used.clone());
+            Ok(None)
+        }
+    }
+    let mut search = Search { done, used: vec![false; done.len()], dead: HashSet::new(), budget: 200_000_000 };
+    match search.go(&start, done.len()) {
+        Ok(Some(end)) => Ok(end),
+        Ok(None) => Err(format!("no serial order of the {} commits exists", done.len())),
+        Err(()) => Err(format!("search budget exhausted ({} dead sets); undecided", search.dead.len())),
+    }
 }
 
 // Bullets 1 and 7 under load, with and without advisory locks: 64 clients
@@ -825,7 +844,7 @@ async fn concurrent_moves_are_serial() {
         assert_eq!(done.len() + refused + failed, 64 * 8);
         let commits = pg.stats.commits.load(Ordering::Relaxed) as usize - 8;
         assert_eq!(commits, done.len(), "lock={lock}: one commit per successful reply");
-        let serial = serial_order(start.clone(), &done).unwrap_or_else(|| panic!("lock={lock}: no serial order of {} commits", done.len()));
+        let serial = serial_order(start.clone(), &done).unwrap_or_else(|e| panic!("lock={lock}: {e}"));
         assert_eq!(serial, end, "lock={lock}");
         assert_eq!(db.cells(bystander).await, Snap { cells: (0..4).map(|id| Cell { id, v: 7 }).collect() });
         assert_eq!(db.wait_no_advisory_locks(Duration::from_secs(2)).await, 0);
