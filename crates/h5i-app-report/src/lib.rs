@@ -309,7 +309,49 @@ pub struct Run {
     /// found for it (`crates/h5i-app-cli/src/obligations.rs`).
     #[serde(default)]
     pub obligations: Vec<ObligationResult>,
+    /// Whether the tenant a request runs in is covered by `tenant-of-token`
+    /// and the server is linked to its principal function (`crates/h5i-app-cli/src/tenant.rs`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant: Option<TenantLink>,
     pub error: Option<String>,
+}
+
+/// The tenant of a request: `tenant-of-token`'s status, and whether the
+/// server builds principals with the function it is proven for. `linked` is
+/// a source-level check (syn) of the authenticator's construction, not a
+/// proof.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TenantLink {
+    /// `proven_linked` (the obligation proven and every authenticator built
+    /// with the kernel's principal function), `proven_not_linked`, `open`,
+    /// `failed`, `not_run` or `not_stated`.
+    pub status: String,
+    /// The obligation's own status (as in [`ObligationResult`]), or `not_stated`.
+    pub obligation: String,
+    /// The kernel's principal function (`[obligations] principal`), as a Lean name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub principal: Option<String>,
+    /// Each authenticator construction found in the server crates, `file:line: what`.
+    #[serde(default)]
+    pub authenticators: Vec<String>,
+    /// What covers the tenant, or why it stays reviewed.
+    pub summary: String,
+    /// Calls that decide a principal without the token, reviewed in every
+    /// case (`or_anonymous`, `Actor::assume_authenticated`), `file:line: name`.
+    #[serde(default)]
+    pub reviewed: Vec<String>,
+}
+
+impl TenantLink {
+    /// `proven, linked`, `proven, not linked`, `open`, …: the text form.
+    pub fn label(&self) -> String {
+        match self.status.as_str() {
+            "proven_linked" => "proven, linked".into(),
+            "proven_not_linked" => "proven, not linked".into(),
+            s => s.into(),
+        }
+    }
 }
 
 /// One framework-defined obligation (`H5iAppLib.Obligation`), as a check run
@@ -317,7 +359,8 @@ pub struct Run {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ObligationResult {
-    /// `read-only`, `storage`, `panic-free`, `authorized`, `tenant-isolation`, `authz`.
+    /// `read-only`, `storage`, `panic-free`, `authorized`, `tenant-isolation`,
+    /// `authz`, `policy-*`, `tenant-of-token`, `reply-codec`.
     pub name: String,
     /// The statement, as a Lean term, instantiated for the app.
     pub statement: String,
@@ -380,6 +423,7 @@ impl Recorder {
             authorization: String::new(),
             required_theorems: Vec::new(),
             obligations: Vec::new(),
+            tenant: None,
             error: None,
         };
         let r = Self {

@@ -834,7 +834,7 @@ def Note.put
   Note.put_loop v x 0#usize
 
 /-- [notes_kernel::{impl core::clone::Clone for notes_kernel::Member}::clone]:
-    Source: 'examples/app/notes/kernel/src/lib.rs', lines 56:13-56:18
+    Source: 'examples/app/notes/kernel/src/lib.rs', lines 63:13-63:18
     Visibility: public -/
 def Member.Insts.CoreCloneClone.clone (self : Member) : Result Member := do
   ok self
@@ -889,7 +889,7 @@ def Member.del
   Member.del_loop v user (alloc.vec.Vec.new Member) 0#usize
 
 /-- [notes_kernel::{impl core::clone::Clone for notes_kernel::Note}::clone]:
-    Source: 'examples/app/notes/kernel/src/lib.rs', lines 62:13-62:18
+    Source: 'examples/app/notes/kernel/src/lib.rs', lines 69:13-69:18
     Visibility: public -/
 def Note.Insts.CoreCloneClone.clone (self : Note) : Result Note := do
   let i ← lift (core.clone.impls.CloneU64.clone self.id)
@@ -1103,7 +1103,7 @@ def decode (r : Rows) : Result (Option Snapshot) := do
     | some x1 => ok (some { members := x, notes := x1 })
 
 /-- [notes_kernel::Write]
-    Source: 'examples/app/notes/kernel/src/lib.rs', lines 85:0-90:1
+    Source: 'examples/app/notes/kernel/src/lib.rs', lines 92:0-97:1
     Visibility: public -/
 @[discriminant isize]
 inductive Write where
@@ -1113,7 +1113,7 @@ inductive Write where
 | DelNote : Std.U64 → Write
 
 /-- [notes_kernel::apply_write]:
-    Source: 'examples/app/notes/kernel/src/lib.rs', lines 176:0-183:1 -/
+    Source: 'examples/app/notes/kernel/src/lib.rs', lines 183:0-190:1 -/
 def apply_write (s : Snapshot) (w : Write) : Result Snapshot := do
   match w with
   | Write.PutMember m =>
@@ -1128,7 +1128,7 @@ def apply_write (s : Snapshot) (w : Write) : Result Snapshot := do
                         ok { s with notes := v }
 
 /-- [notes_kernel::{impl core::clone::Clone for notes_kernel::Write}::clone]:
-    Source: 'examples/app/notes/kernel/src/lib.rs', lines 84:9-84:14
+    Source: 'examples/app/notes/kernel/src/lib.rs', lines 91:9-91:14
     Visibility: public -/
 def Write.Insts.CoreCloneClone.clone (self : Write) : Result Write := do
   match self with
@@ -1146,21 +1146,21 @@ def Write.Insts.CoreCloneClone.clone (self : Write) : Result Write := do
     ok (Write.DelNote i)
 
 /-- Trait implementation: [notes_kernel::{impl core::clone::Clone for notes_kernel::Note}]
-    Source: 'examples/app/notes/kernel/src/lib.rs', lines 62:13-62:18 -/
+    Source: 'examples/app/notes/kernel/src/lib.rs', lines 69:13-69:18 -/
 @[reducible]
 def Note.Insts.CoreCloneClone : core.clone.Clone Note := {
   clone := Note.Insts.CoreCloneClone.clone
 }
 
 /-- Trait implementation: [notes_kernel::{impl core::clone::Clone for notes_kernel::Member}]
-    Source: 'examples/app/notes/kernel/src/lib.rs', lines 56:13-56:18 -/
+    Source: 'examples/app/notes/kernel/src/lib.rs', lines 63:13-63:18 -/
 @[reducible]
 def Member.Insts.CoreCloneClone : core.clone.Clone Member := {
   clone := Member.Insts.CoreCloneClone.clone
 }
 
 /-- [notes_kernel::{impl core::clone::Clone for notes_kernel::Snapshot}::clone]:
-    Source: 'examples/app/notes/kernel/src/lib.rs', lines 50:13-50:18
+    Source: 'examples/app/notes/kernel/src/lib.rs', lines 57:13-57:18
     Visibility: public -/
 def Snapshot.Insts.CoreCloneClone.clone
   (self : Snapshot) : Result Snapshot := do
@@ -1207,7 +1207,7 @@ def apply (snap : Snapshot) (ws : alloc.vec.Vec Write) : Result Snapshot := do
   apply_loop ws s 0#usize
 
 /-- [notes_kernel::sql_write]:
-    Source: 'examples/app/notes/kernel/src/lib.rs', lines 186:0-193:1 -/
+    Source: 'examples/app/notes/kernel/src/lib.rs', lines 193:0-200:1 -/
 def sql_write
   (w : Write) (out : alloc.vec.Vec h5i_app_sql.Write) :
   Result (alloc.vec.Vec h5i_app_sql.Write)
@@ -1271,7 +1271,7 @@ def sql_writes
 def Notes := Unit
 
 /-- [notes_kernel::Row]
-    Source: 'examples/app/notes/kernel/src/lib.rs', lines 108:0-111:1
+    Source: 'examples/app/notes/kernel/src/lib.rs', lines 115:0-118:1
     Visibility: public -/
 @[discriminant isize]
 inductive Row where
@@ -1286,7 +1286,7 @@ structure Principal where
   user : Std.U64
 
 /-- [notes_kernel::{impl core::cmp::PartialEq<notes_kernel::Member> for notes_kernel::Member}::eq]:
-    Source: 'examples/app/notes/kernel/src/lib.rs', lines 56:33-56:42
+    Source: 'examples/app/notes/kernel/src/lib.rs', lines 63:33-63:42
     Visibility: public -/
 def Member.Insts.CoreCmpPartialEqMember.eq
   (self : Member) (other : Member) : Result Bool := do
@@ -1344,7 +1344,7 @@ def policy.members.stored (s : Snapshot) (x : Member) : Result Bool := do
   | some r => Member.Insts.CoreCmpPartialEqMember.eq r x
 
 /-- [notes_kernel::{impl core::cmp::PartialEq<notes_kernel::Note> for notes_kernel::Note}::eq]:
-    Source: 'examples/app/notes/kernel/src/lib.rs', lines 62:27-62:36
+    Source: 'examples/app/notes/kernel/src/lib.rs', lines 69:27-69:36
     Visibility: public -/
 def Note.Insts.CoreCmpPartialEqNote.eq
   (self : Note) (other : Note) : Result Bool := do
@@ -1673,7 +1673,7 @@ def policy.view (actor : Principal) (s : Snapshot) : Result Snapshot := do
   ok { members := v, notes := v1 }
 
 /-- [notes_kernel::{impl h5i_app_std::authz::Transition<notes_kernel::Principal, notes_kernel::Snapshot, notes_kernel::Command, notes_kernel::Write, notes_kernel::Reply, notes_kernel::Error> for notes_kernel::Notes}::kernel_apply]:
-    Source: 'examples/app/notes/kernel/src/lib.rs', lines 246:4-248:5
+    Source: 'examples/app/notes/kernel/src/lib.rs', lines 253:4-255:5
     Visibility: public -/
 def
   Notes.Insts.H5i_app_stdAuthzTransitionPrincipalSnapshotCommandWriteReplyError.kernel_apply
@@ -1681,7 +1681,7 @@ def
   apply s ws
 
 /-- [notes_kernel::Error]
-    Source: 'examples/app/notes/kernel/src/lib.rs', lines 101:0-104:1
+    Source: 'examples/app/notes/kernel/src/lib.rs', lines 108:0-111:1
     Visibility: public -/
 @[discriminant isize]
 inductive Error where
@@ -1689,7 +1689,7 @@ inductive Error where
 | BadText : Error
 
 /-- [notes_kernel::Reply]
-    Source: 'examples/app/notes/kernel/src/lib.rs', lines 93:0-98:1
+    Source: 'examples/app/notes/kernel/src/lib.rs', lines 100:0-105:1
     Visibility: public -/
 @[discriminant isize]
 inductive Reply where
@@ -1699,7 +1699,7 @@ inductive Reply where
 | Members : alloc.vec.Vec Member → Reply
 
 /-- [notes_kernel::read_note]:
-    Source: 'examples/app/notes/kernel/src/lib.rs', lines 154:0-159:1 -/
+    Source: 'examples/app/notes/kernel/src/lib.rs', lines 161:0-166:1 -/
 def read_note
   (s : Snapshot) (id : Std.U64) :
   Result (core.result.Result ((alloc.vec.Vec Write) × Reply) Error)
@@ -1711,12 +1711,12 @@ def read_note
     ok (core.result.Result.Ok (alloc.vec.Vec.new Write, Reply.Found n))
 
 /-- [notes_kernel::one]:
-    Source: 'examples/app/notes/kernel/src/lib.rs', lines 115:0-119:1 -/
+    Source: 'examples/app/notes/kernel/src/lib.rs', lines 122:0-126:1 -/
 def one (w : Write) : Result (alloc.vec.Vec Write) := do
   alloc.vec.Vec.push (alloc.vec.Vec.new Write) w
 
 /-- [notes_kernel::remove_member]:
-    Source: 'examples/app/notes/kernel/src/lib.rs', lines 147:0-152:1 -/
+    Source: 'examples/app/notes/kernel/src/lib.rs', lines 154:0-159:1 -/
 def remove_member
   (s : Snapshot) (user : Std.U64) :
   Result (core.result.Result ((alloc.vec.Vec Write) × Reply) Error)
@@ -1729,7 +1729,7 @@ def remove_member
     ok (core.result.Result.Ok (v, Reply.Done))
 
 /-- [notes_kernel::delete_note]:
-    Source: 'examples/app/notes/kernel/src/lib.rs', lines 140:0-145:1 -/
+    Source: 'examples/app/notes/kernel/src/lib.rs', lines 147:0-152:1 -/
 def delete_note
   (s : Snapshot) (id : Std.U64) :
   Result (core.result.Result ((alloc.vec.Vec Write) × Reply) Error)
@@ -1747,7 +1747,7 @@ def delete_note
 @[global_simps, irreducible] def MAX_TEXT : Std.Usize := 4096#usize
 
 /-- [notes_kernel::text_ok]:
-    Source: 'examples/app/notes/kernel/src/lib.rs', lines 121:0-123:1
+    Source: 'examples/app/notes/kernel/src/lib.rs', lines 128:0-130:1
     Visibility: public -/
 def text_ok (t : alloc.vec.Vec Std.U8) : Result Bool := do
   let i := alloc.vec.Vec.len t
@@ -1757,7 +1757,7 @@ def text_ok (t : alloc.vec.Vec Std.U8) : Result Bool := do
   else ok false
 
 /-- [notes_kernel::put_note]:
-    Source: 'examples/app/notes/kernel/src/lib.rs', lines 129:0-138:1 -/
+    Source: 'examples/app/notes/kernel/src/lib.rs', lines 136:0-145:1 -/
 def put_note
   (user : Std.U64) (s : Snapshot) (id : Std.U64) (body : alloc.vec.Vec Std.U8)
   («public» : Bool) :
@@ -1776,7 +1776,7 @@ def put_note
   else ok (core.result.Result.Err Error.BadText)
 
 /-- [notes_kernel::Command]
-    Source: 'examples/app/notes/kernel/src/lib.rs', lines 72:0-82:1
+    Source: 'examples/app/notes/kernel/src/lib.rs', lines 79:0-89:1
     Visibility: public -/
 @[discriminant isize]
 inductive Command where
@@ -1789,7 +1789,7 @@ inductive Command where
 | ListMembers : Command
 
 /-- [notes_kernel::transition]:
-    Source: 'examples/app/notes/kernel/src/lib.rs', lines 163:0-173:1
+    Source: 'examples/app/notes/kernel/src/lib.rs', lines 170:0-180:1
     Visibility: public -/
 def transition
   (actor : Principal) (s : Snapshot) (cmd : Command) :
@@ -1812,7 +1812,7 @@ def transition
     ok (core.result.Result.Ok (alloc.vec.Vec.new Write, Reply.Members v))
 
 /-- [notes_kernel::{impl h5i_app_std::authz::Transition<notes_kernel::Principal, notes_kernel::Snapshot, notes_kernel::Command, notes_kernel::Write, notes_kernel::Reply, notes_kernel::Error> for notes_kernel::Notes}::kernel_transition]:
-    Source: 'examples/app/notes/kernel/src/lib.rs', lines 242:4-244:5
+    Source: 'examples/app/notes/kernel/src/lib.rs', lines 249:4-251:5
     Visibility: public -/
 def
   Notes.Insts.H5i_app_stdAuthzTransitionPrincipalSnapshotCommandWriteReplyError.kernel_transition
@@ -1822,7 +1822,7 @@ def
   transition actor s cmd
 
 /-- Trait implementation: [notes_kernel::{impl h5i_app_std::authz::Transition<notes_kernel::Principal, notes_kernel::Snapshot, notes_kernel::Command, notes_kernel::Write, notes_kernel::Reply, notes_kernel::Error> for notes_kernel::Notes}]
-    Source: 'examples/app/notes/kernel/src/lib.rs', lines 241:0-249:1 -/
+    Source: 'examples/app/notes/kernel/src/lib.rs', lines 248:0-256:1 -/
 @[reducible]
 def
   Notes.Insts.H5i_app_stdAuthzTransitionPrincipalSnapshotCommandWriteReplyError
@@ -1835,14 +1835,14 @@ def
 }
 
 /-- [notes_kernel::{impl h5i_app_std::authz::View<notes_kernel::Principal, notes_kernel::Snapshot, notes_kernel::Command> for notes_kernel::Notes}::view]:
-    Source: 'examples/app/notes/kernel/src/lib.rs', lines 236:4-238:5
+    Source: 'examples/app/notes/kernel/src/lib.rs', lines 243:4-245:5
     Visibility: public -/
 def Notes.Insts.H5i_app_stdAuthzViewPrincipalSnapshotCommand.view
   (actor : Principal) (s : Snapshot) : Result Snapshot := do
   policy.view actor s
 
 /-- [notes_kernel::{impl h5i_app_std::authz::View<notes_kernel::Principal, notes_kernel::Snapshot, notes_kernel::Command> for notes_kernel::Notes}::read_only]:
-    Source: 'examples/app/notes/kernel/src/lib.rs', lines 228:4-233:5
+    Source: 'examples/app/notes/kernel/src/lib.rs', lines 235:4-240:5
     Visibility: public -/
 def Notes.Insts.H5i_app_stdAuthzViewPrincipalSnapshotCommand.read_only
   (cmd : Command) : Result Bool := do
@@ -1856,7 +1856,7 @@ def Notes.Insts.H5i_app_stdAuthzViewPrincipalSnapshotCommand.read_only
   | Command.ListMembers => ok true
 
 /-- Trait implementation: [notes_kernel::{impl h5i_app_std::authz::View<notes_kernel::Principal, notes_kernel::Snapshot, notes_kernel::Command> for notes_kernel::Notes}]
-    Source: 'examples/app/notes/kernel/src/lib.rs', lines 227:0-239:1 -/
+    Source: 'examples/app/notes/kernel/src/lib.rs', lines 234:0-246:1 -/
 @[reducible]
 def Notes.Insts.H5i_app_stdAuthzViewPrincipalSnapshotCommand :
   h5i_app_std.authz.View Notes Principal Snapshot Command := {
@@ -1866,7 +1866,7 @@ def Notes.Insts.H5i_app_stdAuthzViewPrincipalSnapshotCommand :
 }
 
 /-- [notes_kernel::{impl h5i_app_std::authz::Disclose<notes_kernel::Row> for notes_kernel::Reply}::disclosed]: loop body 0:
-    Source: 'examples/app/notes/kernel/src/lib.rs', lines 210:16-213:17
+    Source: 'examples/app/notes/kernel/src/lib.rs', lines 217:16-220:17
     Visibility: public -/
 @[rust_loop_body]
 def Reply.Insts.H5i_app_stdAuthzDiscloseRow.disclosed_loop0.body
@@ -1885,7 +1885,7 @@ def Reply.Insts.H5i_app_stdAuthzDiscloseRow.disclosed_loop0.body
   else ok (done out)
 
 /-- [notes_kernel::{impl h5i_app_std::authz::Disclose<notes_kernel::Row> for notes_kernel::Reply}::disclosed]: loop 0:
-    Source: 'examples/app/notes/kernel/src/lib.rs', lines 210:16-213:17
+    Source: 'examples/app/notes/kernel/src/lib.rs', lines 217:16-220:17
     Visibility: public -/
 @[rust_loop]
 def Reply.Insts.H5i_app_stdAuthzDiscloseRow.disclosed_loop0
@@ -1898,7 +1898,7 @@ def Reply.Insts.H5i_app_stdAuthzDiscloseRow.disclosed_loop0
     (out, i)
 
 /-- [notes_kernel::{impl h5i_app_std::authz::Disclose<notes_kernel::Row> for notes_kernel::Reply}::disclosed]: loop body 1:
-    Source: 'examples/app/notes/kernel/src/lib.rs', lines 217:16-220:17
+    Source: 'examples/app/notes/kernel/src/lib.rs', lines 224:16-227:17
     Visibility: public -/
 @[rust_loop_body]
 def Reply.Insts.H5i_app_stdAuthzDiscloseRow.disclosed_loop1.body
@@ -1916,7 +1916,7 @@ def Reply.Insts.H5i_app_stdAuthzDiscloseRow.disclosed_loop1.body
   else ok (done out)
 
 /-- [notes_kernel::{impl h5i_app_std::authz::Disclose<notes_kernel::Row> for notes_kernel::Reply}::disclosed]: loop 1:
-    Source: 'examples/app/notes/kernel/src/lib.rs', lines 217:16-220:17
+    Source: 'examples/app/notes/kernel/src/lib.rs', lines 224:16-227:17
     Visibility: public -/
 @[rust_loop]
 def Reply.Insts.H5i_app_stdAuthzDiscloseRow.disclosed_loop1
@@ -1929,7 +1929,7 @@ def Reply.Insts.H5i_app_stdAuthzDiscloseRow.disclosed_loop1
     (out, i)
 
 /-- [notes_kernel::{impl h5i_app_std::authz::Disclose<notes_kernel::Row> for notes_kernel::Reply}::disclosed]:
-    Source: 'examples/app/notes/kernel/src/lib.rs', lines 203:4-224:5
+    Source: 'examples/app/notes/kernel/src/lib.rs', lines 210:4-231:5
     Visibility: public -/
 def Reply.Insts.H5i_app_stdAuthzDiscloseRow.disclosed
   (self : Reply) : Result (alloc.vec.Vec Row) := do
@@ -1946,7 +1946,7 @@ def Reply.Insts.H5i_app_stdAuthzDiscloseRow.disclosed
       (alloc.vec.Vec.new Row) 0#usize
 
 /-- Trait implementation: [notes_kernel::{impl h5i_app_std::authz::Disclose<notes_kernel::Row> for notes_kernel::Reply}]
-    Source: 'examples/app/notes/kernel/src/lib.rs', lines 201:0-225:1 -/
+    Source: 'examples/app/notes/kernel/src/lib.rs', lines 208:0-232:1 -/
 @[reducible]
 def Reply.Insts.H5i_app_stdAuthzDiscloseRow : h5i_app_std.authz.Disclose Reply
   Row := {
@@ -1954,14 +1954,14 @@ def Reply.Insts.H5i_app_stdAuthzDiscloseRow : h5i_app_std.authz.Disclose Reply
 }
 
 /-- Trait implementation: [notes_kernel::{impl core::clone::Clone for notes_kernel::Write}]
-    Source: 'examples/app/notes/kernel/src/lib.rs', lines 84:9-84:14 -/
+    Source: 'examples/app/notes/kernel/src/lib.rs', lines 91:9-91:14 -/
 @[reducible]
 def Write.Insts.CoreCloneClone : core.clone.Clone Write := {
   clone := Write.Insts.CoreCloneClone.clone
 }
 
 /-- [notes_kernel::guarded_transition]:
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 207:8-213:9
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 212:8-218:9
     Visibility: public -/
 def guarded_transition
   (actor : Principal) (s : Snapshot) (cmd : Command) :
@@ -1975,9 +1975,21 @@ def guarded_transition
     Notes.Insts.H5i_app_stdAuthzViewPrincipalSnapshotCommand actor s cmd
 
 /-- [notes_kernel::read_only]:
-    Source: 'crates/h5i-app-std/src/authz.rs', lines 216:8-218:9
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 221:8-223:9
     Visibility: public -/
 def read_only (cmd : Command) : Result Bool := do
   Notes.Insts.H5i_app_stdAuthzViewPrincipalSnapshotCommand.read_only cmd
+
+/-- [notes_kernel::tenant_of]:
+    Source: 'crates/h5i-app-std/src/authz.rs', lines 227:8-229:9
+    Visibility: public -/
+def tenant_of (actor : Principal) : Result Std.U64 := do
+  ok actor.org
+
+/-- [notes_kernel::principal]:
+    Source: 'examples/app/notes/kernel/src/lib.rs', lines 34:0-36:1
+    Visibility: public -/
+def principal (org : Std.U64) (user : Std.U64) : Result Principal := do
+  ok { org, user }
 
 end notes_kernel

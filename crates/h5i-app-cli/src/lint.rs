@@ -43,6 +43,15 @@ pub fn lint(p: &Project, out: &Out) -> Result<()> {
     if let Some(note) = authz_coverage(p) {
         out.note(&note);
     }
+    // `tenant-of-token` opted in: report whether the server is linked to the
+    // principal function it is proven for. A report, never a failure.
+    if p.principal_fn().is_some() {
+        let l = crate::tenant::linkage(p);
+        out.note(&match l.why_not() {
+            None => "tenant: linked (source check): every `HmacAuth::new` is given the kernel's principal function".to_string(),
+            Some(why) => format!("tenant: not linked, the tenant stays reviewed: {why}"),
+        });
+    }
     if !bad.is_empty() {
         bail!("{}: lint failed:\n  {}", p.display(), bad.join("\n  "));
     }

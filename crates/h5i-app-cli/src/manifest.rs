@@ -142,6 +142,16 @@ pub struct Obligations {
     /// `H5iAppLib.Obligation.Storage` for the kernel's `apply`, `sql_writes`
     /// and `decode`. Same slot as `[authz] storage`.
     pub storage: Option<String>,
+    /// Opt in to `tenant-of-token`: the kernel function (`principal`, a
+    /// path in the kernel crate) the server gives the authenticator to turn
+    /// a token's tenant and user into a principal. `extract` extracts it with
+    /// `authz_kernel!`'s `tenant_of`; `check` states
+    /// `H5iAppLib.Obligation.TenantOfToken` for the two and proves it with
+    /// the theorem below or by automation (else `open`). Needs `[authz]`.
+    pub principal: Option<String>,
+    /// `H5iAppLib.Obligation.TenantOfToken` (or `TenantOfTokenWith`) of
+    /// `tenant_of` and `principal`. Optional: without it, automation.
+    pub tenant_of_token: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -243,6 +253,32 @@ impl Project {
                 bail!("{}: two mutants are named `{}`", file.display(), m.name);
             }
         }
+        let o = &manifest.obligations;
+        if o.tenant_of_token.is_some() && o.principal.is_none() {
+            bail!(
+                "{}: `[obligations] tenant-of-token` needs `principal`, the kernel function the server builds principals \
+                 with (e.g. `principal = \"principal\"`)",
+                file.display()
+            );
+        }
+        if let Some(f) = &o.principal {
+            if g.is_empty() || manifest.extract.is_none() {
+                bail!(
+                    "{}: `[obligations] principal` needs `[extract]` and `[authz]`: the tenant it is proven against is \
+                     `authz_kernel!`'s `tenant_of`, the function `AuthzKernel::tenant` calls",
+                    file.display()
+                );
+            }
+            let ok = !f.is_empty()
+                && f.split("::").all(|s| !s.is_empty() && s.chars().all(|c| c.is_alphanumeric() || c == '_'));
+            if !ok || f == "tenant_of" {
+                bail!(
+                    "{}: `[obligations] principal` must name a function of the kernel crate by path (`principal`, \
+                     `auth::principal`), not {f:?}",
+                    file.display()
+                );
+            }
+        }
         Ok(Project { root, manifest })
     }
 
@@ -294,6 +330,11 @@ impl Project {
     /// The app's own storage theorem: `[authz] storage` or `[obligations] storage`.
     pub fn storage_theorem(&self) -> Option<&str> {
         self.manifest.authz.storage.as_deref().or(self.manifest.obligations.storage.as_deref())
+    }
+
+    /// `[obligations] principal`: the kernel's principal function, by Rust path.
+    pub fn principal_fn(&self) -> Option<&str> {
+        self.manifest.obligations.principal.as_deref()
     }
 
     /// The project's path for messages: relative to the current directory when it can be.
@@ -384,5 +425,23 @@ mod tests {
     fn a_mutant_must_change_something() {
         let m: Manifest = toml::from_str("[[mutant]]\nname = \"a\"\nold = \"x\"").unwrap();
         assert!(m.mutants[0].edits().is_err());
+    }
+
+    #[test]
+    fn tenant_of_token_is_opt_in_and_needs_authz() {
+        let load = |toml: &str| {
+            let d = tempfile::tempdir().unwrap();
+            std::fs::write(d.path().join(FILE), toml).unwrap();
+            Project::load(&d.path().join(FILE)).map(|p| p.principal_fn().map(str::to_string))
+        };
+        let authz = "[extract]\n[authz]\nguarded = [\"guarded_transition\"]\n";
+        assert_eq!(load(authz).unwrap(), None, "absent: not stated, nothing changes");
+        assert_eq!(load(&format!("{authz}[obligations]\nprincipal = \"principal\"\n")).unwrap().as_deref(), Some("principal"));
+        assert!(load(&format!("{authz}[obligations]\nprincipal = \"auth::principal\"\ntenant-of-token = \"k.t\"\n")).is_ok());
+        assert!(load(&format!("{authz}[obligations]\ntenant-of-token = \"k.t\"\n")).is_err(), "a theorem needs its principal");
+        assert!(load("[extract]\n[obligations]\nprincipal = \"principal\"\n").is_err(), "no [authz]: no tenant_of");
+        for bad in ["k.principal", "", "tenant_of", "a::"] {
+            assert!(load(&format!("{authz}[obligations]\nprincipal = \"{bad}\"\n")).is_err(), "{bad:?}");
+        }
     }
 }

@@ -299,6 +299,7 @@ export function neighborhood(
 export const labels: Record<string, string> = {
   proof_failed: "Proof-stage failure",
   survived: "Survived",
+  survived_by_design: "Survives by design (not linked; not run)",
   invalid: "Invalid",
   error: "Execution error",
   running: "Running / unfinished",

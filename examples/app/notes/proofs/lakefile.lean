@@ -11,7 +11,11 @@ package notes_proofs
 
 -- Generated Lean: the extracted Rust, the schema with the policy's spec, the
 -- copied specs and the authorization theorem (`h5i app extract`). Do not
--- edit. There are no hand-written proofs.
+-- edit.
 @[default_target] lean_lib Generated where
   srcDir := "generated"
   roots := #[`NotesKernel, `Schema, `StdSpecs, `AuthzSpecs, `Authz]
+
+-- The one hand-written proof: `tenant-of-token`, named in h5i-app.toml.
+@[default_target] lean_lib Proofs where
+  roots := #[`Tenant]

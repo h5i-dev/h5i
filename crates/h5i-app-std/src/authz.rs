@@ -189,12 +189,17 @@ pub fn guard_viewed<
 ///   and `View`: what `h5i app extract` extracts and the generated
 ///   `Authz.lean` proves (`[authz] guarded = ["guarded_transition"]`);
 /// - `read_only`, the view's;
+/// - `tenant_of`, the `tenant` expression as a function returning the tenant
+///   number. `AuthzKernel::tenant` is `TenantId(tenant_of(actor))`, so an app
+///   that opts in to the `tenant-of-token` obligation (`[obligations]
+///   principal` in `h5i-app.toml`) has the tenant the engine uses extracted
+///   and proven against its principal function;
 /// - `impl h5i_app_core::AuthzKernel for Forum`, and `App`,
 ///   `h5i_app_core::Authz<Forum>`: the `Kernel` the server runs, whose
 ///   `transition` is the same `guard_viewed` call, made by h5i-app-core.
 ///
-/// The kernel crate depends on `h5i-app-core` for these; nothing of it is
-/// extracted.
+/// The kernel crate depends on `h5i-app-core` for the impl and `App`; neither
+/// is extracted.
 #[macro_export]
 macro_rules! authz_kernel {
     ($app:ident {
@@ -217,6 +222,12 @@ macro_rules! authz_kernel {
             <$app as $crate::authz::View<$p, $s, $c>>::read_only(cmd)
         }
 
+        /// The tenant of a principal, as the engine uses it
+        /// (`AuthzKernel::tenant`): the `tenant-of-token` obligation's `tenant`.
+        pub fn tenant_of($a: &$p) -> u64 {
+            $tenant
+        }
+
         impl ::h5i_app_core::AuthzKernel for $app {
             type Principal = $p;
             type Snapshot = $s;
@@ -226,8 +237,8 @@ macro_rules! authz_kernel {
             type Error = $e;
             type Row = $d;
 
-            fn tenant($a: &$p) -> ::h5i_app_core::TenantId {
-                ::h5i_app_core::TenantId($tenant)
+            fn tenant(actor: &$p) -> ::h5i_app_core::TenantId {
+                ::h5i_app_core::TenantId(tenant_of(actor))
             }
         }
 

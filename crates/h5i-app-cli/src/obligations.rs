@@ -22,7 +22,10 @@
 //! The intent-free ones (group A of `docs/design/design-app-authz.md`,
 //! "Obligations") are stated for every project with an extracted kernel:
 //! panic freedom, tenant isolation, read-only soundness when commands are
-//! read-only, and storage for `[authz]`.
+//! read-only, and storage for `[authz]`. One is opt-in: `tenant-of-token`,
+//! for an `[authz]` app that names its principal function as `[obligations]
+//! principal` (whether the server uses that function is `crate::tenant`'s
+//! source check, reported next to it).
 
 use std::path::Path;
 
@@ -65,6 +68,8 @@ pub struct Kernel {
     max_arm: Option<usize>,
     /// `Schema.lean` has a `PolicySpec` (`schema!` with a `policy` block).
     policy_spec: bool,
+    /// The extracted module's text, for signatures read on demand.
+    text: String,
 }
 
 impl Kernel {
@@ -106,11 +111,42 @@ impl Kernel {
             store: schema.contains("theorem apply_spec'") && schema.contains("theorem sql_writes_spec'"),
             max_arm,
             policy_spec: schema.contains(&format!("\nnamespace {ns}.PolicySpec\n")),
+            text: text.to_string(),
         }
     }
 
     fn has(&self, f: &str) -> bool {
         self.defs.iter().any(|d| d == f)
+    }
+
+    /// The explicit arguments of the extracted `def <name>`: its `( … )`
+    /// binders before the result type. `None` if there is no such def.
+    pub fn arity(&self, name: &str) -> Option<usize> {
+        let head = format!("def {name}");
+        let start = self.text.lines().scan(0usize, |at, l| {
+            let here = *at;
+            *at += l.len() + 1;
+            Some((here, l))
+        });
+        let at = start
+            .filter(|(_, l)| l.strip_prefix(&head).is_some_and(|r| r.is_empty() || r.starts_with([' ', '\n'])))
+            .map(|(i, _)| i + head.len())
+            .next()?;
+        let (mut depth, mut n) = (0usize, 0usize);
+        for c in self.text[at..].chars() {
+            match c {
+                '(' | '{' | '[' | '⦃' => {
+                    if depth == 0 && c == '(' {
+                        n += 1;
+                    }
+                    depth += 1;
+                }
+                ')' | '}' | ']' | '⦄' => depth = depth.saturating_sub(1),
+                ':' if depth == 0 => return Some(n),
+                _ => {}
+            }
+        }
+        None
     }
 
     fn writes_of(&self, guarded: bool) -> &'static str {
@@ -259,7 +295,62 @@ pub fn of_kernel(p: &Project, k: &Kernel) -> Vec<Obligation> {
             ),
         });
     }
+    if let Some(o) = tenant_of_token(p, k) {
+        out.push(o);
+    }
     out
+}
+
+/// The name of the opt-in obligation: `[obligations] tenant-of-token`.
+pub const TENANT_OF_TOKEN: &str = "tenant-of-token";
+
+/// `[obligations] principal`'s Lean name.
+pub fn principal_lean(ns: &str, f: &str) -> String {
+    format!("{ns}.{}", f.replace("::", "."))
+}
+
+/// `tenant-of-token`, for an app that names its principal function: the
+/// extracted `tenant_of` (`authz_kernel!`'s) of what the principal function
+/// returns is the token's tenant, for every tenant and user (and per-request
+/// input, for a three-argument principal function).
+fn tenant_of_token(p: &Project, k: &Kernel) -> Option<Obligation> {
+    let f = p.principal_fn()?;
+    let ns = &k.ns;
+    let principal = principal_lean(ns, f);
+    let lean_name = f.replace("::", ".");
+    let arity = k.arity(&lean_name);
+    let (def, binders) = match arity {
+        Some(3) => ("TenantOfTokenWith", "t u x"),
+        _ => ("TenantOfToken", "t u"),
+    };
+    let mut notes = vec![
+        "with A1 (the token parser is proven), the tenant the engine runs a request in is the token's, if the server \
+         builds principals with this function: `h5i app report` checks that in the source (`linked`), not by proof"
+            .to_string(),
+    ];
+    match arity {
+        None => notes.push(format!(
+            "`{lean_name}` is not in the extraction: run `h5i app extract` (it starts from `[obligations] principal` and \
+             `tenant_of`)"
+        )),
+        Some(2 | 3) => {}
+        Some(n) => notes.push(format!(
+            "`{lean_name}` takes {n} arguments; the statement takes (tenant, user) or (tenant, user, x): pass several \
+             per-request inputs as one struct"
+        )),
+    }
+    if !k.has("tenant_of") {
+        notes.push("`tenant_of` is not in the extraction: it is written by `h5i_app_std::authz_kernel!`".into());
+    }
+    let theorem = p.manifest.obligations.tenant_of_token.clone();
+    let auto = theorem.is_none().then(|| format!("by\n  intro {binders}\n  simp [{principal}, {ns}.tenant_of]"));
+    Some(Obligation {
+        name: TENANT_OF_TOKEN,
+        statement: format!("H5iAppLib.Obligation.{def} {ns}.tenant_of {principal}"),
+        theorem,
+        auto,
+        note: Some(notes.join("; ")),
+    })
 }
 
 /// Obligations that are not stated, and why: shown by the report so their
@@ -277,6 +368,18 @@ pub fn not_stated(p: &Project, k: &Kernel) -> Vec<(&'static str, String)> {
     )];
     if !p.manifest.authz.guarded.is_empty() && !k.store {
         v.push(("storage", "no store section in Schema.lean (`schema = true` with `writes` and a snapshot)".into()));
+    }
+    if p.principal_fn().is_none() {
+        let why = if p.manifest.authz.guarded.is_empty() {
+            "the tenant a request runs in is decided by the server's principal function and its `Kernel::tenant`, \
+             neither extracted: reviewed. `[obligations] principal` (with `authz_kernel!`, whose `tenant_of` is \
+             extracted) states it"
+        } else {
+            "no `[obligations] principal`: the tenant a request runs in is decided by the server's principal function \
+             and `authz_kernel!`'s `tenant`, and stays in the reviewed surface. Name the kernel's principal function \
+             as `[obligations] principal` to state it"
+        };
+        v.push((TENANT_OF_TOKEN, why.to_string()));
     }
     v
 }
@@ -316,6 +419,30 @@ mod tests {
         let ro = of_kernel(&p, &k).into_iter().find(|o| o.name == "read-only").unwrap();
         assert!(ro.statement.ends_with(" _"), "{}", ro.statement);
         assert!(ro.note.is_some());
+    }
+
+    #[test]
+    fn tenant_of_token_is_stated_only_on_opt_in() {
+        let text = format!(
+            "{KERNEL}\ndef guarded_transition\n  (a : P) : R := do\n  ok x\n\ndef tenant_of (actor : Principal) : Result Std.U64 := do\n  ok actor.org\n\n\
+             def principal (org : Std.U64) (user : Std.U64) : Result Principal := do\n  ok {{ org, user }}\n\n\
+             def auth.principal\n  (org : Std.U64) (user : Std.U64) (slug : alloc.vec.Vec Std.U8) :\n  Result Principal := do\n  ok {{ org, user }}\n"
+        );
+        let k = Kernel::from_text("f", &text, "");
+        assert_eq!((k.arity("principal"), k.arity("auth.principal"), k.arity("tenant_of"), k.arity("nope")), (Some(2), Some(3), Some(1), None));
+        let authz = "[extract]\n[authz]\nguarded = [\"guarded_transition\"]\n";
+        let o = of_kernel(&project(authz), &k);
+        assert!(o.iter().all(|o| o.name != TENANT_OF_TOKEN), "not opted in: not stated");
+        assert!(not_stated(&project(authz), &k).iter().any(|(n, _)| *n == TENANT_OF_TOKEN));
+        let p = project(&format!("{authz}[obligations]\nprincipal = \"principal\"\n"));
+        let t = of_kernel(&p, &k).into_iter().find(|o| o.name == TENANT_OF_TOKEN).unwrap();
+        assert_eq!(t.statement, "H5iAppLib.Obligation.TenantOfToken f.tenant_of f.principal");
+        assert!(t.theorem.is_none() && t.auto.as_deref().is_some_and(|a| a.contains("intro t u\n")));
+        assert!(not_stated(&p, &k).iter().all(|(n, _)| *n != TENANT_OF_TOKEN));
+        let p = project(&format!("{authz}[obligations]\nprincipal = \"auth::principal\"\ntenant-of-token = \"f.T.t\"\n"));
+        let t = of_kernel(&p, &k).into_iter().find(|o| o.name == TENANT_OF_TOKEN).unwrap();
+        assert_eq!(t.statement, "H5iAppLib.Obligation.TenantOfTokenWith f.tenant_of f.auth.principal");
+        assert_eq!((t.theorem.as_deref(), t.auto.is_none()), (Some("f.T.t"), true));
     }
 
     #[test]

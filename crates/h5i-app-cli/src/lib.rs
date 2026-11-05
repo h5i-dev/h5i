@@ -36,6 +36,7 @@ pub mod packages;
 pub mod pins;
 pub mod report;
 pub mod rust;
+pub mod tenant;
 pub mod util;
 
 use manifest::Project;
@@ -373,10 +374,12 @@ pub fn summarize(results: &[mutate::Outcome]) -> Result<()> {
         .iter()
         .filter(|o| matches!(o.verdict, Verdict::Invalid(_)))
         .count();
+    let by_design = results.iter().filter(|o| o.verdict == Verdict::ByDesign).count();
     eprintln!(
-        "\n{caught}/{} caught, {} survived, {invalid} invalid",
+        "\n{caught}/{} caught, {} survived, {invalid} invalid{}",
         results.len(),
-        survived.len()
+        survived.len(),
+        if by_design > 0 { format!(", {by_design} survive by design (not linked; not run)") } else { String::new() }
     );
     for o in &survived {
         eprintln!("  survived: {}", o.name);

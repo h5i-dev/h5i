@@ -12,11 +12,9 @@ use h5i_app_std::authz::Guarded;
 use serde::{Deserialize, Serialize};
 
 /// The kernel behind the guard (`h5i_app_std::authz_kernel!` in the kernel).
+/// Principals come from the kernel's `principal` (`main.rs`), which
+/// `tenant-of-token` is proven for.
 pub type Forum = k::App;
-
-pub fn principal(org: u64, user: u64) -> k::Principal {
-    k::Principal { org, user }
-}
 
 // The `users`, `posts` and `counters` tables, from the kernel's `schema!`,
 // and `ForumStore`, their generated `Store`.

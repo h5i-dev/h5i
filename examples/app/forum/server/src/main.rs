@@ -1,6 +1,6 @@
 use axum::routing::get;
 use axum::Router;
-use forum_server::{principal, Forum, ForumStore};
+use forum_server::{Forum, ForumStore};
 use h5i_app_http::{rpc_router, HmacAuth, H5iApp};
 use h5i_app_pg::{pool, Engine, EngineConfig};
 use std::sync::Arc;
@@ -12,7 +12,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let secret = std::env::var("H5I_APP_SECRET")?;
     let addr = std::env::var("LISTEN").unwrap_or_else(|_| "127.0.0.1:8080".into());
 
-    let auth = HmacAuth::<Forum>::new(secret, principal);
+    // The kernel's principal function, by path: `tenant-of-token` is proven
+    // for it, and `h5i app report` reads this line as linked.
+    let auth = HmacAuth::<Forum>::new(secret, forum_kernel::principal);
     if let Ok(spec) = std::env::var("H5I_APP_ISSUE") {
         // H5I_APP_ISSUE=<org>:<user> prints a one-day token and exits.
         let (o, u) = spec.split_once(':').ok_or("H5I_APP_ISSUE=<org>:<user>")?;

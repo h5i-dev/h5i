@@ -111,7 +111,7 @@
       <p class="crumbs"><a href="/">h5i</a><i>/</i><a href="/guides/">docs</a><i>/</i><span>manual</span></p>
       <p class="post-eyebrow">CLI reference</p>
       <h1>h5i Manual</h1>
-      <p class="manual-meta"><span>Updated <time datetime="2026-11-05">2026-11-05</time></span><i>|</i><span>58 min read</span><i>|</i><span class="ok">21 chapters</span></p>
+      <p class="manual-meta"><span>Updated <time datetime="2026-11-05">2026-11-05</time></span><i>|</i><span>59 min read</span><i>|</i><span class="ok">21 chapters</span></p>
       <details class="manual-mobile-toc"><summary>Chapters</summary>
 <div class="mn-group"><p class="mn-head">Start here</p>
 <a href="#what-h5i-is"><span class="mn-n">01</span><span>What h5i is</span></a>
@@ -1594,6 +1594,19 @@ the verdict is the Lean kernel's, and hand-written modules may not use
 <code>initialize</code>, <code>implemented_by</code>, <code>extern</code>, <code>unsafe</code>, term syntax, or macros and
 elaborators outside the <code>tactic</code> category. A <code>passed</code> run recorded under
 <code>.h5i/app/runs</code> is a local record, not evidence; rerun <code>check</code> to establish it.</p>
+<p>One obligation is opt-in: <code>tenant-of-token</code>. With <code>[obligations] principal</code>
+naming the kernel function the server gives <code>HmacAuth::new</code> (an <code>[authz]</code> app),
+<code>extract</code> also extracts it and <code>authz_kernel!</code>'s <code>tenant_of</code> (the tenant the
+engine uses), and <code>check</code> states <code>H5iAppLib.Obligation.TenantOfToken</code>: the
+tenant of the principal built from a token's tenant and user is that tenant.
+<code>tenant-of-token</code> may name the theorem; without it, <code>check</code> tries automation.
+<code>h5i app report</code> and the check run then say whether the server is linked:
+every <code>HmacAuth::new</code> is given that function by path. Linked is a source check
+(<code>syn</code>), not a proof. The report gives each project and route one of
+<code>proven, linked</code> (the tenant is covered by the proof and A1), <code>proven, not
+linked</code> (with the construction that is not), <code>open</code> or <code>not_stated</code>, and
+lists <code>or_anonymous</code> and <code>Actor::assume_authenticated</code>, which stay reviewed.
+Nothing changes for an app that does not opt in.</p>
 <p><code>mutate</code> runs each mutant in a copy of the project: it edits the kernel,
 re-extracts it and rebuilds the proofs. A mutant is caught when the proofs stop
 building. One that survives is a behaviour the spec does not pin down, such as
@@ -1603,9 +1616,14 @@ mutants generated from the kernel's syntax: comparison boundaries, <code>==</cod
 <code>false</code>. <code>--security</code> adds authorization bugs: a conjunct of a hand-written
 <code>Policy::permits</code> dropped, <code>visible</code> or <code>stored</code> made <code>true</code>, a comparison with
 the actor made <code>true</code>, the guard removed or its write check skipped, every
-principal put in tenant 0, and for a policy from <code>schema!</code> the same changes made
-to its generator. Each caught mutant's line names the declarations whose proofs
-broke.</p>
+principal put in tenant 0, the principal function the server gives
+<code>HmacAuth::new</code> putting every token in tenant 0, and for a policy from <code>schema!</code>
+the same changes made to its generator. Each caught mutant's line names the
+declarations whose proofs broke. The principal-function mutant runs only when
+the server is linked (it then edits the kernel's function); otherwise it is
+listed as <code>survives by design (not linked)</code>, with the reason, and not run. For
+an obligation proven by <code>check</code>'s automation (<code>tenant-of-token</code> without a named
+theorem), <code>mutate</code> runs that automation in the copy as well.</p>
 <p><code>[authz] guarded</code> opts a kernel into framework-proven authorization
 (<a href="https://github.com/h5i-dev/h5i/blob/main/docs/design/design-app-authz.md"><code>docs/design/design-app-authz.md</code></a>). The kernel invokes
 <code>h5i_app_std::authz_kernel!</code>, which writes <code>guarded_transition</code> (the only
@@ -1662,6 +1680,8 @@ read-only = &quot;my_kernel.ReadOnly.sound&quot;   # ReadOnlySound: required whe
 panic-free = &quot;my_kernel.panic_free&quot;      # PanicFree
 # authorized = &quot;...&quot;                     # Authorized, with the app's own allowed/visible (printed)
 # storage = &quot;...&quot;                        # Storage; the same slot as [authz] storage
+# principal = &quot;principal&quot;                # opt in to tenant-of-token ([authz] only): the kernel's principal function
+# tenant-of-token = &quot;my_kernel.Tenant.t&quot; # TenantOfToken of tenant_of and principal; default: automation
 
 [mutate]
 targets = [&quot;Theorems&quot;]        # Lake targets a mutant must break (default: all)
@@ -2339,7 +2359,7 @@ once that session has ended, so group by <code>project</code> or <code>id</code>
     <dl class="ma-meta">
       <div><dt>Updated</dt><dd>2026-11-05</dd></div>
       <div><dt>Chapters</dt><dd>21</dd></div>
-      <div><dt>Reading</dt><dd>58 min</dd></div>
+      <div><dt>Reading</dt><dd>59 min</dd></div>
       <div><dt>Flags</dt><dd><code>--help</code></dd></div>
       <div><dt>Source</dt><dd><a href="https://github.com/h5i-dev/h5i/blob/main/docs/MANUAL.md">MANUAL.md &#8599;</a></dd></div>
     </dl>
