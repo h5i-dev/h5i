@@ -1,0 +1,20 @@
+# The thermostat firmware on an STM32F4 Discovery, its USART2 on a TCP port.
+#
+#   renode --disable-xwt --console -e '$elf=@path/to/thermostat-firmware; $port=8080; include @scripts/embedded/thermostat.resc'
+#
+# Every byte a TCP client sends goes to USART2's receiver and every byte the
+# firmware transmits goes back, so curl talks HTTP to the device directly.
+
+:name: thermostat
+:description: h5i-app thermostat over USART2
+
+$port?=8080
+
+using sysbus
+mach create "thermostat"
+machine LoadPlatformDescription @platforms/boards/stm32f4_discovery.repl
+# `false`: no telnet negotiation bytes, the socket carries raw HTTP.
+emulation CreateServerSocketTerminal $port "term" false
+connector Connect sysbus.usart2 term
+sysbus LoadELF $elf
+start
