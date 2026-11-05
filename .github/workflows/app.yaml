@@ -97,122 +97,76 @@ jobs:
       - run: cargo deny check bans
         working-directory: examples/app
 
+  # Every proof project, split into shards that run in parallel (about 5 to
+  # 10 minutes each). `ci-shard.sh` partitions what `--all` finds, so a new
+  # project is checked without editing this file.
   lean:
     runs-on: ubuntu-latest
-    # About 40 minutes when it works; a hung download must not hold a runner for hours.
-    timeout-minutes: 100
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Install elan
+      - name: Install elan and the pinned Lean toolchain
+        timeout-minutes: 5
         run: |
-          curl -sSfL --retry 5 --retry-all-errors https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+          curl -fsSL --retry 3 --retry-delay 10 --retry-all-errors \
+            https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
             | sh -s -- -y --default-toolchain none
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
-      # The pinned Lean toolchains, from cache or downloaded once here with
-      # retries, so a transient release-server error (504) fails or recovers
-      # in this step instead of failing every project's `lake build`.
-      - uses: actions/cache@v4
-        continue-on-error: true
-        with:
-          path: ~/.elan/toolchains
-          key: elan-${{ hashFiles('**/proofs/lean-toolchain') }}
-      - name: Install the pinned Lean toolchains
-        timeout-minutes: 20
-        run: |
+          # Up front, with a few spaced retries: a transient 504 from the
+          # release server then fails or recovers here, once, instead of in
+          # every project's `lake build`.
           for tc in $(cat $(git ls-files '*proofs/lean-toolchain') | sort -u); do
-            for try in 1 2 3 4 5; do
+            for try in 1 2 3; do
               "$HOME/.elan/bin/elan" toolchain install "$tc" && break
-              [ "$try" = 5 ] && { echo "::error::could not install $tc"; exit 1; }
-              echo "::warning::installing $tc failed (try $try); retrying"
-              sleep $((try * 20))
+              [ "$try" = 3 ] && exit 1
+              sleep $((try * 30))
             done
           done
       # `h5i app check` fetches the Lake packages (Aeneas, Mathlib) once into
       # this cache, shared by every proof project with the same requires.
-      - uses: actions/cache@v4
+      # Every shard restores it; only shard 0 saves it, so one run uploads it
+      # at most once.
+      - uses: actions/cache/restore@v4
         with:
           path: ~/.cache/h5i/lake
           key: lake-${{ hashFiles('**/proofs/lean-toolchain', '**/proofs/lakefile.lean', '**/proofs/lake-manifest.json') }}-${{ github.sha }}
           restore-keys: |
             lake-${{ hashFiles('**/proofs/lean-toolchain', '**/proofs/lakefile.lean', '**/proofs/lake-manifest.json') }}-
-      # Before Nix puts Charon's toolchain on PATH.
       - run: cargo build --release --locked -p h5i-app-xtask
       # An `[authz]` project's check re-extracts it (its gate is only about
       # the kernel when proofs/generated/ is fresh), so it needs both tools.
-      - uses: cachix/install-nix-action@v31
-        with:
-          extra_nix_config: |
-            extra-substituters = https://hacl.cachix.org
-            extra-trusted-public-keys = hacl.cachix.org-1:FzsZ2xsByOwKwIWNPII7yMOelJNDZ12mDAj3d1eGX0c=
-            fallback = true
-            connect-timeout = 10
-            stalled-download-timeout = 120
-      # Only a cache: when the GitHub Actions cache service fails, it disables
-      # itself mid-build, so Nix must be able to go on without it (fallback
-      # and the timeouts above) and the job must not wait on it.
-      - uses: DeterminateSystems/magic-nix-cache-action@v8
-        continue-on-error: true
-      # Usually about 10 minutes. Bounded, and tried twice: a second run
-      # reuses what the first one fetched or built.
-      - name: Build Charon and Aeneas at the pinned commit
-        timeout-minutes: 50
+      - name: Install Charon and Aeneas at the pinned commit
+        timeout-minutes: 5
+        run: scripts/app/install-aeneas.sh "$RUNNER_TEMP/aeneas" >> "$GITHUB_PATH"
+      # Build each project of the shard and gate it: no sorry, native_decide
+      # or axiom, every theorem of a hand-written module on the standard
+      # axioms only, and the theorems each h5i-app.toml names present.
+      - name: Check this shard's proof projects
         run: |
-          build() {
-            for try in 1 2; do
-              timeout 20m nix build "$1" -o "$2" -L && return 0
-              echo "::warning::nix build $1 failed or timed out (try $try)"
-            done
-            return 1
-          }
-          build "github:AeneasVerif/aeneas/$AENEAS_REV" "$RUNNER_TEMP/aeneas"
-          build "github:AeneasVerif/aeneas/$AENEAS_REV#charon" "$RUNNER_TEMP/charon"
-          echo "$RUNNER_TEMP/aeneas/bin" >> "$GITHUB_PATH"
-          echo "$RUNNER_TEMP/charon/bin" >> "$GITHUB_PATH"
-      # Build every proof project and gate it: no sorry, native_decide or
-      # axiom, every theorem of a hand-written module on the standard axioms
-      # only, and the theorems each h5i-app.toml names present.
-      - run: target/release/h5i-app-xtask check --all crates examples/app examples/embedded
+          projects=$(scripts/app/ci-shard.sh ${{ matrix.shard }} 4 crates examples/app examples/embedded)
+          echo "$projects"
+          target/release/h5i-app-xtask check $projects
+      - uses: actions/cache/save@v4
+        if: matrix.shard == 0 && success()
+        with:
+          path: ~/.cache/h5i/lake
+          key: lake-${{ hashFiles('**/proofs/lean-toolchain', '**/proofs/lakefile.lean', '**/proofs/lake-manifest.json') }}-${{ github.sha }}
   # A9: the committed Lean must be exactly what Aeneas extracts from the kernel.
   extract:
     runs-on: ubuntu-latest
-    # About 20 minutes when it works.
-    timeout-minutes: 70
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      # Before Nix puts Charon's toolchain on PATH.
       - run: cargo build --release --locked -p h5i-app-xtask
-      - uses: cachix/install-nix-action@v31
-        with:
-          # Aeneas CI pushes its builds here.
-          extra_nix_config: |
-            extra-substituters = https://hacl.cachix.org
-            extra-trusted-public-keys = hacl.cachix.org-1:FzsZ2xsByOwKwIWNPII7yMOelJNDZ12mDAj3d1eGX0c=
-            fallback = true
-            connect-timeout = 10
-            stalled-download-timeout = 120
-      # Only a cache: when the GitHub Actions cache service fails, it disables
-      # itself mid-build, so Nix must be able to go on without it (fallback
-      # and the timeouts above) and the job must not wait on it.
-      - uses: DeterminateSystems/magic-nix-cache-action@v8
-        continue-on-error: true
-      # Usually about 10 minutes. Bounded, and tried twice: a second run
-      # reuses what the first one fetched or built.
-      - name: Build Charon and Aeneas at the pinned commit
-        timeout-minutes: 50
-        run: |
-          build() {
-            for try in 1 2; do
-              timeout 20m nix build "$1" -o "$2" -L && return 0
-              echo "::warning::nix build $1 failed or timed out (try $try)"
-            done
-            return 1
-          }
-          build "github:AeneasVerif/aeneas/$AENEAS_REV" "$RUNNER_TEMP/aeneas"
-          build "github:AeneasVerif/aeneas/$AENEAS_REV#charon" "$RUNNER_TEMP/charon"
-          echo "$RUNNER_TEMP/aeneas/bin" >> "$GITHUB_PATH"
-          echo "$RUNNER_TEMP/charon/bin" >> "$GITHUB_PATH"
+      - name: Install Charon and Aeneas at the pinned commit
+        timeout-minutes: 5
+        run: scripts/app/install-aeneas.sh "$RUNNER_TEMP/aeneas" >> "$GITHUB_PATH"
       - run: target/release/h5i-app-xtask extract --check --all crates examples/app examples/embedded
