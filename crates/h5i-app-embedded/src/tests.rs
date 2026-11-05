@@ -172,3 +172,222 @@ proptest::proptest! {
         proptest::prop_assert!(out.is_empty() || out.starts_with("HTTP/1.1 "));
     }
 }
+
+// ---------------------------------------------------------------------------
+// A shared byte link (a UART): without framing, one client's partial request
+// is completed by the next client's bytes; with `link`, it is not.
+
+mod uart {
+    use super::*;
+    use std::vec;
+    use crate::link::{self, Bound, CLOSE, FLAG, Link, OPEN, serve_link};
+    use std::time::Duration;
+
+    struct TokioBound(Duration);
+
+    impl Bound for TokioBound {
+        async fn within<F: core::future::Future>(&self, f: F) -> Option<F::Output> {
+            tokio::time::timeout(self.0, f).await.ok()
+        }
+    }
+
+    fn router() -> Router<impl Routes<Counter>> {
+        Router::new().get(b"/hello", hello).post(b"/echo", echo).post(b"/relay/{id}", relay)
+    }
+
+    const ATTACKER: &[u8] = b"POST /relay/3 HTTP/1.1\r\nX-Pad: ";
+    const VICTIM: &[u8] = b"POST /echo HTTP/1.1\r\nHost: d\r\nContent-Length: 2\r\n\r\non";
+
+    /// What the firmware did before the fix: `serve` again and again on the
+    /// raw line. The victim's request runs as the attacker's.
+    #[test]
+    fn raw_uart_is_hijackable() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let out = rt.block_on(async {
+            let (line, dev) = tokio::io::duplex(1 << 16);
+            let (mut lr, mut lw) = tokio::io::split(line);
+            let st = Counter { hits: core::cell::Cell::new(0) };
+            let r = router();
+            let device = async {
+                let mut io = FromTokio::new(dev);
+                let mut rx = [0u8; 2048];
+                let mut tx = [0u8; 1024];
+                for _ in 0..2 {
+                    let _ = serve(&Config::default(), &r, &st, &mut rx, &mut tx, &mut io).await;
+                }
+            };
+            let clients = async move {
+                lw.write_all(ATTACKER).await.unwrap();
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                lw.write_all(VICTIM).await.unwrap();
+                lw.shutdown().await.unwrap();
+                let mut v = Vec::new();
+                lr.read_to_end(&mut v).await.unwrap();
+                v
+            };
+            let ((), v) = tokio::join!(device, clients);
+            String::from_utf8_lossy(&v).into_owned()
+        });
+        // The handler for the attacker's path answered the victim.
+        assert!(out.starts_with("HTTP/1.1 200 OK") && out.ends_with("\r\n\r\n3"), "{out}");
+    }
+
+    /// The gateway's side: `data` for connection `id`.
+    fn framed(id: u8, data: &[u8], close: bool) -> Vec<u8> {
+        let mut v = vec![FLAG, OPEN, id];
+        let mut buf = vec![0u8; 2 * data.len()];
+        let n = link::escape(data, &mut buf).unwrap();
+        v.extend_from_slice(&buf[..n]);
+        if close {
+            v.extend_from_slice(&[FLAG, CLOSE, id]);
+        }
+        v
+    }
+
+    /// The device's output, split by connection: (id, bytes, closed).
+    fn segments(out: &[u8]) -> Vec<(u8, Vec<u8>, bool)> {
+        let mut segs: Vec<(u8, Vec<u8>, bool)> = Vec::new();
+        let mut i = 0;
+        while i < out.len() {
+            match out[i] {
+                FLAG if out[i + 1] == OPEN => {
+                    segs.push((out[i + 2], Vec::new(), false));
+                    i += 3;
+                }
+                FLAG if out[i + 1] == CLOSE => {
+                    let s = segs.last_mut().unwrap();
+                    assert_eq!(s.0, out[i + 2]);
+                    s.2 = true;
+                    i += 3;
+                }
+                link::ESC => {
+                    segs.last_mut().unwrap().1.push(out[i + 1] ^ 0x20);
+                    i += 2;
+                }
+                b => {
+                    segs.last_mut().unwrap().1.push(b);
+                    i += 1;
+                }
+            }
+        }
+        segs
+    }
+
+    /// Run the device loop on a line; `script` writes to it (and may wait).
+    fn on_line<F, Fut>(bound: Duration, script: F) -> Vec<(u8, Vec<u8>, bool)>
+    where
+        F: FnOnce(tokio::io::WriteHalf<tokio::io::DuplexStream>) -> Fut,
+        Fut: core::future::Future<Output = tokio::io::WriteHalf<tokio::io::DuplexStream>>,
+    {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        rt.block_on(async {
+            let (line, dev) = tokio::io::duplex(1 << 16);
+            let (mut lr, lw) = tokio::io::split(line);
+            let st = Counter { hits: core::cell::Cell::new(0) };
+            let r = router();
+            let device = async {
+                let mut l = Link::new(FromTokio::new(dev));
+                let mut rx = [0u8; 2048];
+                let mut tx = [0u8; 1024];
+                serve_link(&Config::default(), &r, &st, &mut rx, &mut tx, &mut l, &TokioBound(bound)).await.unwrap();
+            };
+            let clients = async move {
+                let mut lw = script(lw).await;
+                lw.shutdown().await.unwrap();
+                let mut v = Vec::new();
+                lr.read_to_end(&mut v).await.unwrap();
+                v
+            };
+            let ((), v) = tokio::join!(device, clients);
+            segments(&v)
+        })
+    }
+
+    fn text(b: &[u8]) -> String {
+        String::from_utf8_lossy(b).into_owned()
+    }
+
+    #[test]
+    fn framed_uart_isolates_connections() {
+        let segs = on_line(Duration::from_secs(5), |mut w| async move {
+            // The attacker leaves a partial head and goes; the victim follows at once.
+            w.write_all(&framed(1, ATTACKER, true)).await.unwrap();
+            w.write_all(&framed(2, VICTIM, false)).await.unwrap();
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            w
+        });
+        let victim = segs.iter().find(|s| s.0 == 2).unwrap();
+        let v = text(&victim.1);
+        assert!(v.starts_with("HTTP/1.1 200 OK") && v.ends_with("\r\n\r\non"), "{v}");
+        // The attacker's connection got at most a rejection of its own partial head.
+        for s in segs.iter().filter(|s| s.0 == 1) {
+            let a = text(&s.1);
+            assert!(a.is_empty() || a.starts_with("HTTP/1.1 400 "), "{a}");
+        }
+        // Even without its CLOSE, a new OPEN ends the attacker's connection.
+        let segs = on_line(Duration::from_secs(5), |mut w| async move {
+            w.write_all(&framed(1, ATTACKER, false)).await.unwrap();
+            w.write_all(&framed(2, VICTIM, false)).await.unwrap();
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            w
+        });
+        let v = text(&segs.iter().find(|s| s.0 == 2).unwrap().1);
+        assert!(v.ends_with("\r\n\r\non"), "{v}");
+        assert!(segs.iter().filter(|s| s.0 == 1).all(|s| s.1.is_empty()), "{segs:?}");
+    }
+
+    #[test]
+    fn a_silent_client_is_cut_off_within_the_bound() {
+        let t0 = std::time::Instant::now();
+        let segs = on_line(Duration::from_millis(300), |mut w| async move {
+            w.write_all(&framed(1, b"GET /hello HTTP/1.1\r\n", false)).await.unwrap();
+            tokio::time::sleep(Duration::from_millis(600)).await;
+            w.write_all(&framed(2, b"GET /hello HTTP/1.1\r\nHost: d\r\n\r\n", true)).await.unwrap();
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            w
+        });
+        assert!(t0.elapsed() < Duration::from_secs(3));
+        // Connection 1 was closed by the device, with nothing served.
+        assert_eq!(segs[0].0, 1);
+        assert!(segs[0].2 && segs[0].1.is_empty(), "{segs:?}");
+        let v = text(&segs.iter().find(|s| s.0 == 2).unwrap().1);
+        assert!(v.ends_with("\r\n\r\nhello"), "{v}");
+    }
+
+    #[test]
+    fn no_stale_response_reaches_the_next_connection() {
+        let segs = on_line(Duration::from_secs(5), |mut w| async move {
+            // Two pipelined requests, then the next client before they are read.
+            let mut a = b"POST /echo HTTP/1.1\r\nHost: d\r\nContent-Length: 5\r\n\r\nfirst".to_vec();
+            a.extend_from_slice(b"POST /echo HTTP/1.1\r\nHost: d\r\nContent-Length: 6\r\n\r\nsecond");
+            w.write_all(&framed(1, &a, false)).await.unwrap();
+            w.write_all(&framed(2, b"POST /echo HTTP/1.1\r\nHost: d\r\nContent-Length: 4\r\n\r\nmine", true)).await.unwrap();
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            w
+        });
+        for s in &segs {
+            let t = text(&s.1);
+            if s.0 == 2 {
+                assert_eq!(t.matches("HTTP/1.1").count(), 1, "{t}");
+                assert!(t.ends_with("\r\n\r\nmine"), "{t}");
+            } else {
+                assert!(!t.contains("mine"), "{t}");
+            }
+        }
+    }
+
+    /// Payload bytes equal to the markers are escaped and arrive intact.
+    #[test]
+    fn marker_bytes_in_bodies_survive() {
+        let body = [b'a', FLAG, OPEN, 9, link::ESC, b'z'];
+        let mut req = b"POST /echo HTTP/1.1\r\nHost: d\r\nContent-Length: 6\r\n\r\n".to_vec();
+        req.extend_from_slice(&body);
+        let segs = on_line(Duration::from_secs(5), |mut w| async move {
+            w.write_all(&framed(7, &req, true)).await.unwrap();
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            w
+        });
+        assert_eq!(segs.len(), 1);
+        assert!(segs[0].1.ends_with(&body), "{segs:?}");
+    }
+}

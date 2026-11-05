@@ -5,10 +5,13 @@
 //! `scripts/embedded/thermostat.resc` connects USART2 to a TCP socket so
 //! `curl http://127.0.0.1:8080/state` reaches it byte for byte.
 //!
-//! A UART has no connections: after a response that closes the connection
-//! (a rejection, `Connection: close`, HTTP/1.0) the firmware drops input
-//! until the line has been quiet for 50 ms, so the rest of a refused
-//! request is not read as the next one.
+//! A UART has no connections, so the line is framed (`h5i_app_embedded::link`):
+//! a gateway on the host (`scripts/embedded/uart-gateway.py`) marks where
+//! each TCP client's bytes start and end and escapes them, and forwards to a
+//! client only the device's bytes for that client. Each connection is served
+//! with an empty receive buffer and at most `CONNECTION_BOUND`; a new
+//! connection aborts the previous one, whose leftover bytes and unsent
+//! responses are dropped.
 
 #![no_std]
 #![no_main]
@@ -17,8 +20,8 @@ use embassy_executor::Spawner;
 use embassy_stm32::usart::{BufferedInterruptHandler, BufferedUart, Config as UartConfig};
 use embassy_stm32::{bind_interrupts, peripherals};
 use embassy_time::{Duration, with_timeout};
-use embedded_io_async::{Read, Write};
-use h5i_app_embedded::{Config, serve};
+use h5i_app_embedded::Config;
+use h5i_app_embedded::link::{Bound, Link, serve_link};
 use panic_halt as _;
 use thermostat_app::{App, router};
 
@@ -40,28 +43,30 @@ async fn main(_spawner: Spawner) {
     let mut uart_rx = [0u8; 512];
     let mut cfg = UartConfig::default();
     cfg.baudrate = 115_200;
-    let Ok(mut uart) = BufferedUart::new(p.USART2, p.PA3, p.PA2, &mut uart_tx, &mut uart_rx, Irqs, cfg) else {
+    let Ok(uart) = BufferedUart::new(p.USART2, p.PA3, p.PA2, &mut uart_tx, &mut uart_rx, Irqs, cfg) else {
         // A configuration the peripheral refuses: nothing to serve on.
         loop {
             cortex_m::asm::wfi();
         }
     };
-    let _ = uart.write_all(b"").await;
     let routes = router();
     let mut rx = [0u8; RX];
     let mut tx = [0u8; TX];
+    let mut link = Link::new(uart);
     loop {
-        let _ = serve(&Config::default(), &routes, &APP, &mut rx, &mut tx, &mut uart).await;
-        drain(&mut uart).await;
+        // Only a broken UART ends this; start over.
+        let _ = serve_link(&Config::default(), &routes, &APP, &mut rx, &mut tx, &mut link, &Embassy).await;
     }
 }
 
-/// Read and drop bytes until none arrive for 50 ms.
-async fn drain<IO: Read>(io: &mut IO) {
-    let mut junk = [0u8; 64];
-    while let Ok(Ok(n)) = with_timeout(Duration::from_millis(50), io.read(&mut junk)).await {
-        if n == 0 {
-            return;
-        }
+/// The longest one connection may take, from its first byte to its last
+/// response: a silent or slow client holds the line no longer than this.
+const CONNECTION_BOUND: Duration = Duration::from_secs(5);
+
+struct Embassy;
+
+impl Bound for Embassy {
+    async fn within<F: core::future::Future>(&self, f: F) -> Option<F::Output> {
+        with_timeout(CONNECTION_BOUND, f).await.ok()
     }
 }

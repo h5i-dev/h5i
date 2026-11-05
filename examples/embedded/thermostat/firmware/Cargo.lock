@@ -911,7 +911,6 @@ dependencies = [
  "embassy-executor",
  "embassy-stm32",
  "embassy-time",
- "embedded-io-async 0.7.0",
  "h5i-app-embedded",
  "panic-halt",
  "thermostat-app",

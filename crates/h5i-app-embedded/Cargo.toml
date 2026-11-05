@@ -21,7 +21,7 @@ critical-section = "1.2"
 [dev-dependencies]
 critical-section = { version = "1.2", features = ["std"] }
 embedded-io-adapters = { version = "0.7", features = ["tokio-1"] }
-tokio = { version = "1", features = ["rt", "macros", "io-util"] }
+tokio = { version = "1", features = ["rt", "macros", "io-util", "time"] }
 proptest = "1"
 
 [lints.clippy]

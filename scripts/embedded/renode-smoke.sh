@@ -9,6 +9,12 @@
 # colon, an oversized head, a bad chunk size, ...), and that the device still
 # answers afterwards: the rejections neither crashed nor wedged it.
 #
+# The UART is framed (h5i_app_embedded::link); clients reach it through
+# uart-gateway.py on PORT, which talks to Renode's UART socket on PORT+1.
+# Also checks the shared-line attacks: a partial request left by one client
+# is never completed by the next one's bytes, a silent client is cut off
+# within the device's bound, and no client receives another's response.
+#
 # Environment: RENODE (default ~/.local/opt/renode/renode), PORT (18080),
 # FIRMWARE (a prebuilt ELF; skips the build), CARGO_TARGET_DIR.
 set -euo pipefail
@@ -16,6 +22,7 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 renode="${RENODE:-$HOME/.local/opt/renode/renode}"
 port="${PORT:-18080}"
+uart_port=$((port + 1))
 fw_dir="$root/examples/embedded/thermostat/firmware"
 
 if [ -z "${FIRMWARE:-}" ]; then
@@ -29,12 +36,15 @@ fi
 log="$(mktemp)"
 # Renode's console reads stdin; an open, silent one keeps it running.
 sleep infinity | "$renode" --disable-xwt --console \
-    -e "\$elf=@$FIRMWARE; \$port=$port; include @$root/scripts/embedded/thermostat.resc" >"$log" 2>&1 &
+    -e "\$elf=@$FIRMWARE; \$port=$uart_port; include @$root/scripts/embedded/thermostat.resc" >"$log" 2>&1 &
 renode_pid=$!
+python3 "$root/scripts/embedded/uart-gateway.py" "$port" "$uart_port" 6 >>"$log" 2>&1 &
+gateway_pid=$!
 cleanup() {
+    kill "$gateway_pid" 2>/dev/null || true
     pkill -P "$renode_pid" 2>/dev/null || true
     kill "$renode_pid" 2>/dev/null || true
-    pkill -f "renode.*$port" 2>/dev/null || true
+    pkill -f "renode.*$uart_port" 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -152,11 +162,59 @@ for name, data, want in bad:
         check("reject %s -> %d" % (name, want), st == want and "Connection: close" in head, "%d %r" % (st, head))
     except Exception as e:
         check("reject %s -> %d" % (name, want), False, repr(e))
-    # The firmware drops the rest of a refused request once the line is quiet.
-    time.sleep(1.0)
+    time.sleep(0.2)
 
 st, _, body = one(req(b"GET", b"/state", auth=False))
 check("still serving after the rejections", st == 200 and '"temp_dc":205' in body, body)
+
+# --- The shared line ---------------------------------------------------------
+def conn(t=20):
+    return socket.create_connection(("127.0.0.1", PORT), timeout=t)
+
+# 1. Hijack: an attacker leaves a partial head and goes; the victim follows.
+a = conn(); a.sendall(b"PUT /relay/3 HTTP/1.1\r\nX-Pad: "); a.close()
+st, _, body = one(req(b"PUT", b"/relay/0", b"on"))
+check("hijack: the victim's own request ran", st == 200 and '"relays":[true,false,true,false]' in body, body)
+st, _, body = one(req(b"GET", b"/state", auth=False))
+check("hijack: relay 3 untouched", '"relays":[true,false,true,false]' in body, body)
+
+# 2. A silent client (request line, then nothing, socket open) holds the line
+#    no longer than the device's bound; the next client is then served.
+a = conn(); a.sendall(b"GET /state HTTP/1.1\r\n")
+time.sleep(0.2)
+t0 = time.time()
+try:
+    st, _, body = one(req(b"GET", b"/state", auth=False))
+except Exception as e:
+    st, body = 0, repr(e)
+waited = time.time() - t0
+check("silent client: next one served (%.1fs)" % waited, st == 200 and waited < 12, body)
+a.settimeout(1)
+try:
+    rest = a.recv(4096)
+except OSError:
+    rest = b""
+check("silent client: got nothing of the other's", b"setpoint_dc" not in rest, repr(rest))
+a.close()
+
+# 3. Stale responses: pipelined requests, then gone before reading.
+a = conn(); a.sendall(req(b"POST", b"/temp", b"111") + req(b"GET", b"/state", auth=False)); a.close()
+rs = responses(req(b"GET", b"/state", auth=False), 1)
+check("stale: exactly the next client's response", rs[0][0] == 200 and rs[0][2].startswith("{"), str(rs))
+s2 = conn(5); s2.sendall(req(b"GET", b"/state", auth=False))
+time.sleep(3)
+s2.settimeout(1)
+data = b""
+try:
+    while True:
+        d = s2.recv(4096)
+        if not d:
+            break
+        data += d
+except OSError:
+    pass
+s2.close()
+check("stale: one response per request", data.count(b"HTTP/1.1 ") == 1, repr(data[:200]))
 st, _, body = one(req(b"PUT", b"/mode", b"heat"))
 check("still accepting writes", st == 200 and '"mode":"heat"' in body, body)
 

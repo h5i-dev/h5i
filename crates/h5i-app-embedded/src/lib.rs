@@ -33,6 +33,7 @@
 #![allow(async_fn_in_trait)]
 
 pub mod kernel;
+pub mod link;
 mod path;
 #[cfg(test)]
 mod tests;
