@@ -63,6 +63,11 @@ theorem transition_total (a : Principal) (s : Snapshot) (c : Command) : ∃ r, t
   · exact ⟨.Ok (alloc.vec.Vec.new Write, .Accounts s.accounts),
       by simp [vec_clone_eq Account.Insts.CoreCloneClone s.accounts (fun _ => rfl)]⟩
 
+/-- Panic freedom, as `H5iAppLib.Obligation.PanicFree` states it: `transition`
+returns for every actor, state and command (`[obligations] panic-free`). -/
+theorem panic_free : H5iAppLib.Obligation.PanicFree transition :=
+  H5iAppLib.Obligation.panicFree_of_total transition_total
+
 /-! ## Accounts after a write -/
 
 theorem findAcc_put (s : St) (a : Account) (n : Nat) :

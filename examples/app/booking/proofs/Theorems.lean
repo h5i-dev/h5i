@@ -58,6 +58,11 @@ theorem transition_total (a : Principal) (s : Snapshot) (c : Command) : ∃ r, t
   · exact ⟨.Ok (alloc.vec.Vec.new Write, .Bookings s.bookings),
       by simp [vec_clone_eq Booking.Insts.CoreCloneClone s.bookings (fun _ => rfl)]⟩
 
+/-- Panic freedom, as `H5iAppLib.Obligation.PanicFree` states it: `transition`
+returns for every actor, state and command (`[obligations] panic-free`). -/
+theorem panic_free : H5iAppLib.Obligation.PanicFree transition :=
+  H5iAppLib.Obligation.panicFree_of_total transition_total
+
 /-! ## Permissions and destinations -/
 
 /-- The policy allows every write of a successful command, judged against the
