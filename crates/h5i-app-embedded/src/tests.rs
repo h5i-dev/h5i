@@ -32,10 +32,24 @@ async fn relay(req: &Request<'_>, _: &Counter, out: &mut [u8]) -> Response {
     }
 }
 
+async fn status_with_body(req: &Request<'_>, _: &Counter, out: &mut [u8]) -> Response {
+    let st = req.param_u32(0).unwrap_or(200) as u16;
+    let mut r = Response::text(out, st, b"body!");
+    if st == 299 {
+        // A content type that would split the response.
+        r.content_type = b"text/plain\r\nX: y";
+    }
+    r
+}
+
 /// Send `input` (then half-close), and return everything the server wrote.
 async fn exchange(cfg: Config, input: &[u8]) -> (String, u32) {
     let (client, server) = tokio::io::duplex(1 << 16);
-    let router = Router::new().get(b"/hello", hello).post(b"/echo", echo).post(b"/relay/{id}", relay);
+    let router = Router::new()
+        .get(b"/hello", hello)
+        .post(b"/echo", echo)
+        .post(b"/relay/{id}", relay)
+        .get(b"/status/{s}", status_with_body);
     let st = Counter { hits: core::cell::Cell::new(0) };
     let (mut cr, mut cw) = tokio::io::split(client);
     let input = input.to_vec();
@@ -99,6 +113,54 @@ fn pipelined_and_close() {
     let (out, n) = run(b"GET /hello HTTP/1.0\r\n\r\nGET /hello HTTP/1.0\r\n\r\n");
     assert_eq!(n, 1);
     assert!(out.contains("Connection: close"));
+}
+
+#[test]
+fn bodyless_responses() {
+    // HEAD: the GET handler's length, no body; the connection goes on.
+    let (out, n) = run(b"HEAD /hello HTTP/1.1\r\nHost: d\r\n\r\nGET /hello HTTP/1.1\r\nHost: d\r\n\r\n");
+    assert_eq!(n, 2);
+    assert!(out.starts_with("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 5\r\n\r\nHTTP/1.1 200"), "{out}");
+    assert!(out.ends_with("\r\n\r\nhello"));
+    // 204 and 304: neither Content-Length nor body.
+    for st in [204, 304] {
+        let req = std::format!("GET /status/{st} HTTP/1.1\r\nHost: d\r\n\r\n");
+        let (out, _) = run(req.as_bytes());
+        assert!(out.starts_with(&std::format!("HTTP/1.1 {st} ")), "{out}");
+        assert!(!out.contains("Content-Length") && !out.contains("body!") && out.ends_with("\r\n\r\n"), "{out}");
+    }
+    // A 1xx from a handler is not a final response: 500, and the connection closes.
+    let (out, n) = run(b"GET /status/101 HTTP/1.1\r\nHost: d\r\n\r\nGET /hello HTTP/1.1\r\nHost: d\r\n\r\n");
+    assert_eq!(n, 1);
+    assert!(out.starts_with("HTTP/1.1 500 ") && out.contains("Connection: close") && !out.contains("body!"), "{out}");
+}
+
+#[test]
+fn fallback_500_closes() {
+    let (out, n) = run(b"GET /status/299 HTTP/1.1\r\nHost: d\r\n\r\nGET /hello HTTP/1.1\r\nHost: d\r\n\r\n");
+    assert_eq!(n, 1, "{out}");
+    assert_eq!(out, "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+}
+
+#[test]
+fn connection_close_tokens() {
+    let next = b"GET /hello HTTP/1.1\r\nHost: d\r\n\r\n";
+    for c in [&b"close"[..], b"CLOSE", b"keep-alive, Close", b"upgrade ,close , te", b"x\r\nConnection: close"] {
+        let mut req = b"GET /hello HTTP/1.1\r\nHost: d\r\nConnection: ".to_vec();
+        req.extend_from_slice(c);
+        req.extend_from_slice(b"\r\n\r\n");
+        req.extend_from_slice(next);
+        let (out, n) = run(&req);
+        assert_eq!(n, 1, "{:?}: {out}", core::str::from_utf8(c));
+        assert!(out.contains("Connection: close"), "{out}");
+    }
+    for c in [&b"keep-alive"[..], b"closed", b"x-close"] {
+        let mut req = b"GET /hello HTTP/1.1\r\nHost: d\r\nConnection: ".to_vec();
+        req.extend_from_slice(c);
+        req.extend_from_slice(b"\r\n\r\n");
+        req.extend_from_slice(next);
+        assert_eq!(run(&req).1, 2, "{:?}", core::str::from_utf8(c));
+    }
 }
 
 /// The smuggling corpus: each is answered with an error and the connection

@@ -250,7 +250,9 @@ impl<S, H: Handler<S>, N: Routes<S>> Routes<S> for Route<H, N> {
         match path::matches(self.pattern, req.path, &mut req.params) {
             None => earlier,
             Some(n) => {
-                if self.method != req.method {
+                // A HEAD request runs the GET handler; its body is not sent.
+                let head_as_get = req.method == Method::Head && self.method == Method::Get;
+                if self.method != req.method && !head_as_get {
                     return Dispatch::WrongMethod;
                 }
                 req.nparams = n;
@@ -353,7 +355,7 @@ where
         let (head, body_start, body_end, used) = match next {
             Next::Eof => return Ok(served),
             Next::Reject(status) => {
-                send(io, tx, Response { status, content_type: b"", len: 0, close: true }).await?;
+                send(io, tx, Response { status, content_type: b"", len: 0, close: true }, false).await?;
                 return Ok(served);
             }
             Next::Ready(h, s, e, u) => (h, s, e, u),
@@ -376,9 +378,7 @@ where
                 params: [(0, 0); MAX_PARAMS],
                 nparams: 0,
             };
-            let close = head.minor == 0
-                || served >= cfg.max_requests
-                || req.header(b"connection").is_some_and(|v| v.eq_ignore_ascii_case(b"close"));
+            let close = head.minor == 0 || served >= cfg.max_requests || wants_close(&req);
             let (_, body_out) = tx.split_at_mut(HEAD_ROOM);
             let mut resp = match router.0.dispatch(&mut req, state, body_out).await {
                 Dispatch::Done(r) => r,
@@ -389,10 +389,10 @@ where
                 resp = Response::status(500);
             }
             resp.close |= close;
-            resp
+            (resp, req.method == Method::Head)
         };
-        send(io, tx, resp).await?;
-        if resp.close {
+        let (resp, head_only) = resp;
+        if send(io, tx, resp, head_only).await? {
             return Ok(served);
         }
         // Pipelining: keep the bytes after this request.
@@ -472,20 +472,41 @@ async fn read_request<IO: Read>(
     }
 }
 
-/// Write `resp`, whose body is at `tx[HEAD_ROOM..]`.
-async fn send<IO: Write>(io: &mut IO, tx: &mut [u8], resp: Response) -> Result<(), Closed<IO::Error>> {
+/// Whether any `Connection` field lists the `close` option (RFC 9110 §7.6.1:
+/// a comma-separated list, names case-insensitive, possibly over several
+/// fields).
+pub fn wants_close(req: &Request<'_>) -> bool {
+    req.headers()
+        .filter(|(n, _)| n.eq_ignore_ascii_case(b"connection"))
+        .any(|(_, v)| v.split(|&c| c == b',').any(|t| t.trim_ascii().eq_ignore_ascii_case(b"close")))
+}
+
+/// Write `resp`, whose body is at `tx[HEAD_ROOM..]`; whether the connection
+/// must now close. No body bytes go out for a HEAD request (`head_only`) or a
+/// status that has none (1xx, 204, 304). A 1xx from a handler, a status out
+/// of range or a bad content type become an empty 500 that closes.
+async fn send<IO: Write>(
+    io: &mut IO,
+    tx: &mut [u8],
+    resp: Response,
+    head_only: bool,
+) -> Result<bool, Closed<IO::Error>> {
     let (head, body) = tx.split_at_mut(HEAD_ROOM);
     let len = resp.len.min(body.len());
     let blen = len.min(u32::MAX as usize) as u32;
-    let (n, body_len) = match h1::write_head(head, resp.status, resp.content_type, blen, resp.close) {
-        Some(n) => (n, len),
-        // Status out of range or a content type with control bytes.
+    let written = if resp.status < 200 { None } else { h1::write_head(head, resp.status, resp.content_type, blen, resp.close) };
+    let (n, body_len, close) = match written {
+        Some(n) => {
+            let send_body = !head_only && h1::has_body(resp.status);
+            (n, if send_body { len } else { 0 }, resp.close)
+        }
         None => match h1::write_head(head, 500, b"", 0, true) {
-            Some(n) => (n, 0),
-            None => return Ok(()),
+            Some(n) => (n, 0, true),
+            None => return Ok(true),
         },
     };
     io.write_all(&head[..n]).await.map_err(Closed::Io)?;
     io.write_all(&body[..body_len]).await.map_err(Closed::Io)?;
-    io.flush().await.map_err(Closed::Io)
+    io.flush().await.map_err(Closed::Io)?;
+    Ok(close)
 }
