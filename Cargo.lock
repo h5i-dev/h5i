@@ -1180,6 +1180,14 @@ name = "h5i-app-gpu"
 version = "0.5.3"
 
 [[package]]
+name = "h5i-app-h1"
+version = "0.5.3"
+dependencies = [
+ "httparse",
+ "proptest",
+]
+
+[[package]]
 name = "h5i-app-http"
 version = "0.5.3"
 dependencies = [
