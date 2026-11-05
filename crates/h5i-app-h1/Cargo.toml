@@ -1,0 +1,41 @@
+[package]
+name = "h5i-app-h1"
+description = "A strict HTTP/1.1 request parser, chunked decoder and response writer for no_std devices, extracted to Lean and proven"
+edition = "2024"
+license = "Apache-2.0"
+version = "0.5.3"
+repository = "https://github.com/h5i-dev/h5i"
+homepage = "https://github.com/h5i-dev/h5i"
+readme = "README.md"
+
+# No dependencies: this crate is extracted to Lean by Charon + Aeneas, and
+# runs on microcontrollers (`no_std`, no `alloc`).
+[dependencies]
+
+[dev-dependencies]
+# Differential tests only: never linked into a device build.
+httparse = "1"
+proptest = "1"
+
+# Written in the subset of Rust that Charon + Aeneas translate: no `?`, no
+# `matches!`, no iterators or closures, explicit arithmetic. Clippy's
+# idiomatic rewrites leave that subset, so they are allowed here rather than
+# applied. In the manifest, not the source, so that the `Source:` line numbers
+# in the extracted Lean stay put.
+[lints.clippy]
+assign_op_pattern = "allow"
+collapsible_else_if = "allow"
+collapsible_if = "allow"
+comparison_chain = "allow"
+# No heap, so a `Done(Head)` is returned by value, not boxed.
+large_enum_variant = "allow"
+len_zero = "allow"
+manual_is_multiple_of = "allow"
+manual_map = "allow"
+manual_range_contains = "allow"
+match_like_matches_macro = "allow"
+needless_range_loop = "allow"
+needless_return = "allow"
+nonminimal_bool = "allow"
+question_mark = "allow"
+too_many_arguments = "allow"

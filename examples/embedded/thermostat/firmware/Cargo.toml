@@ -1,0 +1,31 @@
+[package]
+name = "thermostat-firmware"
+description = "The thermostat on an STM32F407 (stm32f4_discovery), serving HTTP over USART2; run in Renode"
+edition = "2024"
+license = "Apache-2.0"
+version = "0.1.0"
+publish = false
+
+# Its own workspace: it builds only for thumbv7em-none-eabihf (.cargo/config.toml).
+[workspace]
+
+[dependencies]
+thermostat-app = { path = "../app" }
+h5i-app-embedded = { path = "../../../../crates/h5i-app-embedded" }
+cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
+cortex-m-rt = "0.7"
+embassy-executor = { version = "0.10", features = ["platform-cortex-m", "executor-thread"] }
+embassy-stm32 = { version = "0.6", features = ["stm32f407vg", "memory-x", "rt", "time-driver-tim2", "exti"] }
+embassy-time = "0.5"
+panic-halt = "1"
+
+[profile.release]
+opt-level = "s"
+lto = true
+debug = true
+codegen-units = 1
+panic = "abort"
+
+[profile.dev]
+opt-level = "s"
+panic = "abort"

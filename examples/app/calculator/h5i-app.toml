@@ -16,6 +16,9 @@ theorems = ["calculator_kernel.Storage.pg_stored", "calculator_kernel.ReadOnly.s
 # calculator_kernel.transition _` (the write set is an `Option`, so the write
 # list is the theorem's own and is printed for review).
 read-only = "calculator_kernel.ReadOnly.sound"
+# `check`'s automation sees no hand-written lemma (it runs without the app's
+# Lean), so the proof from `transition_total` is named here.
+panic-free = "calculator_kernel.Proofs.panic_free"
 
 [[mutant]]
 name = "underflow_boundary"

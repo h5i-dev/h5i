@@ -129,6 +129,7 @@ fn main() -> ExitCode {
 fn verify(root: PathBuf, full: bool, extract: bool) -> ExitCode {
     let projects = match Project::discover(&root.join("crates")).and_then(|mut c| {
         c.extend(Project::discover(&root.join("examples/app"))?);
+        c.extend(Project::discover(&root.join("examples/embedded"))?);
         Ok(c)
     }) {
         Ok(p) => p,

@@ -637,6 +637,12 @@ fn calls_guard(kernel: &str) -> bool {
 /// Copy one spec file of h5i-app-std, rewriting its header to import the
 /// kernel's module and open its namespace.
 fn copy_spec(proofs: &Path, name: &str, module: &str, ns: &str, dest: &Path) -> Result<()> {
+    std::fs::write(dest.join(name), spec_copy(proofs, name, module, ns)?)?;
+    Ok(())
+}
+
+/// The text `copy_spec` writes for spec file `name` of h5i-app-std's `proofs`.
+fn spec_copy(proofs: &Path, name: &str, module: &str, ns: &str) -> Result<String> {
     let src = proofs.join(name);
     let text = std::fs::read_to_string(&src).with_context(|| {
         format!(
@@ -664,8 +670,36 @@ fn copy_spec(proofs: &Path, name: &str, module: &str, ns: &str, dest: &Path) -> 
             src.display()
         );
     }
-    std::fs::write(dest.join(name), out)?;
-    Ok(())
+    Ok(out)
+}
+
+/// The copied spec files in `proofs/generated/` that differ from what
+/// `extract` would copy from h5i-app-std now. They are not Aeneas output, so
+/// the extension scan does not read them (they define `h5i_authz`); `check`
+/// compares them instead.
+pub fn stale_spec_copies(p: &Project) -> Result<Vec<String>> {
+    let generated = p.generated();
+    let names: Vec<&str> =
+        ["StdSpecs.lean", "AuthzSpecs.lean"].into_iter().filter(|n| generated.join(n).is_file()).collect();
+    if names.is_empty() {
+        return Ok(Vec::new());
+    }
+    let Some(ex) = &p.manifest.extract else { return Ok(Vec::new()) };
+    let krate = p.root.join(&ex.krate);
+    let meta = util::metadata(&krate, true)?;
+    let ns = util::ident(&meta.package_at(&krate)?.name);
+    let module = util::lean_module(&ns);
+    let Some(std) = meta.packages.iter().find(|q| q.name == "h5i-app-std") else {
+        return Ok(names.iter().map(|n| format!("generated/{n}: the kernel does not depend on h5i-app-std")).collect());
+    };
+    let proofs = std.manifest_path.parent().unwrap().join("proofs");
+    let mut bad = Vec::new();
+    for n in names {
+        if std::fs::read_to_string(generated.join(n))? != spec_copy(&proofs, n, &module, &ns)? {
+            bad.push(format!("generated/{n} is not h5i-app-std's proofs/{n} as `h5i app extract` copies it; run `h5i app extract`"));
+        }
+    }
+    Ok(bad)
 }
 
 #[cfg(test)]

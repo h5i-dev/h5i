@@ -991,7 +991,7 @@ fn tenant_automation(
             out,
         )?;
         let modules = crate::check::generated_modules(&proofs, p);
-        let proven = crate::check::automation(&proofs, &modules, &[o], out)?;
+        let proven = crate::check::automation(&proofs, &modules, &[o], &crate::check::nonce(), out)?;
         Ok(Some(proven.get(o.name).copied().unwrap_or(false)))
     })
 }

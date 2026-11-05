@@ -6,7 +6,9 @@
 //! recorded `h5i app check` runs; a theorem is `passed` only if a recorded
 //! check run gated it on the current inputs. The report says what is claimed
 //! and by what; it proves nothing itself (docs/design/design-app-trust.md,
-//! "Per-route guarantee report").
+//! "Per-route guarantee report"). A `passed` run under `.h5i/app/runs` is a
+//! local record of a run, not evidence: a repository can ship a forged one,
+//! and only running `h5i app check` again establishes the result.
 
 use crate::assumptions::ASSUMPTIONS;
 use serde::{Deserialize, Serialize};
@@ -252,6 +254,9 @@ impl Guarantees {
                 None => "no recorded run".into(),
             };
             let _ = writeln!(s, "  h5i app check: {run}");
+            if p.check.run.is_some() {
+                let _ = writeln!(s, "    (a local record of a run, not evidence: rerun `h5i app check` to establish it)");
+            }
             if p.theorems.is_empty() {
                 let _ = writeln!(s, "  theorems: none required");
             } else {

@@ -1,0 +1,16 @@
+[package]
+name = "thermostat-kernel"
+description = "A verified thermostat kernel for a microcontroller: heater interlock and setpoint range proven in Lean"
+edition = "2024"
+license = "Apache-2.0"
+version = "0.1.0"
+publish = false
+
+# Extracted to Lean by Charon + Aeneas (`h5i app extract`). no_std, no alloc,
+# no dependencies.
+[dependencies]
+
+# The Aeneas subset: explicit comparisons and matches.
+[lints.clippy]
+manual_range_contains = "allow"
+match_like_matches_macro = "allow"

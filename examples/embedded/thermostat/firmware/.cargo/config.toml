@@ -1,0 +1,7 @@
+[build]
+target = "thumbv7em-none-eabihf"
+
+[target.thumbv7em-none-eabihf]
+# link.x is cortex-m-rt's script; memory.x comes from embassy-stm32's `memory-x`.
+# size.x checks that .data + .bss + the stack reserve fit in RAM.
+rustflags = ["-C", "link-arg=-Tlink.x", "-C", "link-arg=-Tsize.x"]

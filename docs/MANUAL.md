@@ -1297,7 +1297,11 @@ under `[obligations]` (or `[authz] storage`) must have exactly that statement,
 up to definitional equality, or `check` fails and prints the expected type. An
 obligation no theorem is named for is tried by automation in a separate Lean
 run and reported `open` if that fails. `h5i app report` lists each with its
-status.
+status. The statements are elaborated without the project's hand-written Lean,
+the verdict is the Lean kernel's, and hand-written modules may not use
+`initialize`, `implemented_by`, `extern`, `unsafe`, term syntax, or macros and
+elaborators outside the `tactic` category. A `passed` run recorded under
+`.h5i/app/runs` is a local record, not evidence; rerun `check` to establish it.
 
 One obligation is opt-in: `tenant-of-token`. With `[obligations] principal`
 naming the kernel function the server gives `HmacAuth::new` (an `[authz]` app),
