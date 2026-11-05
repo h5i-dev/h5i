@@ -46,6 +46,11 @@ pub struct Project {
     pub check: CheckRun,
     pub theorems: Vec<Theorem>,
     pub routes: Vec<Route>,
+    /// The framework-defined obligations (`H5iAppLib.Obligation`) and what
+    /// the latest passed check run found for each; `not_stated` ones say
+    /// why no statement exists.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub obligations: Vec<crate::ObligationResult>,
     /// What could not be analyzed; a route or theorem it hides is missing
     /// from the report, so a non-empty list means the report is incomplete.
     pub errors: Vec<String>,
@@ -97,6 +102,9 @@ pub enum TheoremSource {
     /// A hand-written proof stating `H5iAppLib.ReadOnly.Sound`, for a kernel
     /// that overrides `Kernel::read_only`.
     ReadOnlyProof,
+    /// Named in `[obligations]`, or generated, for a framework-defined
+    /// obligation: `check` requires exactly the obligation's statement.
+    Obligation,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -253,6 +261,13 @@ impl Guarantees {
                     );
                 }
             }
+            if !p.obligations.is_empty() {
+                let _ = writeln!(s, "  obligations:");
+                for o in &p.obligations {
+                    let by = o.theorem.as_deref().map(|t| format!(" by {t}")).unwrap_or_default();
+                    let _ = writeln!(s, "    {} [{}]{by}", o.name, o.status);
+                }
+            }
             for r in &p.routes {
                 let actor = match r.actor {
                     Some(true) => "Actor",
@@ -330,6 +345,7 @@ mod tests {
                 not_verified: vec![],
             }],
             errors: vec![],
+            obligations: vec![],
         }])
     }
 

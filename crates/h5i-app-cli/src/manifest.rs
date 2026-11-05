@@ -26,6 +26,11 @@ pub struct Manifest {
     /// Framework-proven authorization (`docs/design/design-app-authz.md`).
     #[serde(default)]
     pub authz: Authz,
+    /// Theorems that discharge a framework-defined obligation
+    /// (`H5iAppLib.Obligation`): `check` requires each to have exactly the
+    /// obligation's statement for this app (`crate::obligations`).
+    #[serde(default)]
+    pub obligations: Obligations,
     #[serde(default)]
     pub mutate: Mutate,
     /// Bugs the proofs must reject: `[[mutant]]`.
@@ -113,7 +118,29 @@ pub struct Authz {
     /// The app's own storage theorem (A4: the store commits what `apply`
     /// computes), when `extract` cannot generate one. Absent, the generated
     /// `Committed.*` theorems are required, and `extract` fails if it cannot
-    /// write them.
+    /// write them. The same slot as `[obligations] storage`: `check` requires
+    /// the theorem to state `H5iAppLib.Obligation.Storage` for the kernel.
+    pub storage: Option<String>,
+}
+
+/// `[obligations]`: which theorem discharges which obligation. Each value is
+/// a theorem name; `check` gates it like `[check] theorems` and also fails
+/// unless its type is the obligation's, instantiated with this app's
+/// extracted functions. A theorem listed only under `[check] theorems` is
+/// gated for axioms and claims no obligation.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct Obligations {
+    /// `H5iAppLib.Obligation.ReadOnlySound` of the kernel's `read_only` and
+    /// `transition`: required by `lint` when a `Kernel` overrides `read_only`.
+    pub read_only: Option<String>,
+    /// `H5iAppLib.Obligation.PanicFree` of the function the engine runs.
+    pub panic_free: Option<String>,
+    /// `H5iAppLib.Obligation.Authorized` of the kernel's `transition`, with
+    /// the app's own `allowed` and `visible` (printed for review).
+    pub authorized: Option<String>,
+    /// `H5iAppLib.Obligation.Storage` for the kernel's `apply`, `sql_writes`
+    /// and `decode`. Same slot as `[authz] storage`.
     pub storage: Option<String>,
 }
 
@@ -202,6 +229,14 @@ impl Project {
             );
         }
         let mut names = std::collections::HashSet::new();
+        if let (Some(a), Some(b)) = (&manifest.authz.storage, &manifest.obligations.storage)
+            && a != b
+        {
+            bail!(
+                "{}: `[authz] storage` ({a}) and `[obligations] storage` ({b}) are the same slot; name one theorem",
+                file.display()
+            );
+        }
         for m in &manifest.mutants {
             m.edits()?;
             if !names.insert(&m.name) {
@@ -254,6 +289,11 @@ impl Project {
             .extract
             .as_ref()
             .map(|e| self.root.join(&e.krate))
+    }
+
+    /// The app's own storage theorem: `[authz] storage` or `[obligations] storage`.
+    pub fn storage_theorem(&self) -> Option<&str> {
+        self.manifest.authz.storage.as_deref().or(self.manifest.obligations.storage.as_deref())
     }
 
     /// The project's path for messages: relative to the current directory when it can be.

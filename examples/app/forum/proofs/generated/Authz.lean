@@ -1,6 +1,7 @@
 -- Written by `h5i app extract` from `[authz] guarded` in h5i-app.toml. Do not edit.
 import AuthzSpecs
 import Schema
+import H5iAppLib.Obligation
 /-!
 # Framework-proven authorization
 
@@ -120,5 +121,55 @@ theorem pg_stored {ts : List Pg.Tab} {tv : Val} {Step : Snapshot → alloc.vec.V
     exact Pg.lists_of_selects valKind hv htv hm _ (fun t ht => Rows.tabs_nil _ t (hlen ▸ ht))
       (fun t ht => hr t (hlen ▸ ht))
   exact (stored fits sql_fits hS).2 r hl
+
+/-! ### The framework's storage obligation
+
+`H5iAppLib.Obligation.Storage` for this kernel: A4 as h5i states it, over the
+kernel's own `apply`, `sql_writes` and `decode`, with no reference to `app`.
+`h5i app check` requires `storage` to have exactly that statement. -/
+
+theorem sqlA_length (w : Write) : (sqlA w).length ≤ 1 := by
+  cases w <;> simp [sqlA]
+
+theorem flat_length (ws : List Write) : (ws.flatMap sqlA).length ≤ ws.length := by
+  induction ws with
+  | nil => simp
+  | cons w ws ih =>
+    simp only [List.flatMap_cons, List.length_append, List.length_cons]
+    have := sqlA_length w
+    omega
+
+/-- The databases the obligation quantifies over are `PgServed` ones, holding
+the encoding of the snapshot `apply` computed. -/
+theorem reached_served {ts : List Pg.Tab} {tv : Val} {Step : Snapshot → alloc.vec.Vec Write → Prop}
+    {db : Pg.PgDb Val} {s : Snapshot}
+    (h : H5iAppLib.Obligation.Reached valKind ts tv (Loads ts tv) decode sql_writes sqlW apply Snapshot.empty Step
+      (fun snap ws => Snapshot.size snap + ws.length < Usize.max) db s) :
+    PgServed app Snapshot.enc ts tv Step db (Snapshot.enc s) := by
+  induction h with
+  | fresh hm he => exact .fresh hm he
+  | @commit db db' s snap s' r ws v qs _ hl hd hst hb hv hq hr ha ih =>
+    have e : Snapshot.enc s' = ws.val.foldl app.step (Snapshot.enc snap) := by
+      have := post_of_ok (apply_enc snap ws hb) ha
+      exact this
+    rw [e]
+    have hf : (ws.val.flatMap app.sql).length ≤ Usize.max := by
+      have h1 := flat_length ws.val
+      have h2 : ws.val.length < Usize.max := by simp only [alloc.vec.Vec.length] at hb; omega
+      show (ws.val.flatMap sqlA).length ≤ Usize.max
+      omega
+    exact .commit ih hl hd hst hf hv hq hr
+  | other _ hne htv' hq hr ih => exact .other ih hne htv' hq hr
+
+/-- A4, as `H5iAppLib.Obligation.Storage` states it, for this kernel. -/
+theorem storage : H5iAppLib.Obligation.Storage valKind (fun ts tv db r => Loads ts tv db r) decode sql_writes sqlW
+    apply Snapshot.empty Snapshot.enc (fun snap ws => Snapshot.size snap + ws.length < Usize.max) kl 3 := by
+  intro ts tv Step db s hv htv hkl hlen h r hr
+  apply WP.spec_mono ((pg_stored hv htv hkl hlen (reached_served h)).2 r hr)
+  rintro o ⟨snap, rfl, he⟩
+  refine ⟨snap, rfl, fun t => ?_⟩
+  have := he t
+  simp only [app] at this
+  rwa [trunc_enc, trunc_enc] at this
 
 end forum_kernel.Committed

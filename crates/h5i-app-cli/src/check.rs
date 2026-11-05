@@ -42,8 +42,16 @@ fn check_recorded(
     // What this run requires, recorded before anything can fail, so the
     // web view never shows an older run's list as this one's.
     let authz = authz_theorems(p)?;
+    let obligations = crate::obligations::of(p)?;
     let mut theorems = p.manifest.check.theorems.clone();
     theorems.extend(authz.iter().cloned());
+    for o in &obligations {
+        if let Some(t) = &o.theorem
+            && !theorems.contains(t)
+        {
+            theorems.push(t.clone());
+        }
+    }
     record.run.required_theorems = theorems.clone();
     record.save()?;
     // `[authz]`: the gated theorems are only about the kernel if
@@ -88,6 +96,14 @@ fn check_recorded(
             })
         })?;
     }
+    // The obligations' statements are elaborated in the gate against the
+    // library's definitions, so build those (a project's own build need not
+    // reach `H5iAppLib.Obligation`).
+    if !obligations.is_empty() {
+        let mut build = Command::new("lake");
+        build.args(["build", OBLIGATION_MODULE]).current_dir(&proofs);
+        crate::report::step(record, "obligation_library", out, |log| util::run(&mut build, log))?;
+    }
     let mut problems = scan(&proofs)?;
     problems.extend(crate::deps::framework_problems(p)?);
     let (mut built, unbuilt) = hand_written_modules(&proofs, &p.manifest.check.targets)?;
@@ -103,16 +119,63 @@ fn check_recorded(
         built.push(crate::extract::AUTHZ_MODULE.to_string());
     }
     let theorems = &theorems;
+    let checks: Vec<(String, String, String)> = obligations
+        .iter()
+        .filter_map(|o| o.theorem.as_ref().map(|t| (o.name.to_string(), t.clone(), o.statement.clone())))
+        .collect();
+    let mut results: Vec<h5i_app_report::ObligationResult> = Vec::new();
     if built.is_empty() && theorems.is_empty() {
         out.note("note: no hand-written modules built; nothing to gate");
     } else {
-        let (issues, declarations) = crate::report::step(record, "axiom_gate", out, |log| {
-            gate(&proofs, &built, theorems, log)
+        let (issues, declarations, outcomes) = crate::report::step(record, "axiom_gate", out, |log| {
+            gate(&proofs, &built, theorems, &checks, log)
         })?;
         problems.extend(issues);
         problems.extend(storage_problems(p, &declarations, out)?);
+        for o in obligations.iter().filter(|o| o.theorem.is_some()) {
+            let r = obligation_result(o, outcomes.iter().find(|g| g.name == o.name));
+            if r.status == "failed" {
+                problems.push(r.note.clone().unwrap_or_default());
+            }
+            results.push(r);
+        }
         record.run.declarations = declarations;
     }
+    // Obligations nobody named a theorem for: try the automation, in a Lean
+    // run of its own whose failures only leave them open.
+    let tries: Vec<&crate::obligations::Obligation> =
+        obligations.iter().filter(|o| o.theorem.is_none() && o.auto.is_some()).collect();
+    let mut proven = std::collections::BTreeMap::new();
+    let tried = !tries.is_empty() && problems.is_empty();
+    if tried {
+        let mut modules = built.clone();
+        modules.extend(generated_modules(&proofs, p));
+        proven = crate::report::step(record, "obligation_automation", out, |log| automation(&proofs, &modules, &tries, log))?;
+    }
+    for o in obligations.iter().filter(|o| o.theorem.is_none()) {
+        let status = match proven.get(o.name) {
+            Some(true) => "automation",
+            Some(false) => "open",
+            None if o.auto.is_some() && !tried => "not_run",
+            None => "open",
+        };
+        results.push(h5i_app_report::ObligationResult {
+            name: o.name.to_string(),
+            statement: o.statement.clone(),
+            status: status.into(),
+            theorem: None,
+            note: o.note.clone(),
+        });
+    }
+    for r in &results {
+        out.note(&format!(
+            "obligation {}: {}{}",
+            r.name,
+            r.status,
+            r.theorem.as_ref().map(|t| format!(" ({t})")).unwrap_or_default()
+        ));
+    }
+    record.run.obligations = results;
     if !problems.is_empty() {
         bail!(
             "{}: proof gate failed:\n  {}",
@@ -145,24 +208,24 @@ pub fn authz_theorems(p: &Project) -> Result<Vec<String>> {
     out.extend(guarded.iter().map(|g| format!("{ns}.{g}.read_only_sound")));
     // A4 for the app: the generated storage theorems, or the one the app
     // names. Never silently neither.
-    match &p.manifest.authz.storage {
-        Some(t) => out.push(t.clone()),
+    match p.storage_theorem() {
+        Some(t) => out.push(t.to_string()),
         None => out.extend(crate::extract::STORAGE_THEOREMS.iter().map(|t| format!("{ns}.{t}"))),
     }
     Ok(out)
 }
 
 /// `[authz] storage` names the app's own A4 theorem: it must be a theorem of
-/// the kernel's namespace (not a library fact or a type), and its statement
-/// is printed, since `check` cannot tell what it says. Reviewing that
-/// statement is on the app (docs/design/design-app-authz.md, "What stays trusted").
+/// the kernel's namespace (not a library fact or a type). Its statement is
+/// checked against `H5iAppLib.Obligation.Storage` with the other obligations,
+/// and printed.
 fn storage_problems(p: &Project, decls: &[h5i_app_report::Declaration], out: &Out) -> Result<Vec<String>> {
-    let Some(name) = &p.manifest.authz.storage else { return Ok(Vec::new()) };
+    let Some(name) = p.storage_theorem() else { return Ok(Vec::new()) };
     if p.manifest.authz.guarded.is_empty() {
         return Ok(Vec::new());
     }
     let ns = kernel_ns(p)?;
-    let Some(d) = decls.iter().find(|d| &d.name == name) else {
+    let Some(d) = decls.iter().find(|d| d.name == name) else {
         return Ok(vec![format!("[authz] storage: {name} was not found among the gated declarations")]);
     };
     let mut bad = Vec::new();
@@ -177,7 +240,7 @@ fn storage_problems(p: &Project, decls: &[h5i_app_report::Declaration], out: &Ou
 }
 
 /// The kernel's Lean namespace: its crate's name, `-` as `_`.
-fn kernel_ns(p: &Project) -> Result<String> {
+pub(crate) fn kernel_ns(p: &Project) -> Result<String> {
     let Some(ex) = &p.manifest.extract else {
         bail!("{}: `[authz] guarded` needs an [extract] section", p.display());
     };
@@ -476,13 +539,198 @@ fn lean_name(n: &str) -> String {
 
 const MARK: &str = "H5I-GATE";
 
+/// The library module defining the obligations.
+pub const OBLIGATION_MODULE: &str = "H5iAppLib.Obligation";
+
+/// `s` as a Lean string literal.
+fn lean_str(s: &str) -> String {
+    let mut o = String::from("\"");
+    for c in s.chars() {
+        match c {
+            '"' => o.push_str("\\\""),
+            '\\' => o.push_str("\\\\"),
+            '\n' => o.push_str("\\n"),
+            c => o.push(c),
+        }
+    }
+    o.push('"');
+    o
+}
+
+/// What the gate found for one obligation's theorem.
+#[derive(Debug, serde::Deserialize)]
+struct GateObligation {
+    name: String,
+    /// `ok`, `mismatch`, `undetermined`, `missing` or `error`.
+    status: String,
+    #[serde(default)]
+    expected: String,
+    #[serde(default)]
+    stated: String,
+    #[serde(default)]
+    message: String,
+}
+
+/// The gate's verdict on an obligation with a theorem, as recorded.
+fn obligation_result(o: &crate::obligations::Obligation, g: Option<&GateObligation>) -> h5i_app_report::ObligationResult {
+    let thm = o.theorem.clone().unwrap_or_default();
+    let (status, note) = match g {
+        Some(g) if g.status == "ok" => {
+            // The resolved statement, so the app's choices (`_`) are reviewed.
+            let shown = if o.statement.contains(" _") { format!("resolved to: {}", g.expected) } else { String::new() };
+            let note = [o.note.clone().unwrap_or_default(), shown].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join("; ");
+            ("proven", (!note.is_empty()).then_some(note))
+        }
+        Some(g) if g.status == "mismatch" => (
+            "failed",
+            Some(format!(
+                "obligation `{}`: {thm} does not state it. Expected (H5iAppLib.Obligation, for this app):\n      {}\n    \
+                 {thm} states:\n      {}",
+                o.name, g.expected, g.stated
+            )),
+        ),
+        Some(g) if g.status == "undetermined" => (
+            "failed",
+            Some(format!(
+                "obligation `{}`: {thm} leaves the app's part of the statement undetermined: {}",
+                o.name, g.expected
+            )),
+        ),
+        Some(g) if g.status == "missing" => {
+            ("failed", Some(format!("obligation `{}`: theorem {thm} does not exist", o.name)))
+        }
+        Some(g) => (
+            "failed",
+            Some(format!("obligation `{}`: the statement `{}` did not elaborate: {}", o.name, o.statement, g.message)),
+        ),
+        None => ("failed", Some(format!("obligation `{}`: the gate did not report on {thm}", o.name))),
+    };
+    h5i_app_report::ObligationResult {
+        name: o.name.to_string(),
+        statement: o.statement.clone(),
+        status: status.into(),
+        theorem: o.theorem.clone(),
+        note,
+    }
+}
+
+/// Modules of `proofs/generated/` this build compiled, and `Authz` for `[authz]`.
+fn generated_modules(proofs: &Path, p: &Project) -> Vec<String> {
+    let mut out = Vec::new();
+    let Ok(entries) = std::fs::read_dir(proofs.join("generated")) else { return out };
+    let mut names: Vec<String> = entries
+        .flatten()
+        .filter_map(|e| {
+            let path = e.path();
+            (path.extension()? == "lean").then(|| path.file_stem().unwrap().to_string_lossy().into_owned())
+        })
+        .collect();
+    names.sort();
+    for m in names {
+        let olean = proofs.join(".lake/build/lib/lean").join(format!("{m}.olean"));
+        if olean.is_file() && (m != crate::extract::AUTHZ_MODULE || !p.manifest.authz.guarded.is_empty()) {
+            out.push(m);
+        }
+    }
+    out
+}
+
+/// Try each obligation's `auto` proof in `Auto.lean`. A failed tactic is an
+/// error in that file only; the obligation is proven by automation only if
+/// its theorem exists and uses the standard axioms (no `sorryAx` from error
+/// recovery). Returns, per obligation, whether it was proven.
+fn automation(
+    proofs: &Path,
+    modules: &[String],
+    tries: &[&crate::obligations::Obligation],
+    out: &Out,
+) -> Result<std::collections::BTreeMap<&'static str, bool>> {
+    let mut s = String::from("import Lean\n");
+    for m in modules.iter().map(String::as_str).chain([OBLIGATION_MODULE]) {
+        s.push_str(&format!("import {m}\n"));
+    }
+    s.push_str("open Aeneas Aeneas.Std Result\nset_option maxHeartbeats 1000000\n\nnamespace H5iAuto\n");
+    let ident = |n: &str| n.replace('-', "_");
+    for o in tries {
+        s.push_str(&format!("\ntheorem {} : {} :=\n  {}\n", ident(o.name), o.statement, o.auto.as_deref().unwrap_or("sorry")));
+    }
+    let names = tries.iter().map(|o| format!("`H5iAuto.{}", ident(o.name))).collect::<Vec<_>>().join(", ");
+    let std = STANDARD_AXIOMS.iter().map(|a| format!("`{a}")).collect::<Vec<_>>().join(", ");
+    s.push_str(&format!(
+        "\nend H5iAuto\n\nopen Lean Elab Command in\n#eval show CommandElabM Unit from do\n  let std : List Name := [{std}]\n  \
+         for n in ([{names}] : List Name) do\n    if (← getEnv).contains n then\n      let axs ← collectAxioms n\n      \
+         let ok := axs.all (fun a => std.contains a)\n      IO.println s!\"H5I-AUTO {{n}} {{if ok then \"proven\" else \"open\"}}\"\n    \
+         else\n      IO.println s!\"H5I-AUTO {{n}} open\"\n"
+    ));
+    let dir = proofs.join(".lake/h5i");
+    std::fs::create_dir_all(&dir)?;
+    let file = dir.join("Auto.lean");
+    std::fs::write(&file, s)?;
+    out.note(&format!("$ lake env lean {}", file.display()));
+    let text = run_with_timeout(Command::new("lake").args(["env", "lean"]).arg(&file).current_dir(proofs), AUTO_SECONDS)?;
+    out.note(&text);
+    let mut result = std::collections::BTreeMap::new();
+    for o in tries {
+        let want = format!("H5I-AUTO H5iAuto.{} proven", ident(o.name));
+        result.insert(o.name, text.lines().any(|l| l.trim() == want));
+    }
+    Ok(result)
+}
+
+/// How long the obligation automation may run before it is stopped and
+/// everything it tried is left open.
+const AUTO_SECONDS: u64 = 900;
+
+/// Run `cmd`, killing it after `secs`; its stdout and stderr either way.
+fn run_with_timeout(cmd: &mut Command, secs: u64) -> Result<String> {
+    use std::io::Read;
+    let mut child = cmd.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).spawn()?;
+    let mut stdout = child.stdout.take().unwrap();
+    let mut stderr = child.stderr.take().unwrap();
+    let o = std::thread::spawn(move || {
+        let mut s = String::new();
+        let _ = stdout.read_to_string(&mut s);
+        s
+    });
+    let e = std::thread::spawn(move || {
+        let mut s = String::new();
+        let _ = stderr.read_to_string(&mut s);
+        s
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(secs);
+    let mut timed_out = false;
+    while child.try_wait()?.is_none() {
+        if std::time::Instant::now() > deadline {
+            let _ = child.kill();
+            timed_out = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    let _ = child.wait();
+    let mut text = format!("{}{}", o.join().unwrap_or_default(), e.join().unwrap_or_default());
+    if timed_out {
+        text.push_str(&format!("\n(stopped after {secs} s)\n"));
+    }
+    Ok(text)
+}
+
 /// The Lean program that imports the modules and reports every theorem whose
-/// axioms go beyond the standard three.
-fn gate_program(modules: &[String], theorems: &[String]) -> String {
+/// axioms go beyond the standard three, and checks each obligation's theorem
+/// (`checks`: name, theorem, statement) against the statement.
+fn gate_program(modules: &[String], theorems: &[String], checks: &[(String, String, String)]) -> String {
     let mut s = String::from("import Lean\n");
     for m in modules {
         s.push_str(&format!("import {m}\n"));
     }
+    if !checks.is_empty() && !modules.iter().any(|m| m == OBLIGATION_MODULE) && checks.iter().any(|c| c.2.contains("H5iAppLib.Obligation.")) {
+        s.push_str(&format!("import {OBLIGATION_MODULE}\n"));
+    }
+    let obls = checks
+        .iter()
+        .map(|(n, t, st)| format!("({}, `{}, {})", lean_str(n), lean_name(t), lean_str(st)))
+        .collect::<Vec<_>>()
+        .join(",\n    ");
     let mods = modules
         .iter()
         .map(|m| format!("`{}", lean_name(m)))
@@ -544,6 +792,35 @@ open Lean Elab Command in
         ("signature", toJson signature), ("definition", body),
         ("dependencies", toJson deps), ("axioms", toJson (axs.toList.map Name.toString))]
       liftIO <| IO.println ("H5I-CATALOG " ++ row.compress)
+  -- Each obligation's theorem states exactly the obligation, instantiated
+  -- for this app: its type is definitionally equal to the statement. `_` in
+  -- the statement is the app's part; the resolved statement is printed.
+  let obls : List (String × Name × String) := [
+    {obls}]
+  for (slot, n, src) in obls do
+    let row ← liftTermElabM do
+      let obj := fun (st : String) (fs : List (String × Json)) =>
+        Json.mkObj ([("name", toJson slot), ("status", toJson st)] ++ fs)
+      let ppS : Expr → Term.TermElabM String := fun e => do return (← Meta.ppExpr e).pretty
+      match env.find? n with
+      | none => return obj "missing" []
+      | some ci =>
+        match Parser.runParserCategory env `term src with
+        | .error e => return obj "error" [("message", toJson e)]
+        | .ok stx =>
+          try
+            let expected ← Term.withoutErrToSorry (Term.elabType stx)
+            Term.synthesizeSyntheticMVarsNoPostponing
+            if ← Meta.isDefEq expected ci.type then
+              let e ← instantiateMVars expected
+              if e.hasExprMVar then
+                return obj "undetermined" [("expected", toJson (← ppS e))]
+              return obj "ok" [("expected", toJson (← ppS e))]
+            else
+              return obj "mismatch" [("expected", toJson (← ppS (← instantiateMVars expected))),
+                ("stated", toJson (← ppS ci.type))]
+          catch ex => return obj "error" [("message", toJson (← ex.toMessageData.toString))]
+    liftIO <| IO.println ("H5I-OBLIGATION " ++ row.compress)
   out := out.push s!"{MARK} done {{todo.size}} {{bad}}"
   logInfo (String.intercalate "\n" out.toList)
 "#
@@ -555,12 +832,13 @@ fn gate(
     proofs: &Path,
     modules: &[String],
     theorems: &[String],
+    checks: &[(String, String, String)],
     out: &Out,
-) -> Result<(Vec<String>, Vec<h5i_app_report::Declaration>)> {
+) -> Result<(Vec<String>, Vec<h5i_app_report::Declaration>, Vec<GateObligation>)> {
     let dir = proofs.join(".lake/h5i");
     std::fs::create_dir_all(&dir)?;
     let file = dir.join("Gate.lean");
-    std::fs::write(&file, gate_program(modules, theorems))?;
+    std::fs::write(&file, gate_program(modules, theorems, checks))?;
     out.note(&format!("$ lake env lean {}", file.display()));
     let o = Command::new("lake")
         .args(["env", "lean"])
@@ -574,10 +852,15 @@ fn gate(
     );
     let mut problems = Vec::new();
     let mut declarations = Vec::new();
+    let mut obligations = Vec::new();
     let mut done = None;
     for line in text.lines() {
         if let Some((_, json)) = line.split_once("H5I-CATALOG ") {
             declarations.push(serde_json::from_str(json)?);
+            continue;
+        }
+        if let Some((_, json)) = line.split_once("H5I-OBLIGATION ") {
+            obligations.push(serde_json::from_str(json)?);
             continue;
         }
         let Some(i) = line.find(MARK) else { continue };
@@ -606,7 +889,7 @@ fn gate(
         modules.len(),
         STANDARD_AXIOMS.join(", ")
     ));
-    Ok((problems, declarations))
+    Ok((problems, declarations, obligations))
 }
 
 #[cfg(test)]
@@ -629,7 +912,7 @@ mod tests {
             "{}",
             String::from_utf8_lossy(&compiled.stdout)
         );
-        let program = gate_program(&["Fixture".into()], &["Fixture.safe".into()]);
+        let program = gate_program(&["Fixture".into()], &["Fixture.safe".into()], &[]);
         let path = d.path().join("Catalog.lean");
         std::fs::write(&path, program).unwrap();
         let o = Command::new("lean")
@@ -665,6 +948,70 @@ mod tests {
                 .any(|d| d.name == "Fixture.Valid" && d.definition.is_some())
         );
         assert!(text.contains("H5I-GATE done 1 0"));
+    }
+
+    #[test]
+    #[ignore = "requires the pinned Lean toolchain; run explicitly for gate changes"]
+    fn an_obligation_needs_exactly_its_statement() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(
+            d.path().join("Fixture.lean"),
+            "namespace Fixture\n\
+             def f (n : Nat) : Nat := n + 1\n\
+             def Obl (g : Nat → Nat) (P : Nat → Prop) : Prop := ∀ n, P (g n)\n\
+             theorem good : Obl f (fun m => 0 < m) := fun n => Nat.succ_pos n\n\
+             theorem unfolded : ∀ n, 0 < f n := fun n => Nat.succ_pos n\n\
+             theorem weaker : Obl f (fun _ => True) := fun _ => trivial\n\
+             def g (n : Nat) : Nat := n + 2\n\
+             theorem other_fn : Obl g (fun m => 0 < m) := fun n => Nat.succ_pos (n + 1)\n\
+             end Fixture\n",
+        )
+        .unwrap();
+        let compiled = Command::new("lean")
+            .arg(format!("+{}", crate::pins::LEAN_TOOLCHAIN))
+            .args(["-o", "Fixture.olean", "Fixture.lean"])
+            .current_dir(d.path())
+            .output()
+            .unwrap();
+        assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stdout));
+        let stmt = "Fixture.Obl Fixture.f (fun m => 0 < m)";
+        let checks: Vec<(String, String, String)> = [
+            ("good", "Fixture.good", stmt),
+            ("unfolded", "Fixture.unfolded", stmt),
+            ("weaker", "Fixture.weaker", stmt),
+            ("other_fn", "Fixture.other_fn", stmt),
+            ("hole", "Fixture.weaker", "Fixture.Obl Fixture.f _"),
+            ("missing", "Fixture.nothing", stmt),
+        ]
+        .iter()
+        .map(|(a, b, c)| (a.to_string(), b.to_string(), c.to_string()))
+        .collect();
+        let program = gate_program(&["Fixture".into()], &[], &checks);
+        let path = d.path().join("Gate.lean");
+        std::fs::write(&path, program).unwrap();
+        let o = Command::new("lean")
+            .arg(format!("+{}", crate::pins::LEAN_TOOLCHAIN))
+            .arg(&path)
+            .env("LEAN_PATH", d.path())
+            .current_dir(d.path())
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&o.stdout);
+        assert!(o.status.success(), "{text}\n{}", String::from_utf8_lossy(&o.stderr));
+        let got: std::collections::BTreeMap<String, String> = text
+            .lines()
+            .filter_map(|l| l.split_once("H5I-OBLIGATION "))
+            .map(|(_, j)| serde_json::from_str::<GateObligation>(j).unwrap())
+            .map(|g| (g.name, g.status))
+            .collect();
+        assert_eq!(got["good"], "ok");
+        assert_eq!(got["unfolded"], "ok", "the statement unfolded is the same statement");
+        assert_eq!(got["weaker"], "mismatch", "a weaker postcondition is another statement");
+        // Definitional equality: a function with the same body would pass, and the
+        // theorem would then be about the same function.
+        assert_eq!(got["other_fn"], "mismatch", "the same property of another function");
+        assert_eq!(got["hole"], "ok", "the app's part resolves to what the theorem chose");
+        assert_eq!(got["missing"], "missing");
     }
 
     #[test]

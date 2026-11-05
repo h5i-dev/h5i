@@ -31,6 +31,7 @@ pub mod lint;
 pub mod manifest;
 pub mod mutate;
 pub mod new;
+pub mod obligations;
 pub mod packages;
 pub mod pins;
 pub mod report;

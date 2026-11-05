@@ -157,6 +157,7 @@ pub fn project(p: &Project) -> g::Project {
     routes.sort_by(|a, b| (&a.path, &a.method).cmp(&(&b.path, &b.method)));
 
     let check = latest_check(p, top.as_deref());
+    let obligations = obligations(p, &check, &mut errors);
     let theorems = theorems.into_iter().map(|t| with_check(t, &check)).collect();
     g::Project {
         path,
@@ -170,7 +171,51 @@ pub fn project(p: &Project) -> g::Project {
         theorems,
         routes,
         errors,
+        obligations,
     }
+}
+
+/// The project's framework-defined obligations (`crate::obligations`), each
+/// with what the latest check run found if it passed on the current inputs
+/// (else `not_run`), and those not stated, with why.
+fn obligations(p: &Project, check: &Option<(Run, bool)>, errors: &mut Vec<String>) -> Vec<h5i_app_report::ObligationResult> {
+    let kernel = match crate::obligations::Kernel::read(p) {
+        Ok(Some(k)) => k,
+        Ok(None) => return Vec::new(),
+        Err(e) => {
+            errors.push(format!("the obligations: {e:#}"));
+            return Vec::new();
+        }
+    };
+    let recorded: &[h5i_app_report::ObligationResult] = match check {
+        Some((run, true)) if run.status == "passed" => &run.obligations,
+        _ => &[],
+    };
+    let mut out: Vec<h5i_app_report::ObligationResult> = crate::obligations::of_kernel(p, &kernel)
+        .into_iter()
+        .map(|o| match recorded.iter().find(|r| r.name == o.name && r.statement == o.statement) {
+            Some(r) => r.clone(),
+            None => h5i_app_report::ObligationResult {
+                name: o.name.into(),
+                statement: o.statement,
+                status: "not_run".into(),
+                theorem: o.theorem,
+                note: o.note,
+            },
+        })
+        .collect();
+    for (name, why) in crate::obligations::not_stated(p, &kernel) {
+        if !out.iter().any(|o| o.name == name) {
+            out.push(h5i_app_report::ObligationResult {
+                name: name.into(),
+                statement: String::new(),
+                status: "not_stated".into(),
+                theorem: None,
+                note: Some(why),
+            });
+        }
+    }
+    out
 }
 
 fn rel(p: &Project, s: &str) -> String {
@@ -553,6 +598,15 @@ fn theorems(p: &Project, authz: bool, read_only_overridden: bool, errors: &mut V
     for n in read_only {
         push(n, TheoremSource::ReadOnlyProof, Covers::ReadOnlyCommands);
     }
+    // Theorems named for a framework-defined obligation (or generated for one).
+    if let Ok(obligations) = crate::obligations::of(p) {
+        for o in obligations {
+            if let Some(t) = o.theorem {
+                let covers = if o.name == "read-only" { Covers::ReadOnlyCommands } else { Covers::AllCommands };
+                push(t, TheoremSource::Obligation, covers);
+            }
+        }
+    }
     out
 }
 
@@ -758,13 +812,19 @@ mod tests {
             ("forum_kernel.Committed.sql_fits", Covers::AllCommands),
             ("forum_kernel.Committed.apply_enc", Covers::AllCommands),
             ("forum_kernel.Committed.pg_stored", Covers::AllCommands),
+            ("forum_kernel.Committed.storage", Covers::AllCommands),
         ];
         let got: Vec<(&str, Covers)> = r.theorems.iter().map(|t| (t.name.as_str(), t.covers)).collect();
         assert_eq!(got, want);
         for t in &r.theorems {
-            assert_eq!((t.source, t.file.as_deref()), (TheoremSource::Authz, Some("proofs/generated/Authz.lean")), "{}", t.name);
+            let source = if t.name.ends_with(".storage") { TheoremSource::Obligation } else { TheoremSource::Authz };
+            assert_eq!((t.source, t.file.as_deref()), (source, Some("proofs/generated/Authz.lean")), "{}", t.name);
         }
-        assert_eq!(rpc.theorems.len(), 6);
+        assert_eq!(rpc.theorems.len(), 7);
+        // The framework-defined obligations, with nothing recorded yet for them.
+        let names: Vec<&str> = r.obligations.iter().map(|o| o.name.as_str()).collect();
+        assert_eq!(names, ["authz", "read-only", "storage", "panic-free", "tenant-isolation", "reply-codec"]);
+        assert_eq!(r.obligations.last().map(|o| o.status.as_str()), Some("not_stated"));
         assert_eq!(rpc.assumptions.last().map(String::as_str), Some("A11"));
         // The report and its schema agree, and the text form names each route.
         let all = report(&[example("ledger"), example("forum")]);
