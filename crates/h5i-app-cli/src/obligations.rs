@@ -63,6 +63,8 @@ pub struct Kernel {
     store: bool,
     /// The most table writes one `Write` makes (`sql_write`'s arms), if read.
     max_arm: Option<usize>,
+    /// `Schema.lean` has a `PolicySpec` (`schema!` with a `policy` block).
+    policy_spec: bool,
 }
 
 impl Kernel {
@@ -103,6 +105,7 @@ impl Kernel {
             tables: crate::extract::schema_tables(schema).len(),
             store: schema.contains("theorem apply_spec'") && schema.contains("theorem sql_writes_spec'"),
             max_arm,
+            policy_spec: schema.contains(&format!("\nnamespace {ns}.PolicySpec\n")),
         }
     }
 
@@ -198,6 +201,27 @@ pub fn of_kernel(p: &Project, k: &Kernel) -> Vec<Obligation> {
         }
     } else if let Some(t) = &m.obligations.storage {
         out.push(Obligation { name: "storage", statement: storage_statement(k), theorem: Some(t.clone()), auto: None, note: None });
+    }
+
+    // Group B: a policy declared in `schema!` (`policy` block). The spec is
+    // rendered from the block, the Rust from the same block by another
+    // generator; these say the extracted Rust computes the spec.
+    if k.policy_spec {
+        for (name, f, args, spec) in [
+            ("policy-permits", "permits", "a s w", "Permits"),
+            ("policy-visible", "visible", "a s d", "Visible"),
+            ("policy-stored", "stored", "s d", "Stored"),
+        ] {
+            out.push(Obligation {
+                name,
+                statement: format!(
+                    "∀ {args}, Aeneas.Std.WP.spec ({ns}.policy.{f} {args}) (fun b => (b = true ↔ {ns}.PolicySpec.{spec} {args}))"
+                ),
+                theorem: Some(format!("{ns}.PolicySpec.{f}_spec")),
+                auto: None,
+                note: Some("`PolicySpec` is rendered from `schema!`'s `policy` block, not from the generated Rust".into()),
+            });
+        }
     }
 
     if let Some(t) = &m.obligations.authorized {
