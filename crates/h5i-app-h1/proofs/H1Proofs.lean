@@ -834,10 +834,10 @@ theorem chunk_step_spec (st : ChunkState) (b : U8) (mb : U32) :
     | (exfalso; scalar_tac)
     | (simp_all [coView]; done))
 
-/-! ## Response heads: panic freedom -/
+/-! ## Response heads -/
 
 theorem splice_step {α} (o : List α) (src : List α) (pos q : Nat) (hq : q < src.length)
-    (hlen : pos + src.length ≤ o.length) :
+    (hlen : pos + q < o.length) :
     (o.take pos ++ src.take q ++ o.drop (pos + q)).set (pos + q) (src[q]'hq) =
       o.take pos ++ src.take (q + 1) ++ o.drop (pos + (q + 1)) := by
   have hl1 : (o.take pos ++ src.take q).length = pos + q := by
@@ -848,97 +848,311 @@ theorem splice_step {α} (o : List α) (src : List α) (pos q : Nat) (hq : q < s
   rw [hd, List.set_cons_zero, List.take_add_one, List.getElem?_eq_getElem hq]
   simp only [Option.toList_some, List.append_assoc, List.singleton_append]
 
-theorem put_loop_spec (out : Slice U8) (pos : Usize) (src : Slice U8) (q : Usize) (L : List U8)
-    (hlen : pos.val + src.length ≤ out.length) (hq : q.val ≤ src.length)
+theorem put_n_loop_spec (out : Slice U8) (pos : Usize) (src : Slice U8) (n q : Usize) (L : List U8)
+    (hn : n.val ≤ src.length) (hlen : pos.val + n.val ≤ out.length) (hq : q.val ≤ n.val)
     (hL : out.val = L.take pos.val ++ src.val.take q.val ++ L.drop (pos.val + q.val))
     (hLl : L.length = out.length) :
-    put_loop out pos src q ⦃ o => o.length = out.length ∧
-      o.val = L.take pos.val ++ src.val ++ L.drop (pos.val + src.length) ⦄ := by
-  unfold put_loop
-  apply loop.spec_decr_nat (measure := fun (x : Slice U8 × Usize) => src.length - x.2.val)
-    (inv := fun x => x.1.length = out.length ∧ x.2.val ≤ src.length ∧
+    put_n_loop out pos src n q ⦃ o => o.length = out.length ∧
+      o.val = L.take pos.val ++ src.val.take n.val ++ L.drop (pos.val + n.val) ⦄ := by
+  unfold put_n_loop
+  apply loop.spec_decr_nat (measure := fun (x : Slice U8 × Usize) => n.val - x.2.val)
+    (inv := fun x => x.1.length = out.length ∧ x.2.val ≤ n.val ∧
       x.1.val = L.take pos.val ++ src.val.take x.2.val ++ L.drop (pos.val + x.2.val))
   · rintro ⟨o, j⟩ ⟨h1, h3, h4⟩
     simp only at h1 h3 h4 ⊢
-    unfold put_loop.body
+    unfold put_n_loop.body
     step*
     · have hjs : j.val < src.val.length := by clear h4 hL; scalar_tac
-      have hpl : pos.val + src.val.length ≤ L.length := by
-        rw [hLl]; simp only [Slice.length] at hlen ⊢; exact hlen
+      have hpl : pos.val + j.val < L.length := by
+        rw [hLl]; simp only [Slice.length] at hlen ⊢; clear h4 hL; scalar_tac
       refine ⟨by rw [s_post]; simp only [Slice.length, Slice.set_val_eq, List.length_set] at h1 ⊢; exact h1,
         by clear h4 hL; scalar_tac, ?_, by clear h4 hL; scalar_tac⟩
-      rw [s_post, Slice.set_val_eq, h4, i1_post]
-      have : i2.val = pos.val + j.val := by clear h4 hL; scalar_tac
+      rw [s_post, Slice.set_val_eq, h4, i_post]
+      have : i1.val = pos.val + j.val := by clear h4 hL; scalar_tac
       rw [this, q1_post]
       exact splice_step L src.val pos.val j.val hjs hpl
-    · refine ⟨h1, ?_⟩
-      rw [h4, show j.val = src.length by clear h4 hL; scalar_tac, List.take_of_length_le (l := src.val) (by simp)]
+    all_goals (try (refine ⟨h1, ?_⟩; rw [h4, show j.val = n.val by clear h4 hL; scalar_tac]))
   · exact ⟨rfl, hq, hL⟩
 
-@[step]
-theorem put_spec (out : Slice U8) (pos : Usize) (src : Slice U8) :
-    put out pos src ⦃ r o => o.length = out.length ∧ match r with
-      | none => out.length < pos.val + src.length
-      | some p => p.val = pos.val + src.length ∧
-          o.val = out.val.take pos.val ++ src.val ++ out.val.drop (pos.val + src.length) ⦄ := by
-  unfold put
+theorem put_n_spec (out : Slice U8) (pos : Usize) (src : Slice U8) (n : Usize) :
+    put_n out pos src n ⦃ r o => o.length = out.length ∧ match r with
+      | none => src.length < n.val ∨ out.length < pos.val + n.val
+      | some p => p.val = pos.val + n.val ∧ n.val ≤ src.length ∧ pos.val + n.val ≤ out.length ∧
+          o.val = out.val.take pos.val ++ src.val.take n.val ++ out.val.drop (pos.val + n.val) ⦄ := by
+  unfold put_n
   have hs := Slice.length_ineq src
   have ho := Slice.length_ineq out
   dsimp only
   split
   · simp only [WP.spec_ok, Slice.len_val, gt_iff_lt, UScalar.lt_equiv] at *
-    refine ⟨rfl, by omega⟩
-  · step
-    split
-    · simp only [WP.spec_ok, Slice.len_val, gt_iff_lt, UScalar.lt_equiv] at *
-      refine ⟨rfl, by omega⟩
-    · rename_i h1 h2
-      simp only [Slice.len_val, gt_iff_lt, UScalar.lt_equiv, not_lt] at *
-      step with put_loop_spec out pos src 0#usize out.val (by simp only [Slice.length] at *; omega)
-        (by simp) (by simp) rfl
-      step
-      simp only [Slice.len_val] at *
-      exact ⟨out1_post, by omega, out1_post1⟩
+    refine ⟨rfl, by left; omega⟩
+  split
+  · simp only [WP.spec_ok, Slice.len_val, gt_iff_lt, UScalar.lt_equiv] at *
+    refine ⟨rfl, by right; simp only [Slice.length] at *; omega⟩
+  step
+  split
+  · simp only [WP.spec_ok, Slice.len_val, gt_iff_lt, UScalar.lt_equiv] at *
+    refine ⟨rfl, by right; simp only [Slice.length] at *; omega⟩
+  rename_i h1 h2 h3
+  simp only [Slice.len_val, gt_iff_lt, UScalar.lt_equiv, not_lt] at *
+  step with put_n_loop_spec out pos src n 0#usize out.val (by simp only [Slice.length] at *; omega)
+    (by simp only [Slice.length] at *; omega) (by simp) (by simp) rfl
+  step
+  exact ⟨out1_post, by omega, by simp only [Slice.length] at *; omega, by simp only [Slice.length] at *; omega,
+    out1_post1⟩
 
-@[step]
-theorem put1_spec (out : Slice U8) (pos : Usize) (b : U8) :
-    put1 out pos b ⦃ r o => o.length = out.length ∧ match r with
-      | none => out.length ≤ pos.val
-      | some p => p.val = pos.val + 1 ∧ o.val = out.val.set pos.val b ⦄ := by
+/-- `o` holds `bs` over `out`: the same length, `bs` first, then `out`'s bytes. -/
+def W (o out : Slice U8) (bs : List Nat) : Prop :=
+  o.length = out.length ∧ bs.length ≤ out.length ∧ B o.val = bs ++ (B out.val).drop bs.length
+
+theorem W.refl (out : Slice U8) : W out out [] := ⟨rfl, by simp, by simp⟩
+
+theorem W.step {o o' out : Slice U8} {bs : List Nat} {src : List U8} {n : Nat}
+    (hW : W o out bs) (hn : n ≤ src.length) (hfit : bs.length + n ≤ out.length)
+    (ho : o'.val = o.val.take bs.length ++ src.take n ++ o.val.drop (bs.length + n)) (hl : o'.length = o.length) :
+    W o' out (bs ++ B (src.take n)) := by
+  obtain ⟨h1, h2, h3⟩ := hW
+  refine ⟨by rw [hl, h1], by simp [Nat.min_eq_left hn]; omega, ?_⟩
+  simp only [B] at h3
+  have hb : B (o.val.take bs.length) = bs := by
+    simp only [B]; rw [List.map_take, h3, List.take_left' rfl]
+  have hd : B (o.val.drop (bs.length + n)) = (B out.val).drop (bs.length + n) := by
+    simp only [B]; rw [List.map_drop, h3, ← List.drop_drop, List.drop_left' rfl, List.drop_drop]
+  rw [ho]
+  simp only [B, List.map_append] at hb hd ⊢
+  rw [hb, hd]
+  simp only [List.length_append, List.length_map, List.length_take, List.append_assoc]
+  congr 2
+  rw [Nat.min_eq_left hn]
+
+theorem put_n_W (o out : Slice U8) (bs : List Nat) (pos : Usize) (src : Slice U8) (n : Usize)
+    (hW : W o out bs) (hp : pos.val = bs.length) :
+    put_n o pos src n ⦃ r o' => match r with
+      | none => src.length < n.val ∨ out.length < bs.length + n.val
+      | some p => p.val = bs.length + n.val ∧ W o' out (bs ++ B (src.val.take n.val)) ⦄ := by
+  apply WP.spec_mono (put_n_spec o pos src n)
+  rintro ⟨r, o'⟩ ⟨hl, hr⟩
+  have hol := hW.1
+  cases r with
+  | none => rw [← hW.1, ← hp]; exact hr
+  | some p =>
+    obtain ⟨hpv, hn, hfit, ho⟩ := hr
+    exact ⟨by omega, W.step hW hn (by rw [← hp, ← hol]; exact hfit) (by rw [ho, hp]) hl⟩
+
+theorem put_W (o out : Slice U8) (bs : List Nat) (pos : Usize) (src : Slice U8)
+    (hW : W o out bs) (hp : pos.val = bs.length) :
+    put o pos src ⦃ r o' => match r with
+      | none => out.length < bs.length + src.length
+      | some p => p.val = bs.length + src.length ∧ W o' out (bs ++ B src.val) ⦄ := by
+  unfold put
+  step with put_n_W o out bs pos src src.len hW hp
+  split at r_post
+  · simp_all
+  · simp only [Slice.len_val] at r_post
+    rw [List.take_of_length_le (by simp)] at r_post
+    exact r_post
+
+theorem put1_W (o out : Slice U8) (bs : List Nat) (pos : Usize) (b : U8)
+    (hW : W o out bs) (hp : pos.val = bs.length) :
+    put1 o pos b ⦃ r o' => match r with
+      | none => out.length ≤ bs.length
+      | some p => p.val = bs.length + 1 ∧ W o' out (bs ++ [b.val]) ⦄ := by
   unfold put1
+  obtain ⟨h1, h2, h3⟩ := hW
   step*
-  all_goals (simp_all; try scalar_tac)
+  all_goals (try (simp only [Slice.len_val, Slice.length, ge_iff_le, UScalar.le_equiv] at *; omega))
+  · have hlt : bs.length < o.val.length := by rw [← hp]; scalar_tac
+    refine ⟨by scalar_tac, ?_⟩
+    have hW' := W.step (o := o) (o' := out1) (src := [b]) (n := 1) ⟨h1, h2, h3⟩ (by simp) (by
+      simp only [Slice.length] at *; omega) ?_ (by rw [out1_post]; simp [Slice.length])
+    · simpa using hW'
+    · rw [out1_post, Slice.set_val_eq, hp, List.set_eq_take_append_cons_drop, if_pos hlt]
+      simp
+
+theorem pow10_val (c : Usize) (hc : c.val < 10) : (POW10.val[c.val]'(by simp; omega)).val = 10 ^ (9 - c.val) := by
+  unfold POW10
+  have : c.val = 0 ∨ c.val = 1 ∨ c.val = 2 ∨ c.val = 3 ∨ c.val = 4 ∨ c.val = 5 ∨ c.val = 6 ∨ c.val = 7 ∨
+    c.val = 8 ∨ c.val = 9 := by omega
+  rcases this with h | h | h | h | h | h | h | h | h | h <;> simp [h]
 
 @[step]
-theorem put_dec_loop_spec (out : Slice U8) (n p : U32) (a : Usize) (started : Bool) :
-    put_dec_loop out n p a started ⦃ _ _ => True ⦄ := by
-  unfold put_dec_loop
-  apply loop.spec_decr_nat (measure := fun (x : Slice U8 × U32 × Usize × Bool) => x.2.1.val)
-    (inv := fun _ => True)
-  · rintro ⟨o, q, at', st⟩ -
-    unfold put_dec_loop.body
-    step*
-    all_goals (try (have := d_post.1; simp only [UScalar.ofNatCore_val_eq] at *; scalar_tac))
-    all_goals (try (simp only [UScalar.cast_val_eq]; scalar_tac))
-    all_goals (try simp)
-    all_goals scalar_tac
-  · trivial
+theorem dec_digits_loop_spec (n : U32) (buf : Std.Array U8 10#usize) (c k : Usize)
+    (hc : c.val ≤ 10) (hk : k.val ≤ c.val) (hk0 : k.val = 0 ∨ 0 < k.val) :
+    dec_digits_loop n buf c k ⦃ r =>
+      r.1.val ≤ 10 ∧ B (r.2.val.take r.1.val) = B (buf.val.take k.val) ++ Spec.decFrom n.val c.val (0 < k.val) ⦄ := by
+  unfold dec_digits_loop
+  apply loop.spec_decr_nat (measure := fun (x : Std.Array U8 10#usize × Usize × Usize) => 10 - x.2.1.val)
+    (inv := fun x => x.2.1.val ≤ 10 ∧ x.2.2.val ≤ x.2.1.val ∧
+      B (buf.val.take k.val) ++ Spec.decFrom n.val c.val (0 < k.val) =
+        B (x.1.val.take x.2.2.val) ++ Spec.decFrom n.val x.2.1.val (0 < x.2.2.val))
+  · rintro ⟨b, j, m⟩ ⟨h1, h2, h3⟩
+    simp only at h1 h2 h3 ⊢
+    unfold dec_digits_loop.body
+    have hp := pow10_val
+    by_cases hj : j.val < 10
+    · have hpj := hp j hj
+      have hm10 : m.val < 10 := by omega
+      have hbl : b.val.length = 10 := by simp
+      rw [if_pos (by scalar_tac)]
+      step
+      step
+      · rw [i_post, hpj]; simp
+      step
+      have hd10 : d.val < 10 := by rw [d_post]; omega
+      have hdv : d.val = n.val / 10 ^ (9 - j.val) % 10 := by rw [d_post, i1_post, i_post, hpj]
+      have hunf : Spec.decFrom n.val j.val (decide (0 < m.val)) =
+          if d.val ≠ 0 ∨ decide (0 < m.val) = true ∨ j.val = 9 then (48 + d.val) :: Spec.decFrom n.val (j.val + 1) true
+          else Spec.decFrom n.val (j.val + 1) false := by
+        rw [Spec.decFrom, if_pos hj]; simp only [← hdv]
+      have hw : ∀ (a : Std.Array U8 10#usize) (i3 : U8), i3.val = 48 + d.val → a = b.set m i3 →
+          B (List.take (m.val + 1) a.val) = B (List.take m.val b.val) ++ [48 + d.val] := by
+        intro a i3 hi3 ha
+        rw [ha, Std.Array.set_val_eq, take_set_succ _ _ _ (by omega)]
+        simp [hi3]
+      have hcast : (UScalar.cast UScalarTy.U8 d).val = d.val := by simp; omega
+      split_ifs with hA hB hC
+      all_goals (simp only [bne_iff_ne, ne_eq, gt_iff_lt, UScalar.lt_equiv, UScalar.ofNatCore_val_eq] at hA)
+      all_goals (try simp only [bne_iff_ne, ne_eq, gt_iff_lt, UScalar.lt_equiv, UScalar.ofNatCore_val_eq] at hB)
+      all_goals (try simp only [UScalar.eq_equiv, UScalar.ofNatCore_val_eq] at hC)
+      rotate_left 3
+      · -- no digit yet: nothing written
+        step as ⟨c1, hc1⟩
+        refine ⟨by scalar_tac, by scalar_tac, ?_, by scalar_tac⟩
+        have hd0 : d.val = 0 := by
+          by_contra hne; exact hA (fun h => hne (by rw [h]; rfl))
+        have hm0 : m.val = 0 := by omega
+        rw [h3, hunf, if_neg (by simp only [not_or]; refine ⟨by omega, by simp [hm0], by omega⟩), hc1]
+        simp [hm0]
+      all_goals
+        step as ⟨i2, hi2⟩
+        step as ⟨i3, hi3⟩
+        step as ⟨a, ha⟩
+        step as ⟨k2, hk2⟩
+        step as ⟨c1, hc1⟩
+        have hi3' : i3.val = 48 + d.val := by rw [hi3, hi2, hcast]
+        refine ⟨by scalar_tac, by scalar_tac, ?_, by scalar_tac⟩
+        rw [h3, hunf, if_pos ?_, hc1, hk2, hw a i3 hi3' ha]
+        · simp
+        · first
+            | (left; intro h; exact hA (by scalar_tac))
+            | (right; left; simp; omega)
+            | (right; right; scalar_tac)
+    · rw [if_neg (by scalar_tac)]
+      simp only [WP.spec_ok]
+      have hj' : j.val = 10 := by omega
+      refine ⟨by omega, ?_⟩
+      rw [h3, hj', Spec.decFrom, if_neg (by omega)]
+      simp
+  · exact ⟨hc, hk, rfl⟩
 
-@[step]
-theorem put_reason_spec (out : Slice U8) (pos : Usize) (status : U16) :
-    put_reason out pos status ⦃ _ _ => True ⦄ := by
+theorem dec_digits_spec (n : U32) (buf : Std.Array U8 10#usize) :
+    dec_digits n buf ⦃ r => r.1.val ≤ 10 ∧ B (r.2.val.take r.1.val) = Spec.dec n.val ⦄ := by
+  unfold dec_digits
+  apply WP.spec_mono (dec_digits_loop_spec n buf 0#usize 0#usize (by simp) (by simp) (by simp))
+  rintro ⟨k, b⟩ ⟨h1, h2⟩
+  refine ⟨h1, ?_⟩
+  rw [h2]; simp [Spec.dec]
+
+theorem put_dec_W (o out : Slice U8) (bs : List Nat) (pos : Usize) (n : U32)
+    (hW : W o out bs) (hp : pos.val = bs.length) :
+    put_dec o pos n ⦃ r o' => match r with
+      | none => out.length < bs.length + (Spec.dec n.val).length
+      | some p => p.val = bs.length + (Spec.dec n.val).length ∧ W o' out (bs ++ Spec.dec n.val) ⦄ := by
+  unfold put_dec
+  step with dec_digits_spec
+  step
+  have hsl : s.val = o'.val := by rw [s_post]; simp
+  have hlen : (Spec.dec n.val).length = r.val := by
+    rw [← r_post1]; simp; omega
+  apply WP.spec_mono (put_n_W o out bs pos s r hW hp)
+  rintro ⟨res, o2⟩ hres
+  cases res with
+  | none =>
+    rcases hres with h | h
+    · simp [Slice.length, hsl] at h; omega
+    · show out.length < _; omega
+  | some p =>
+    obtain ⟨hp1, hp2⟩ := hres
+    rw [hsl, r_post1] at hp2
+    exact ⟨by omega, hp2⟩
+
+theorem post_transfer {r : Option Usize} {o' out : Slice U8} {bs : List Nat} {s : Slice U8} {L : List Nat}
+    (hL : B s.val = L) :
+    (match r with
+      | none => out.length < bs.length + s.length
+      | some p => p.val = bs.length + s.length ∧ W o' out (bs ++ B s.val)) →
+    (match r with
+      | none => out.length < bs.length + L.length
+      | some p => p.val = bs.length + L.length ∧ W o' out (bs ++ L)) := by
+  intro h; subst hL; cases r <;> simpa [Slice.length] using h
+
+theorem put_reason_W (o out : Slice U8) (bs : List Nat) (pos : Usize) (status : U16)
+    (hW : W o out bs) (hp : pos.val = bs.length) :
+    put_reason o pos status ⦃ r o' => match r with
+      | none => out.length < bs.length + (Spec.reasonOf status.val).length
+      | some p => p.val = bs.length + (Spec.reasonOf status.val).length ∧
+          W o' out (bs ++ Spec.reasonOf status.val) ⦄ := by
   unfold put_reason
-  split <;> step*
+  split
+  all_goals (try (
+    step
+    step with put_W o out bs pos _ hW hp
+    refine post_transfer ?_ r_post
+    subst s_post; decide))
+  rename_i h200 h201 h204 h400 h401 h403 h404 h405 h408 h409 h413 h414 h422 h431 h500 h501 h503 h505
+  have n200 : status.val ≠ 200 := fun e => h200 (UScalar.eq_of_val_eq (by rw [e]; rfl))
+  have n201 : status.val ≠ 201 := fun e => h201 (UScalar.eq_of_val_eq (by rw [e]; rfl))
+  have n204 : status.val ≠ 204 := fun e => h204 (UScalar.eq_of_val_eq (by rw [e]; rfl))
+  have n400 : status.val ≠ 400 := fun e => h400 (UScalar.eq_of_val_eq (by rw [e]; rfl))
+  have n401 : status.val ≠ 401 := fun e => h401 (UScalar.eq_of_val_eq (by rw [e]; rfl))
+  have n403 : status.val ≠ 403 := fun e => h403 (UScalar.eq_of_val_eq (by rw [e]; rfl))
+  have n404 : status.val ≠ 404 := fun e => h404 (UScalar.eq_of_val_eq (by rw [e]; rfl))
+  have n405 : status.val ≠ 405 := fun e => h405 (UScalar.eq_of_val_eq (by rw [e]; rfl))
+  have n408 : status.val ≠ 408 := fun e => h408 (UScalar.eq_of_val_eq (by rw [e]; rfl))
+  have n409 : status.val ≠ 409 := fun e => h409 (UScalar.eq_of_val_eq (by rw [e]; rfl))
+  have n413 : status.val ≠ 413 := fun e => h413 (UScalar.eq_of_val_eq (by rw [e]; rfl))
+  have n414 : status.val ≠ 414 := fun e => h414 (UScalar.eq_of_val_eq (by rw [e]; rfl))
+  have n422 : status.val ≠ 422 := fun e => h422 (UScalar.eq_of_val_eq (by rw [e]; rfl))
+  have n431 : status.val ≠ 431 := fun e => h431 (UScalar.eq_of_val_eq (by rw [e]; rfl))
+  have n500 : status.val ≠ 500 := fun e => h500 (UScalar.eq_of_val_eq (by rw [e]; rfl))
+  have n501 : status.val ≠ 501 := fun e => h501 (UScalar.eq_of_val_eq (by rw [e]; rfl))
+  have n503 : status.val ≠ 503 := fun e => h503 (UScalar.eq_of_val_eq (by rw [e]; rfl))
+  have n505 : status.val ≠ 505 := fun e => h505 (UScalar.eq_of_val_eq (by rw [e]; rfl))
+  have hr : Spec.reasonOf status.val = [] := by
+    simp only [Spec.reasonOf, n200, n201, n204, n400, n401, n403, n404, n405, n408, n409, n413, n414, n422, n431, n500, n501, n503, n505, if_false]
+  simp only [WP.spec_ok, hr, List.append_nil, List.length_nil, Nat.add_zero]
+  exact ⟨hp, hW⟩
+
+@[step] theorem put_n_total (o : Slice U8) (pos : Usize) (src : Slice U8) (n : Usize) :
+    put_n o pos src n ⦃ _ _ => True ⦄ :=
+  WP.spec_mono (put_n_spec o pos src n) (fun _ _ => trivial)
+
+@[step] theorem put_total (o : Slice U8) (pos : Usize) (src : Slice U8) : put o pos src ⦃ _ _ => True ⦄ := by
+  unfold put; step*
+
+@[step] theorem put1_total (o : Slice U8) (pos : Usize) (b : U8) : put1 o pos b ⦃ _ _ => True ⦄ := by
+  unfold put1; step*
+
+@[step] theorem put_dec_total (o : Slice U8) (pos : Usize) (n : U32) : put_dec o pos n ⦃ _ _ => True ⦄ := by
+  unfold put_dec
+  step with dec_digits_spec
+  step*
+
+@[step] theorem put_reason_total (o : Slice U8) (pos : Usize) (status : U16) :
+    put_reason o pos status ⦃ _ _ => True ⦄ := by
+  unfold put_reason; split <;> step*
 
 /-- `write_head` never panics, for every buffer (of any length), status,
 content type and body length. -/
 theorem write_head_total (out : Slice U8) (status : U16) (ct : Slice U8) (bl : U32) (close : Bool) :
     write_head out status ct bl close ⦃ _ _ => True ⦄ := by
   unfold write_head
-  have hR : Reads ct (fun k => (ct.val.getD k 0#u8).val) ct.length := by
+  have hR : Reads ct (fun k => (B ct.val).getD k 0) ct.length := by
     refine ⟨le_refl _, fun k hk _ => ?_⟩
     simp [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hk]
   step*
-  all_goals (try (simp only [UScalar.ofNatCore_val_eq] at *; scalar_tac))
+  all_goals (try (split <;> step*))
+  all_goals (try (split <;> step*))
+  all_goals (try (split <;> step*))
 
 end h5i_app_h1.Proofs

@@ -1298,57 +1298,69 @@ def chunk_step
               then expect st b LF CH_END ChunkOut.Done
               else ok (st, ChunkOut.Reject BAD_REQUEST)
 
-/-- [h5i_app_h1::put]: loop body 0:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 682:4-685:5 -/
+/-- [h5i_app_h1::put_n]: loop body 0:
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 747:4-750:5 -/
 @[rust_loop_body]
-def put_loop.body
-  (pos : Std.Usize) (src : Slice Std.U8) (out : Slice Std.U8) (q : Std.Usize) :
+def put_n_loop.body
+  (pos : Std.Usize) (src : Slice Std.U8) (n : Std.Usize) (out : Slice Std.U8)
+  (q : Std.Usize) :
   Result (ControlFlow ((Slice Std.U8) × Std.Usize) (Slice Std.U8))
   := do
-  let i := Slice.len src
-  if q < i
+  if q < n
   then
-    let i1 ← Slice.index_usize src q
-    let i2 ← pos + q
-    let s ← Slice.update out i2 i1
+    let i ← Slice.index_usize src q
+    let i1 ← pos + q
+    let s ← Slice.update out i1 i
     let q1 ← q + 1#usize
     ok (cont (s, q1))
   else ok (done out)
 
-/-- [h5i_app_h1::put]: loop 0:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 682:4-685:5 -/
+/-- [h5i_app_h1::put_n]: loop 0:
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 747:4-750:5 -/
 @[rust_loop]
-def put_loop
-  (out : Slice Std.U8) (pos : Std.Usize) (src : Slice Std.U8) (q : Std.Usize) :
+def put_n_loop
+  (out : Slice Std.U8) (pos : Std.Usize) (src : Slice Std.U8) (n : Std.Usize)
+  (q : Std.Usize) :
   Result (Slice Std.U8)
   := do
   loop
-    (fun (out1, q1) => put_loop.body pos src out1 q1)
+    (fun (out1, q1) => put_n_loop.body pos src n out1 q1)
     (out, q)
 
+/-- [h5i_app_h1::put_n]:
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 742:0-752:1 -/
+def put_n
+  (out : Slice Std.U8) (pos : Std.Usize) (src : Slice Std.U8) (n : Std.Usize) :
+  Result ((Option Std.Usize) × (Slice Std.U8))
+  := do
+  let i := Slice.len src
+  if n > i
+  then ok (none, out)
+  else
+    let i1 := Slice.len out
+    if pos > i1
+    then ok (none, out)
+    else
+      let i2 := Slice.len out
+      let i3 ← i2 - pos
+      if n > i3
+      then ok (none, out)
+      else
+        let out1 ← put_n_loop out pos src n 0#usize
+        let i4 ← pos + n
+        ok (some i4, out1)
+
 /-- [h5i_app_h1::put]:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 677:0-687:1 -/
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 677:0-679:1 -/
 def put
   (out : Slice Std.U8) (pos : Std.Usize) (src : Slice Std.U8) :
   Result ((Option Std.Usize) × (Slice Std.U8))
   := do
-  let i := Slice.len out
-  if pos > i
-  then ok (none, out)
-  else
-    let i1 := Slice.len src
-    let i2 := Slice.len out
-    let i3 ← i2 - pos
-    if i1 > i3
-    then ok (none, out)
-    else
-      let out1 ← put_loop out pos src 0#usize
-      let i4 := Slice.len src
-      let i5 ← pos + i4
-      ok (some i5, out1)
+  let i := Slice.len src
+  put_n out pos src i
 
 /-- [h5i_app_h1::put1]:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 690:0-696:1 -/
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 682:0-688:1 -/
 def put1
   (out : Slice Std.U8) (pos : Std.Usize) (b : Std.U8) :
   Result ((Option Std.Usize) × (Slice Std.U8))
@@ -1361,75 +1373,82 @@ def put1
     let i1 ← pos + 1#usize
     ok (some i1, out1)
 
-/-- [h5i_app_h1::put_dec]: loop body 0:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 703:4-715:1 -/
-@[rust_loop_body]
-def put_dec_loop.body
-  (n : Std.U32) (out : Slice Std.U8) (p : Std.U32) («at» : Std.Usize)
-  (started : Bool) :
-  Result (ControlFlow ((Slice Std.U8) × Std.U32 × Std.Usize × Bool) ((Option
-    Std.Usize) × (Slice Std.U8)))
-  := do
-  if p > 0#u32
-  then
-    let i ← n / p
-    let d ← i % 10#u32
-    if d != 0#u32
-    then
-      let i1 ← lift (UScalar.cast .U8 d)
-      let i2 ← 48#u8 + i1
-      let (o, out1) ← put1 out «at» i2
-      match o with
-      | none => ok (done (none, out1))
-      | some a => let p1 ← p / 10#u32
-                  ok (cont (out1, p1, a, true))
-    else
-      if started
-      then
-        let i1 ← lift (UScalar.cast .U8 d)
-        let i2 ← 48#u8 + i1
-        let (o, out1) ← put1 out «at» i2
-        match o with
-        | none => ok (done (none, out1))
-        | some a => let p1 ← p / 10#u32
-                    ok (cont (out1, p1, a, true))
-      else
-        if p = 1#u32
-        then
-          let i1 ← lift (UScalar.cast .U8 d)
-          let i2 ← 48#u8 + i1
-          let (o, out1) ← put1 out «at» i2
-          match o with
-          | none => ok (done (none, out1))
-          | some a => let p1 ← p / 10#u32
-                      ok (cont (out1, p1, a, true))
-        else let p1 ← p / 10#u32
-             ok (cont (out, p1, «at», false))
-  else ok (done (some «at», out))
+/-- [h5i_app_h1::POW10]
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 690:0-690:113 -/
+@[global_simps, irreducible]
+def POW10 : Array Std.U32 10#usize :=
+  Array.make 10#usize [
+    1000000000#u32, 100000000#u32, 10000000#u32, 1000000#u32, 100000#u32,
+    10000#u32, 1000#u32, 100#u32, 10#u32, 1#u32
+    ]
 
-/-- [h5i_app_h1::put_dec]: loop 0:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 703:4-715:1 -/
+/-- [h5i_app_h1::dec_digits]: loop body 0:
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 697:4-704:5 -/
+@[rust_loop_body]
+def dec_digits_loop.body
+  (n : Std.U32) (buf : Array Std.U8 10#usize) (c : Std.Usize) (k : Std.Usize) :
+  Result (ControlFlow ((Array Std.U8 10#usize) × Std.Usize × Std.Usize)
+    (Std.Usize × (Array Std.U8 10#usize)))
+  := do
+  if c < 10#usize
+  then
+    let i ← Array.index_usize POW10 c
+    let i1 ← n / i
+    let d ← i1 % 10#u32
+    let (buf1, k1) ←
+      if d != 0#u32
+      then
+        do
+        let i2 ← lift (UScalar.cast .U8 d)
+        let i3 ← 48#u8 + i2
+        let a ← Array.update buf k i3
+        let k2 ← k + 1#usize
+        ok (a, k2)
+      else
+        if k > 0#usize
+        then
+          do
+          let i2 ← lift (UScalar.cast .U8 d)
+          let i3 ← 48#u8 + i2
+          let a ← Array.update buf k i3
+          let k2 ← k + 1#usize
+          ok (a, k2)
+        else
+          if c = 9#usize
+          then
+            do
+            let i2 ← lift (UScalar.cast .U8 d)
+            let i3 ← 48#u8 + i2
+            let a ← Array.update buf k i3
+            let k2 ← k + 1#usize
+            ok (a, k2)
+          else ok (buf, k)
+    let c1 ← c + 1#usize
+    ok (cont (buf1, c1, k1))
+  else ok (done (k, buf))
+
+/-- [h5i_app_h1::dec_digits]: loop 0:
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 697:4-704:5 -/
 @[rust_loop]
-def put_dec_loop
-  (out : Slice Std.U8) (n : Std.U32) (p : Std.U32) («at» : Std.Usize)
-  (started : Bool) :
-  Result ((Option Std.Usize) × (Slice Std.U8))
+def dec_digits_loop
+  (n : Std.U32) (buf : Array Std.U8 10#usize) (c : Std.Usize) (k : Std.Usize) :
+  Result (Std.Usize × (Array Std.U8 10#usize))
   := do
   loop
-    (fun (out1, p1, at1, started1) => put_dec_loop.body n out1 p1 at1 started1)
-    (out, p, «at», started)
+    (fun (buf1, c1, k1) => dec_digits_loop.body n buf1 c1 k1)
+    (buf, c, k)
 
-/-- [h5i_app_h1::put_dec]:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 699:0-715:1 -/
+/-- [h5i_app_h1::dec_digits]:
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 694:0-706:1 -/
 @[reducible]
-def put_dec
-  (out : Slice Std.U8) (pos : Std.Usize) (n : Std.U32) :
-  Result ((Option Std.Usize) × (Slice Std.U8))
+def dec_digits
+  (n : Std.U32) (buf : Array Std.U8 10#usize) :
+  Result (Std.Usize × (Array Std.U8 10#usize))
   := do
-  put_dec_loop out n 1000000000#u32 pos false
+  dec_digits_loop n buf 0#usize 0#usize
 
 /-- [h5i_app_h1::put_reason]:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 719:0-741:1 -/
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 710:0-732:1 -/
 def put_reason
   (out : Slice Std.U8) (pos : Std.Usize) (status : Std.U16) :
   Result ((Option Std.Usize) × (Slice Std.U8))
@@ -1578,8 +1597,19 @@ def put_reason
     put out pos s
   | _ => ok (some pos, out)
 
+/-- [h5i_app_h1::put_dec]:
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 735:0-739:1 -/
+def put_dec
+  (out : Slice Std.U8) (pos : Std.Usize) (n : Std.U32) :
+  Result ((Option Std.Usize) × (Slice Std.U8))
+  := do
+  let digits := Array.repeat 10#usize 0#u8
+  let (nd, digits1) ← dec_digits n digits
+  let s ← lift (Array.to_slice digits1)
+  put_n out pos s nd
+
 /-- [h5i_app_h1::write_head]:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 757:0-825:1
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 768:0-836:1
     Visibility: public -/
 def write_head
   (out : Slice Std.U8) (status : Std.U16) (content_type : Slice Std.U8)
@@ -1596,6 +1626,36 @@ def write_head
       let b ← field_bytes content_type 0#usize i
       if b
       then
+        let i1 := Slice.len content_type
+        let (ct, ct_name) ←
+          if i1 > 0#usize
+          then
+            do
+            let ct_name1 ←
+              lift (Array.to_slice
+                (Array.make 14#usize [
+                  67#u8, 111#u8, 110#u8, 116#u8, 101#u8, 110#u8, 116#u8, 45#u8,
+                  84#u8, 121#u8, 112#u8, 101#u8, 58#u8, 32#u8
+                  ]))
+            ok (true, ct_name1)
+          else
+            do
+            let ct_name1 ← lift (Array.to_slice (Std.Array.empty Std.U8))
+            ok (false, ct_name1)
+        let ct_end ←
+          if ct
+          then ok (Array.to_slice (Array.make 2#usize [ 13#u8, 10#u8 ]))
+          else ok (Array.to_slice (Std.Array.empty Std.U8))
+        let conn ←
+          if close
+          then
+            ok (Array.to_slice
+              (Array.make 19#usize [
+                67#u8, 111#u8, 110#u8, 110#u8, 101#u8, 99#u8, 116#u8, 105#u8,
+                111#u8, 110#u8, 58#u8, 32#u8, 99#u8, 108#u8, 111#u8, 115#u8,
+                101#u8, 13#u8, 10#u8
+                ]))
+          else ok (Array.to_slice (Std.Array.empty Std.U8))
         let s ←
           lift (Array.to_slice
             (Array.make 9#usize [
@@ -1605,25 +1665,25 @@ def write_head
         match o with
         | none => ok (none, out1)
         | some a =>
-          let i1 ← status / 100#u16
-          let i2 ← lift (UScalar.cast .U8 i1)
-          let i3 ← 48#u8 + i2
-          let (o1, out2) ← put1 out1 a i3
+          let i2 ← status / 100#u16
+          let i3 ← lift (UScalar.cast .U8 i2)
+          let i4 ← 48#u8 + i3
+          let (o1, out2) ← put1 out1 a i4
           match o1 with
           | none => ok (none, out2)
           | some a1 =>
-            let i4 ← status / 10#u16
-            let i5 ← i4 % 10#u16
-            let i6 ← lift (UScalar.cast .U8 i5)
-            let i7 ← 48#u8 + i6
-            let (o2, out3) ← put1 out2 a1 i7
+            let i5 ← status / 10#u16
+            let i6 ← i5 % 10#u16
+            let i7 ← lift (UScalar.cast .U8 i6)
+            let i8 ← 48#u8 + i7
+            let (o2, out3) ← put1 out2 a1 i8
             match o2 with
             | none => ok (none, out3)
             | some a2 =>
-              let i8 ← status % 10#u16
-              let i9 ← lift (UScalar.cast .U8 i8)
-              let i10 ← 48#u8 + i9
-              let (o3, out4) ← put1 out3 a2 i10
+              let i9 ← status % 10#u16
+              let i10 ← lift (UScalar.cast .U8 i9)
+              let i11 ← 48#u8 + i10
+              let (o3, out4) ← put1 out3 a2 i11
               match o3 with
               | none => ok (none, out4)
               | some a3 =>
@@ -1642,126 +1702,48 @@ def write_head
                     match o6 with
                     | none => ok (none, out7)
                     | some a6 =>
-                      let i11 := Slice.len content_type
-                      if i11 > 0#usize
-                      then
-                        let s2 ←
-                          lift (Array.to_slice
-                            (Array.make 14#usize [
-                              67#u8, 111#u8, 110#u8, 116#u8, 101#u8, 110#u8,
-                              116#u8, 45#u8, 84#u8, 121#u8, 112#u8, 101#u8,
-                              58#u8, 32#u8
-                              ]))
-                        let (o7, out8) ← put out7 a6 s2
-                        match o7 with
-                        | none => ok (none, out8)
-                        | some a7 =>
-                          let (o8, out9) ← put out8 a7 content_type
-                          match o8 with
-                          | none => ok (none, out9)
-                          | some a8 =>
-                            let s3 ←
+                      let (o7, out8) ← put out7 a6 ct_name
+                      match o7 with
+                      | none => ok (none, out8)
+                      | some a7 =>
+                        let (o8, out9) ← put out8 a7 content_type
+                        match o8 with
+                        | none => ok (none, out9)
+                        | some a8 =>
+                          let (o9, out10) ← put out9 a8 ct_end
+                          match o9 with
+                          | none => ok (none, out10)
+                          | some a9 =>
+                            let s2 ←
                               lift (Array.to_slice
-                                (Array.make 2#usize [ 13#u8, 10#u8 ]))
-                            let (o9, out10) ← put out9 a8 s3
-                            match o9 with
-                            | none => ok (none, out10)
-                            | some a9 =>
-                              let s4 ←
-                                lift (Array.to_slice
-                                  (Array.make 16#usize [
-                                    67#u8, 111#u8, 110#u8, 116#u8, 101#u8,
-                                    110#u8, 116#u8, 45#u8, 76#u8, 101#u8,
-                                    110#u8, 103#u8, 116#u8, 104#u8, 58#u8,
-                                    32#u8
-                                    ]))
-                              let (o10, out11) ← put out10 a9 s4
-                              match o10 with
-                              | none => ok (none, out11)
-                              | some a10 =>
-                                let (o11, out12) ← put_dec out11 a10 body_len
-                                match o11 with
-                                | none => ok (none, out12)
-                                | some a11 =>
-                                  let s5 ←
-                                    lift (Array.to_slice
-                                      (Array.make 2#usize [ 13#u8, 10#u8 ]))
-                                  let (o12, out13) ← put out12 a11 s5
-                                  match o12 with
-                                  | none => ok (none, out13)
-                                  | some a12 =>
-                                    if close
-                                    then
-                                      let s6 ←
-                                        lift (Array.to_slice
-                                          (Array.make 19#usize [
-                                            67#u8, 111#u8, 110#u8, 110#u8,
-                                            101#u8, 99#u8, 116#u8, 105#u8,
-                                            111#u8, 110#u8, 58#u8, 32#u8,
-                                            99#u8, 108#u8, 111#u8, 115#u8,
-                                            101#u8, 13#u8, 10#u8
-                                            ]))
-                                      let (o13, out14) ← put out13 a12 s6
-                                      match o13 with
-                                      | none => ok (none, out14)
-                                      | some a13 =>
-                                        let s7 ←
-                                          lift (Array.to_slice
-                                            (Array.make 2#usize [
-                                              13#u8, 10#u8
-                                              ]))
-                                        put out14 a13 s7
-                                    else
-                                      let s6 ←
-                                        lift (Array.to_slice
-                                          (Array.make 2#usize [ 13#u8, 10#u8 ]))
-                                      put out13 a12 s6
-                      else
-                        let s2 ←
-                          lift (Array.to_slice
-                            (Array.make 16#usize [
-                              67#u8, 111#u8, 110#u8, 116#u8, 101#u8, 110#u8,
-                              116#u8, 45#u8, 76#u8, 101#u8, 110#u8, 103#u8,
-                              116#u8, 104#u8, 58#u8, 32#u8
-                              ]))
-                        let (o7, out8) ← put out7 a6 s2
-                        match o7 with
-                        | none => ok (none, out8)
-                        | some a7 =>
-                          let (o8, out9) ← put_dec out8 a7 body_len
-                          match o8 with
-                          | none => ok (none, out9)
-                          | some a8 =>
-                            let s3 ←
-                              lift (Array.to_slice
-                                (Array.make 2#usize [ 13#u8, 10#u8 ]))
-                            let (o9, out10) ← put out9 a8 s3
-                            match o9 with
-                            | none => ok (none, out10)
-                            | some a9 =>
-                              if close
-                              then
-                                let s4 ←
-                                  lift (Array.to_slice
-                                    (Array.make 19#usize [
-                                      67#u8, 111#u8, 110#u8, 110#u8, 101#u8,
-                                      99#u8, 116#u8, 105#u8, 111#u8, 110#u8,
-                                      58#u8, 32#u8, 99#u8, 108#u8, 111#u8,
-                                      115#u8, 101#u8, 13#u8, 10#u8
-                                      ]))
-                                let (o10, out11) ← put out10 a9 s4
-                                match o10 with
-                                | none => ok (none, out11)
-                                | some a10 =>
-                                  let s5 ←
-                                    lift (Array.to_slice
-                                      (Array.make 2#usize [ 13#u8, 10#u8 ]))
-                                  put out11 a10 s5
-                              else
-                                let s4 ←
+                                (Array.make 16#usize [
+                                  67#u8, 111#u8, 110#u8, 116#u8, 101#u8,
+                                  110#u8, 116#u8, 45#u8, 76#u8, 101#u8, 110#u8,
+                                  103#u8, 116#u8, 104#u8, 58#u8, 32#u8
+                                  ]))
+                            let (o10, out11) ← put out10 a9 s2
+                            match o10 with
+                            | none => ok (none, out11)
+                            | some a10 =>
+                              let (o11, out12) ← put_dec out11 a10 body_len
+                              match o11 with
+                              | none => ok (none, out12)
+                              | some a11 =>
+                                let s3 ←
                                   lift (Array.to_slice
                                     (Array.make 2#usize [ 13#u8, 10#u8 ]))
-                                put out10 a9 s4
+                                let (o12, out13) ← put out12 a11 s3
+                                match o12 with
+                                | none => ok (none, out13)
+                                | some a12 =>
+                                  let (o13, out14) ← put out13 a12 conn
+                                  match o13 with
+                                  | none => ok (none, out14)
+                                  | some a13 =>
+                                    let s4 ←
+                                      lift (Array.to_slice
+                                        (Array.make 2#usize [ 13#u8, 10#u8 ]))
+                                    put out14 a13 s4
       else ok (none, out)
 
 end h5i_app_h1

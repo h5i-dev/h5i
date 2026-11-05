@@ -411,4 +411,55 @@ def chunkStep (st : CState) (b maxBody : Nat) : CState × COut :=
   else if st.phase = 6 then expectStep st b 10 7 .done
   else (st, .reject 400)
 
+/-! ## Response heads -/
+
+/-- Decimal digits of `n`, most significant first, from position `c` of
+`10^9, ..., 10^0`; `started` once a digit was written. -/
+def decFrom (n c : Nat) (started : Bool) : List Nat :=
+  if c < 10 then
+    let d := (n / 10 ^ (9 - c)) % 10
+    if d ≠ 0 ∨ started ∨ c = 9 then (48 + d) :: decFrom n (c + 1) true else decFrom n (c + 1) false
+  else []
+termination_by 10 - c
+
+/-- `n < 2^32` in decimal, without leading zeros. -/
+def dec (n : Nat) : List Nat := decFrom n 0 false
+
+example : dec 0 = [48] := by simp [dec, decFrom]
+example : dec 1024 = [49, 48, 50, 52] := by simp [dec, decFrom]
+example : dec 4294967295 = [52, 50, 57, 52, 57, 54, 55, 50, 57, 53] := by simp [dec, decFrom]
+
+/-- The reason phrase sent with a status, as bytes (ASCII). -/
+def reasonOf (status : Nat) : List Nat :=
+  if status = 200 then [79, 75] -- OK
+  else if status = 201 then [67, 114, 101, 97, 116, 101, 100] -- Created
+  else if status = 204 then [78, 111, 32, 67, 111, 110, 116, 101, 110, 116] -- No Content
+  else if status = 400 then [66, 97, 100, 32, 82, 101, 113, 117, 101, 115, 116] -- Bad Request
+  else if status = 401 then [85, 110, 97, 117, 116, 104, 111, 114, 105, 122, 101, 100] -- Unauthorized
+  else if status = 403 then [70, 111, 114, 98, 105, 100, 100, 101, 110] -- Forbidden
+  else if status = 404 then [78, 111, 116, 32, 70, 111, 117, 110, 100] -- Not Found
+  else if status = 405 then [77, 101, 116, 104, 111, 100, 32, 78, 111, 116, 32, 65, 108, 108, 111, 119, 101, 100] -- Method Not Allowed
+  else if status = 408 then [82, 101, 113, 117, 101, 115, 116, 32, 84, 105, 109, 101, 111, 117, 116] -- Request Timeout
+  else if status = 409 then [67, 111, 110, 102, 108, 105, 99, 116] -- Conflict
+  else if status = 413 then [67, 111, 110, 116, 101, 110, 116, 32, 84, 111, 111, 32, 76, 97, 114, 103, 101] -- Content Too Large
+  else if status = 414 then [85, 82, 73, 32, 84, 111, 111, 32, 76, 111, 110, 103] -- URI Too Long
+  else if status = 422 then [85, 110, 112, 114, 111, 99, 101, 115, 115, 97, 98, 108, 101, 32, 67, 111, 110, 116, 101, 110, 116] -- Unprocessable Content
+  else if status = 431 then [82, 101, 113, 117, 101, 115, 116, 32, 72, 101, 97, 100, 101, 114, 32, 70, 105, 101, 108, 100, 115, 32, 84, 111, 111, 32, 76, 97, 114, 103, 101] -- Request Header Fields Too Large
+  else if status = 500 then [73, 110, 116, 101, 114, 110, 97, 108, 32, 83, 101, 114, 118, 101, 114, 32, 69, 114, 114, 111, 114] -- Internal Server Error
+  else if status = 501 then [78, 111, 116, 32, 73, 109, 112, 108, 101, 109, 101, 110, 116, 101, 100] -- Not Implemented
+  else if status = 503 then [83, 101, 114, 118, 105, 99, 101, 32, 85, 110, 97, 118, 97, 105, 108, 97, 98, 108, 101] -- Service Unavailable
+  else if status = 505 then [72, 84, 84, 80, 32, 86, 101, 114, 115, 105, 111, 110, 32, 78, 111, 116, 32, 83, 117, 112, 112, 111, 114, 116, 101, 100] -- HTTP Version Not Supported
+  else []
+
+/-- The response head `write_head` writes (ASCII):
+`HTTP/1.1 <status> <reason>` CRLF, `Content-Type: <ct>` CRLF when `ct` is not
+empty, `Content-Length: <bodyLen>` CRLF, `Connection: close` CRLF when `close`,
+and CRLF. -/
+def renderHead (status : Nat) (ct : List Nat) (bodyLen : Nat) (close : Bool) : List Nat :=
+  [72, 84, 84, 80, 47, 49, 46, 49, 32] ++ [48 + status / 100, 48 + status / 10 % 10, 48 + status % 10, 32] ++
+    reasonOf status ++ [13, 10] ++
+    (if ct = [] then [] else [67, 111, 110, 116, 101, 110, 116, 45, 84, 121, 112, 101, 58, 32]) ++ ct ++ (if ct = [] then [] else [13, 10]) ++
+    [67, 111, 110, 116, 101, 110, 116, 45, 76, 101, 110, 103, 116, 104, 58, 32] ++ dec bodyLen ++ [13, 10] ++
+    (if close then [67, 111, 110, 110, 101, 99, 116, 105, 111, 110, 58, 32, 99, 108, 111, 115, 101] ++ [13, 10] else []) ++ [13, 10]
+
 end h5i_app_h1.Spec

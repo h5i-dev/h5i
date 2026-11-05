@@ -675,15 +675,7 @@ fn expect(st: ChunkState, b: u8, want: u8, next: u8, out: ChunkOut) -> (ChunkSta
 
 /// Copy `src` into `out` at `pos`, or `None` if it does not fit.
 fn put(out: &mut [u8], pos: usize, src: &[u8]) -> Option<usize> {
-    if pos > out.len() || src.len() > out.len() - pos {
-        return None;
-    }
-    let mut q = 0;
-    while q < src.len() {
-        out[pos + q] = src[q];
-        q += 1;
-    }
-    Some(pos + src.len())
+    put_n(out, pos, src, src.len())
 }
 
 /// One byte.
@@ -695,26 +687,25 @@ fn put1(out: &mut [u8], pos: usize, b: u8) -> Option<usize> {
     Some(pos + 1)
 }
 
-/// `n` in decimal, without leading zeros.
-fn put_dec(out: &mut [u8], pos: usize, n: u32) -> Option<usize> {
-    let mut p: u32 = 1_000_000_000;
-    let mut at = pos;
-    let mut started = false;
-    while p > 0 {
-        let d = (n / p) % 10;
-        if d != 0 || started || p == 1 {
-            match put1(out, at, 48 + d as u8) {
-                None => return None,
-                Some(a) => at = a,
-            }
-            started = true;
+const POW10: [u32; 10] = [1_000_000_000, 100_000_000, 10_000_000, 1_000_000, 100_000, 10_000, 1_000, 100, 10, 1];
+
+/// `n` in decimal, without leading zeros, at the start of `buf`; the number
+/// of digits.
+fn dec_digits(n: u32, buf: &mut [u8; 10]) -> usize {
+    let mut c = 0;
+    let mut k = 0;
+    while c < 10 {
+        let d = (n / POW10[c]) % 10;
+        if d != 0 || k > 0 || c == 9 {
+            buf[k] = 48 + d as u8;
+            k += 1;
         }
-        p = p / 10;
+        c += 1;
     }
-    Some(at)
+    k
 }
 
-/// Write the reason phrase sent with `status`; none for codes without one
+/// The reason phrase sent with `status` at `pos`; none for codes without one
 /// here (RFC 9112 §4 allows an empty reason).
 fn put_reason(out: &mut [u8], pos: usize, status: u16) -> Option<usize> {
     match status {
@@ -740,6 +731,26 @@ fn put_reason(out: &mut [u8], pos: usize, status: u16) -> Option<usize> {
     }
 }
 
+/// `n` in decimal at `pos`.
+fn put_dec(out: &mut [u8], pos: usize, n: u32) -> Option<usize> {
+    let mut digits = [0u8; 10];
+    let nd = dec_digits(n, &mut digits);
+    put_n(out, pos, &digits, nd)
+}
+
+/// Copy the first `n` bytes of `src` into `out` at `pos`.
+fn put_n(out: &mut [u8], pos: usize, src: &[u8], n: usize) -> Option<usize> {
+    if n > src.len() || pos > out.len() || n > out.len() - pos {
+        return None;
+    }
+    let mut q = 0;
+    while q < n {
+        out[pos + q] = src[q];
+        q += 1;
+    }
+    Some(pos + n)
+}
+
 /// Write a response head into `out`:
 ///
 /// ```text
@@ -761,6 +772,10 @@ pub fn write_head(out: &mut [u8], status: u16, content_type: &[u8], body_len: u3
     if !field_bytes(content_type, 0, content_type.len()) {
         return None;
     }
+    let ct = content_type.len() > 0;
+    let ct_name: &[u8] = if ct { b"Content-Type: " } else { b"" };
+    let ct_end: &[u8] = if ct { b"\r\n" } else { b"" };
+    let conn: &[u8] = if close { b"Connection: close\r\n" } else { b"" };
     let mut at = match put(out, 0, b"HTTP/1.1 ") {
         None => return None,
         Some(a) => a,
@@ -789,20 +804,18 @@ pub fn write_head(out: &mut [u8], status: u16, content_type: &[u8], body_len: u3
         None => return None,
         Some(a) => a,
     };
-    if content_type.len() > 0 {
-        at = match put(out, at, b"Content-Type: ") {
-            None => return None,
-            Some(a) => a,
-        };
-        at = match put(out, at, content_type) {
-            None => return None,
-            Some(a) => a,
-        };
-        at = match put(out, at, b"\r\n") {
-            None => return None,
-            Some(a) => a,
-        };
-    }
+    at = match put(out, at, ct_name) {
+        None => return None,
+        Some(a) => a,
+    };
+    at = match put(out, at, content_type) {
+        None => return None,
+        Some(a) => a,
+    };
+    at = match put(out, at, ct_end) {
+        None => return None,
+        Some(a) => a,
+    };
     at = match put(out, at, b"Content-Length: ") {
         None => return None,
         Some(a) => a,
@@ -815,12 +828,10 @@ pub fn write_head(out: &mut [u8], status: u16, content_type: &[u8], body_len: u3
         None => return None,
         Some(a) => a,
     };
-    if close {
-        at = match put(out, at, b"Connection: close\r\n") {
-            None => return None,
-            Some(a) => a,
-        };
-    }
+    at = match put(out, at, conn) {
+        None => return None,
+        Some(a) => a,
+    };
     put(out, at, b"\r\n")
 }
 
