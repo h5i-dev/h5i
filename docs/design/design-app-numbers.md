@@ -111,12 +111,16 @@ declarations whose proofs failed.
 | every member an admin | (no such rule) | caught by `is_admin_spec` |
 | `guarded_transition` without the guard | refused by `extract` (invalid) | refused by `extract` (invalid) |
 | the guard skips its write check | caught by `guard_authorized`, `guard_only_denies` | same |
-| every principal in tenant 0 | survived | survived |
+| every principal in tenant 0 (`authz_kernel!`'s `tenant`) | caught by `tenant-of-token` (automation, run by `mutate`) | caught by `Tenant.tenant_of_token` |
+| the server's principal function puts every token in tenant 0 | linked: the kernel's `principal` edited, caught by `tenant-of-token` (automation) | survives by design (not linked: no server), not run |
 
-Forum: 1 of 19 caught, 17 survived, 1 invalid. Notes: 7 of 9 caught, 1
-survived, 1 invalid. The survivors are expected: the guard's theorems hold for
-any policy, so a hand-written policy is pinned only by review (A11), and the
-tenant function is trusted. `members.put_spec` also fails on the owner mutant
+Forum: 3 of 20 caught, 16 survived, 1 invalid. Notes: 8 of 10 caught, 1
+invalid, 1 survives by design. The survivors are expected: the guard's theorems
+hold for any policy, so a hand-written policy is pinned only by review (A11).
+Both apps opt in to `tenant-of-token`, so the tenant mutants are caught; in an
+app that does not (board and the others), the principal-function mutant is
+listed as surviving by design, and `tenant-zero` is not generated (no
+`authz_kernel!`). `members.put_spec` also fails on the owner mutant
 although the member table's owner is its key, so that mutant changes nothing
 there; the proof does not see that.
 
