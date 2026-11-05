@@ -730,6 +730,162 @@ async fn cancelled_requests_leave_no_write_and_no_lock() {
     tokio::time::timeout(Duration::from_secs(5), other.execute(&a, &add(0, 1))).await.expect("tenant lock free").unwrap().unwrap();
 }
 
+/// Server backends of this test's engines.
+async fn backends(db: &Db) -> i64 {
+    db.admin.query_one("SELECT count(*) FROM pg_stat_activity WHERE application_name = $1", &[&db.name]).await.unwrap().get(0)
+}
+
+/// Locks this test's engine backends wait for (advisory, row, transaction).
+async fn waiting(db: &Db) -> i64 {
+    db.admin
+        .query_one(
+            "SELECT count(*) FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
+             WHERE a.application_name = $1 AND NOT l.granted",
+            &[&db.name],
+        )
+        .await
+        .unwrap()
+        .get(0)
+}
+
+// Cancellation under a flood (from an independent review): one request holds
+// the tenant (its advisory lock, or without advisory locks its row lock),
+// then 40 requests for the same tenant are each cancelled while waiting for
+// it. The engine's connections must stay within its pools (2 + 1): a
+// cancelled waiter's connection may not leave the pool's count while its
+// backend still waits on the server, or each cancellation costs a backend
+// until `max_connections` runs out for every client of the server.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancelled_waiters_stay_within_the_pool() {
+    let Some(db) = setup("h5i_fault_zombie").await else { return };
+    for tenant_lock in [true, false] {
+        let pool = h5i_app_pg::pool(&db.url, 2).unwrap();
+        let pg = Arc::new(Pg::new(pool.clone(), config(20, tenant_lock)));
+        pg.install_schema().await.unwrap();
+        let holder_engine = Arc::new(db.engine(1, config(20, tenant_lock)).await);
+        let t = tenant();
+        let a = actor(t, 1);
+        pg.execute(&a, &add(0, 1)).await.unwrap().unwrap();
+        // With advisory locks the waiters queue on the tenant lock; without,
+        // on the holder's row lock (taken by its write).
+        let at = if tenant_lock { Point::Write } else { Point::Written };
+        let (go, wait) = (Arc::new(tokio::sync::Notify::new()), Arc::new(tokio::sync::Notify::new()));
+        let (g, w) = (go.clone(), wait.clone());
+        set_hook(t, at_first(at, 1, move |_| {
+            let (g, w) = (g.clone(), w.clone());
+            async move {
+                w.notify_one();
+                g.notified().await;
+                Ok(())
+            }
+        }));
+        let (p, a1) = (holder_engine.clone(), a.clone());
+        let holder = tokio::spawn(async move { p.execute(&a1, &add(0, 1)).await });
+        wait.notified().await;
+        let before = waiting(&db).await;
+        let mut max_backends = 0;
+        let mut queued = 0u64;
+        for i in 0..40 {
+            // Give the previous cancellation's cleanup a moment, then count
+            // what waits now, so this request's own wait is seen.
+            let settle = tokio::time::Instant::now() + Duration::from_secs(2);
+            while waiting(&db).await > before && tokio::time::Instant::now() < settle {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            let w0 = waiting(&db).await;
+            let (p, a2) = (pg.clone(), a.clone());
+            let q = tokio::spawn(async move { p.execute(&a2, &add(0, 100)).await });
+            // Until it waits on the server (or a timeout, if the pool has no
+            // connection for it).
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+            while waiting(&db).await <= w0 && !q.is_finished() && tokio::time::Instant::now() < deadline {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            if waiting(&db).await > w0 {
+                queued += 1;
+            }
+            assert!(!q.is_finished(), "tenant_lock={tenant_lock}: request {i} finished while the tenant was held: {:?}", q.await);
+            q.abort();
+            let _ = q.await;
+            max_backends = max_backends.max(backends(&db).await);
+        }
+        // Another client of the server still connects.
+        let fresh = tokio_postgres::connect(&db.base_url, tokio_postgres::NoTls).await;
+        assert!(fresh.is_ok(), "tenant_lock={tenant_lock}: {:?}", fresh.err());
+        drop(fresh);
+        eprintln!("tenant_lock={tenant_lock}: {queued} of 40 cancelled while waiting; at most {max_backends} engine backends");
+        assert!(queued >= 30, "tenant_lock={tenant_lock}: only {queued} of 40 requests were seen waiting before their cancellation");
+        assert!(max_backends <= 3, "tenant_lock={tenant_lock}: {max_backends} engine backends for pools of 2 + 1");
+        go.notify_one();
+        tokio::time::timeout(T, holder).await.unwrap().unwrap().unwrap().unwrap();
+        clear_hook(t);
+        // Nothing waits, nothing is held, and the cancelled requests never ran.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while waiting(&db).await > 0 && tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert_eq!(waiting(&db).await, 0, "tenant_lock={tenant_lock}");
+        assert_eq!(db.wait_no_advisory_locks(Duration::from_secs(5)).await, 0, "tenant_lock={tenant_lock}");
+        assert_eq!(db.cells(t).await.get(0), 2, "tenant_lock={tenant_lock}");
+        assert!(backends(&db).await <= 3, "tenant_lock={tenant_lock}");
+        // Every cancelled connection was cleaned and returned, none detached.
+        let stats = pool.cleanup_stats();
+        assert!(stats.cleaned.load(Ordering::Relaxed) >= queued, "tenant_lock={tenant_lock}: {stats:?}");
+        assert_eq!(stats.detached.load(Ordering::Relaxed), 0, "tenant_lock={tenant_lock}");
+        // The pool still serves.
+        tokio::time::timeout(Duration::from_secs(5), pg.execute(&a, &add(0, 1))).await.expect("pool usable").unwrap().unwrap();
+        drop((pg, holder_engine));
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
+// `EngineConfig::lock_timeout`: a write that waits longer than it for the
+// tenant's advisory lock, or (without advisory locks) for a row lock, fails
+// with 55P03 instead of queueing; it is not retried and writes nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn lock_timeout_bounds_lock_waits() {
+    let Some(db) = setup("h5i_fault_lock_timeout").await else { return };
+    for tenant_lock in [true, false] {
+        let cfg = EngineConfig { lock_timeout: Some(Duration::from_millis(300)), tenant_lock, ..EngineConfig::default() };
+        let pg = db.engine(2, cfg).await;
+        let holder_engine = Arc::new(db.engine(1, config(20, tenant_lock)).await);
+        let t = tenant();
+        let a = actor(t, 1);
+        pg.execute(&a, &add(0, 1)).await.unwrap().unwrap();
+        let at = if tenant_lock { Point::Write } else { Point::Written };
+        let (go, wait) = (Arc::new(tokio::sync::Notify::new()), Arc::new(tokio::sync::Notify::new()));
+        let (g, w) = (go.clone(), wait.clone());
+        set_hook(t, at_first(at, 1, move |_| {
+            let (g, w) = (g.clone(), w.clone());
+            async move {
+                w.notify_one();
+                g.notified().await;
+                Ok(())
+            }
+        }));
+        let (p, a1) = (holder_engine.clone(), a.clone());
+        let holder = tokio::spawn(async move { p.execute(&a1, &add(0, 1)).await });
+        wait.notified().await;
+        let before = stat(&pg);
+        let start = std::time::Instant::now();
+        let r = tokio::time::timeout(T, pg.execute(&a, &add(0, 100))).await.unwrap();
+        let took = start.elapsed();
+        match &r {
+            Err(DbError::Postgres(e)) => assert_eq!(e.code(), Some(&SqlState::LOCK_NOT_AVAILABLE), "tenant_lock={tenant_lock}: {e}"),
+            other => panic!("tenant_lock={tenant_lock}: {other:?}"),
+        }
+        assert!(took < Duration::from_secs(5), "tenant_lock={tenant_lock}: {took:?}");
+        assert_eq!(stat(&pg).0 - before.0, 1, "tenant_lock={tenant_lock}: not retried");
+        go.notify_one();
+        holder.await.unwrap().unwrap().unwrap();
+        clear_hook(t);
+        assert_eq!(db.cells(t).await.get(0), 2, "tenant_lock={tenant_lock}: only the holder wrote");
+        // Uncontended, the same engine writes.
+        pg.execute(&a, &add(0, 1)).await.unwrap().unwrap();
+        assert_eq!(db.wait_no_advisory_locks(Duration::from_secs(2)).await, 0);
+    }
+}
+
 /// A serial order of `done` (actor, command, reply, writes) through
 /// `transition` from `start` that reproduces every reply and write set, by
 /// depth-first search; and the state it ends in. Each command writes every

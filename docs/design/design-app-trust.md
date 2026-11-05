@@ -90,12 +90,12 @@ guarantee.
 - App writes, the idempotency reply, `h5i_clock` and outbox rows commit in the same transaction.
 - Keys are stored per `(tenant, ReplyCodec::scope(actor), key)`; reuse with another fingerprint is rejected.
 - A connection lost before COMMIT aborts or retries from BEGIN. If lost during COMMIT, a keyed request retries; an unkeyed one returns `DbError::CommitUnknown`, and the caller must assume neither outcome. An unkeyed request whose connection dropped just before COMMIT, so that only COMMIT notices, also returns `CommitUnknown` (it did not commit). A keyed request that runs out of attempts after an unknown COMMIT returns `RetriesExhausted` although it may have committed; resending the key returns the stored reply.
-- Advisory locks (`Store::lock_for`) are taken before BEGIN in one global order and released before the connection returns to the pool. If the request is cancelled while it holds or waits for them, or the release fails, the connection is closed instead of returned, which releases them. No proof depends on them.
+- Advisory locks (`Store::lock_for`) are taken before BEGIN in one global order and released before the connection returns to the pool. If the request is cancelled (its future dropped) or the release fails, the connection stays counted against the pool while a cleanup task cancels any statement still running on it (over TLS if the pool uses TLS), rolls back and releases every advisory lock, and only then returns it; this applies to row-lock waits and to the read-only path too. A connection the cleanup cannot reset within 30 s is detached, at most 2 per pool at a time, so cancellations cannot hold more server backends than the pool's size plus 2. `EngineConfig::lock_timeout` (off by default) bounds a write's lock waits: one that exceeds it fails with 55P03 before COMMIT. No proof depends on the locks.
 - A `Kernel::read_only` command runs in one `SERIALIZABLE READ ONLY DEFERRABLE` transaction, without locks or an idempotency key (a keyed request takes the write path), retried only on connection loss. A non-empty write set fails the request instead of being dropped.
 - Outbox deliveries may repeat, keep a stable key, and go only through the destination registry.
 
 Also trusted: the `ReplyCodec` fingerprint and scope, the clock source, the
-registry, pool cancellation, and the code implementing the contract. If all
+registry, PostgreSQL's cancel requests, and the code implementing the contract. If all
 this holds, each tenant's committed state comes from a serial sequence of
 successful transitions, so `db_inv` applies to it and every later load.
 
@@ -132,7 +132,7 @@ and fails a run in which any test printed "skipping".
 | Read-only commands | `read_only_path` (READ ONLY DEFERRABLE, no advisory lock, retried once after a kill, not retried otherwise, a non-empty write set fails with 25006, a keyed read takes the write path) |
 | Outbox deliveries repeat with a stable key, only through the registry | `outbox_is_atomic_and_redelivers_with_one_key` (a failed delivery and a dispatcher that dies holding its lease are redelivered with the same key; an unknown destination is marked dead) |
 | Commits equal a serial order (with A5) | `concurrent_moves_are_serial` (64 clients, 512 moves on 4 cells, with and without advisory locks: total conserved, one commit per successful reply, a serial order of exactly those commands through `transition` reproduces every reply and write set and ends in the stored state) and the same for the ledger example (`examples/app/ledger/server/tests/concurrency.rs`: `Spec.Inv` holds afterwards) |
-| Cancellation (pool cancellation is trusted) | `cancelled_requests_leave_no_write_and_no_lock` (dropped after its writes, keyed and unkeyed, and while waiting for the tenant lock) |
+| Cancellation | `cancelled_requests_leave_no_write_and_no_lock` (dropped after its writes, keyed and unkeyed, and while waiting for the tenant lock), `cancelled_waiters_stay_within_the_pool` (40 requests cancelled while waiting for the tenant's advisory lock or, without advisory locks, its row lock: the engine's backends stay within its pools, another client still connects, every connection is cleaned and none detached), `tls_test::cancelled_waiter_is_cleaned_over_tls`, `lock_timeout_bounds_lock_waits` |
 
 `tests/restart.rs` restarts the server (`H5I_APP_TEST_RESTART_CMD`) while
 32 clients write, half with keys: every keyed request, resent after an error,
@@ -146,9 +146,17 @@ container (`docker restart`).
 request dropped between taking its advisory locks and releasing them returned
 its connection to the pool still holding them, so every other server blocked
 on that tenant until the same pooled connection ran another locked request.
+The first fix closed such connections instead; a review found that a
+connection detached while its statement still waited on the server kept its
+backend open outside the pool's count, so each cancelled waiter cost one
+backend until `max_connections` ran out for every client of the server
+(`cancelled_waiters_stay_within_the_pool`: 41 backends for pools of 2 + 1).
+The cleanup task above replaced it.
 
-Not tested: `Clock::Database` and `monotonic` under concurrency or faults;
-`Engine::migrate` under faults; TLS connections under faults; a crash of the
+Not tested: the cleanup's fallbacks (detaching after 30 s, the limit of 2,
+and a drop without a tokio runtime); `Clock::Database` and `monotonic` under concurrency or faults;
+`Engine::migrate` under faults; TLS connections under faults other than a
+cancelled waiter; a crash of the
 server or of the host (`docker restart` shuts PostgreSQL down cleanly);
 network partitions and delays short of a closed connection; a server that
 stays down longer than a restart; overflowing SERIALIZABLE's conflict pool, which needs

@@ -24,6 +24,7 @@
 //! let reply = engine.execute(&actor, &Command::Get).await?;
 //! ```
 
+mod cleanup;
 pub mod migrate;
 pub mod outbox;
 mod roles;
@@ -118,7 +119,7 @@ pub struct TxInfo {
 
 /// Opaque connection pool, so app code cannot take a raw connection.
 #[derive(Clone)]
-pub struct Pool(pub(crate) deadpool_postgres::Pool, pub(crate) Arc<statements::Statements>);
+pub struct Pool(pub(crate) deadpool_postgres::Pool, pub(crate) Arc<statements::Statements>, pub(crate) Arc<cleanup::Cleanup>);
 
 /// SQL generation strategy for declarative reads and exact counts.
 pub use h5i_app_pgsql::ReadSqlMode;
@@ -136,7 +137,14 @@ impl Pool {
     pub fn read_sql_mode(&self) -> ReadSqlMode {
         self.1.read_sql_mode()
     }
+
+    /// What the cleanups of cancelled requests' connections did.
+    pub fn cleanup_stats(&self) -> &CleanupStats {
+        &self.2.stats
+    }
 }
+
+pub use cleanup::CleanupStats;
 
 #[derive(Debug)]
 pub enum DbError {
@@ -364,6 +372,15 @@ pub struct EngineConfig {
     /// closed beyond this. Applies to the engine's pool (shared with every
     /// engine on a clone of it).
     pub statement_cache: usize,
+    /// PostgreSQL's `lock_timeout` for a write's lock waits: advisory locks
+    /// before `BEGIN` and row locks inside the transaction. A wait that
+    /// exceeds it fails the request with `DbError::Postgres` (55P03, before
+    /// COMMIT, so certainly not committed; not retried). Set on the session
+    /// before each write attempt (one more message exchange), so engines
+    /// sharing a pool should agree on it. `None`, the default, leaves the
+    /// server's setting (normally no limit): a held tenant then queues
+    /// writes rather than failing them.
+    pub lock_timeout: Option<Duration>,
 }
 
 impl Default for EngineConfig {
@@ -374,6 +391,7 @@ impl Default for EngineConfig {
             clock: Clock::System,
             monotonic: false,
             statement_cache: statements::DEFAULT_CAPACITY,
+            lock_timeout: None,
         }
     }
 }
@@ -421,7 +439,7 @@ pub fn pool(url: &str, max_size: usize) -> Result<Pool, DbError> {
     cfg.url = Some(url.to_string());
     cfg.pool = Some(deadpool_postgres::PoolConfig::new(max_size));
     cfg.create_pool(Some(Runtime::Tokio1), NoTls)
-        .map(|p| Pool(p, Arc::new(statements::Statements::new(statements::DEFAULT_CAPACITY))))
+        .map(|p| Pool(p, Arc::new(statements::Statements::new(statements::DEFAULT_CAPACITY)), cleanup::Cleanup::new(cleanup::Connector::Plain)))
         .map_err(|e| DbError::Pool(e.to_string()))
 }
 
@@ -438,8 +456,8 @@ pub fn pool_tls(url: &str, max_size: usize, roots: &tls::Roots) -> Result<Pool, 
     cfg.url = Some(url.to_string());
     cfg.ssl_mode = Some(deadpool_postgres::SslMode::Require);
     cfg.pool = Some(deadpool_postgres::PoolConfig::new(max_size));
-    cfg.create_pool(Some(Runtime::Tokio1), connector)
-        .map(|p| Pool(p, Arc::new(statements::Statements::new(statements::DEFAULT_CAPACITY))))
+    cfg.create_pool(Some(Runtime::Tokio1), connector.clone())
+        .map(|p| Pool(p, Arc::new(statements::Statements::new(statements::DEFAULT_CAPACITY)), cleanup::Cleanup::new(cleanup::Connector::Tls(connector))))
         .map_err(|e| DbError::Pool(e.to_string()))
 }
 
@@ -463,33 +481,6 @@ pub struct Committed<K: Kernel> {
 enum Attempt<K: Kernel> {
     Done(Result<K::Reply, K::Error>, Option<K::WriteSet>),
     Replayed(K::Reply),
-}
-
-/// A write attempt's connection, which may hold session-level advisory
-/// locks from `lock` until `unlock` releases them. Dropped any other way
-/// (the request future was cancelled in between), the connection is closed
-/// rather than returned to the pool, so the server releases the locks and
-/// no later request inherits them; with a lock request still in flight,
-/// the server releases the lock as soon as it is granted.
-struct Locked(Option<deadpool_postgres::Object>);
-
-impl Locked {
-    fn get(&mut self) -> &mut deadpool_postgres::Object {
-        self.0.as_mut().expect("connection present until released")
-    }
-
-    /// Back to the pool: it holds no advisory lock.
-    fn release(&mut self) {
-        self.0.take();
-    }
-}
-
-impl Drop for Locked {
-    fn drop(&mut self) {
-        if let Some(client) = self.0.take() {
-            drop(deadpool_postgres::Object::take(client));
-        }
-    }
 }
 
 impl<K: Kernel, S: Store<K>> Engine<K, S> {
@@ -598,9 +589,16 @@ impl<K: Kernel, S: Store<K>> Engine<K, S> {
         }
         let tenant = K::tenant(actor);
         let lock = if self.config.tenant_lock { S::lock_for(actor, cmd) } else { Lock::None };
+        let lock_timeout = self.config.lock_timeout.map(|d| d.as_millis().max(1));
         for attempt in 0..self.config.max_attempts {
             self.stats.attempts.fetch_add(1, Ordering::Relaxed);
-            let mut client = Locked(Some(self.pool.0.get().await.map_err(|e| DbError::Pool(e.to_string()))?));
+            let mut client = cleanup::Conn::new(self.pool.0.get().await.map_err(|e| DbError::Pool(e.to_string()))?, self.pool.2.clone());
+            if let Some(ms) = lock_timeout
+                && let Err(e) = client.get().batch_execute(&format!("SET lock_timeout = {ms}")).await
+            {
+                client.release();
+                return Err(e.into());
+            }
             let result = match self.lock(client.get(), tenant, &lock).await {
                 Ok(()) => {
                     let r = self.attempt(client.get(), tenant, actor, cmd, idem.as_ref()).await;
@@ -661,9 +659,9 @@ impl<K: Kernel, S: Store<K>> Engine<K, S> {
     }
 
     /// Releases every session-level advisory lock this connection holds,
-    /// then returns it to the pool. If that fails, the connection is closed
-    /// instead, which releases them too.
-    async fn unlock(&self, mut client: Locked, lock: &Lock) {
+    /// then returns it to the pool. If that fails, the connection goes
+    /// through the cleanup of a cancelled request (`cleanup`).
+    async fn unlock(&self, mut client: cleanup::Conn, lock: &Lock) {
         if *lock == Lock::None || client.get().execute("SELECT pg_advisory_unlock_all()", &[]).await.is_ok() {
             client.release();
         }
@@ -676,8 +674,12 @@ impl<K: Kernel, S: Store<K>> Engine<K, S> {
         for attempt in 0..self.config.max_attempts {
             self.stats.attempts.fetch_add(1, Ordering::Relaxed);
             self.stats.reads.fetch_add(1, Ordering::Relaxed);
-            let mut client = self.pool.0.get().await.map_err(|e| DbError::Pool(e.to_string()))?;
-            match self.read_attempt(&mut client, tenant, actor, cmd).await {
+            // Cancelled mid-read (say, waiting for a deferrable snapshot),
+            // the connection is cleaned before the pool reuses it.
+            let mut client = cleanup::Conn::new(self.pool.0.get().await.map_err(|e| DbError::Pool(e.to_string()))?, self.pool.2.clone());
+            let result = self.read_attempt(client.get(), tenant, actor, cmd).await;
+            client.release();
+            match result {
                 Ok(r) => {
                     if r.is_ok() {
                         self.stats.commits.fetch_add(1, Ordering::Relaxed);
