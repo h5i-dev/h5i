@@ -2601,12 +2601,33 @@ Print help
 .TP
 [\fIPATHS\fR]
 Project directories or h5i\-app.toml files (default: the project the current directory is in)
+.SH "H5I APP REPORT"
+For each HTTP route: the kernel commands it builds, whether it takes an `Actor`, the theorems that cover it and what the last recorded `check` observed for each, the assumptions (A1-A11) it rests on, and what nothing verifies. Derived from the sources and h5i-app.toml; it runs no proof
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBreport\fR [\fB\-\-all\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATHS\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-all\fR
+Every project under the given directories (default: the current one)
+.TP
+\fB\-\-json\fR
+The versioned JSON form instead of text
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fIPATHS\fR]
+Project directories or h5i\-app.toml files (default: the project the current directory is in)
 .SH "H5I APP MUTATE"
 Put bugs in the kernel and make sure each one breaks a proof. A bug that survives is behaviour the spec does not pin down
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBmutate\fR [\fB\-\-all\fR] [\fB\-\-only\fR] [\fB\-\-auto\fR] [\fB\-\-limit\fR] [\fB\-\-list\fR] [\fB\-j\fR|\fB\-\-jobs\fR] [\fB\-\-keep\fR] [\fB\-\-no\-baseline\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATHS\fR] 
+\fBmutate\fR [\fB\-\-all\fR] [\fB\-\-only\fR] [\fB\-\-auto\fR] [\fB\-\-security\fR] [\fB\-\-limit\fR] [\fB\-\-list\fR] [\fB\-j\fR|\fB\-\-jobs\fR] [\fB\-\-keep\fR] [\fB\-\-no\-baseline\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATHS\fR] 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -2619,6 +2640,9 @@ Only mutants whose name contains this (repeatable)
 .TP
 \fB\-\-auto\fR
 Also generate mutants from the kernel\*(Aqs syntax: comparison boundaries, flipped equalities, swapped `&&`/`||`, dropped `!`, forced `if` conditions
+.TP
+\fB\-\-security\fR
+Also generate security mutants: a `Policy` conjunct dropped, `visible`/`stored` made `true`, a comparison with the actor made `true`, the guard removed or weakened, the tenant fixed; for a policy from `schema!`, the same in its generator. Each line says which proofs broke
 .TP
 \fB\-\-limit\fR \fI<LIMIT>\fR
 With \-\-auto: at most this many generated mutants per project
