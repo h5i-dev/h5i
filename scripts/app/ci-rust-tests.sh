@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # Run the h5i-app tests (the framework crates, then the examples workspace)
-# against Postgres. Tests skip when the database URL is missing, so a skip here
+# against Postgres. Tests skip when a database URL is missing, so a skip here
 # is a CI failure. Extra arguments go to every `cargo test`, e.g. `--release`
 # on a machine that cannot spare the space for this repository's dev build.
 set -uo pipefail
 : "${H5I_APP_TEST_DATABASE_URL:?set H5I_APP_TEST_DATABASE_URL}"
+# A superuser on the same server: h5i-app-pg's fault tests (tests/faults.rs)
+# terminate backends and read every backend's locks with it.
+: "${H5I_APP_TEST_ADMIN_URL:?set H5I_APP_TEST_ADMIN_URL}"
 log=$(mktemp)
 root=$(cd "$(dirname "$0")/../.." && pwd)
 status=0
