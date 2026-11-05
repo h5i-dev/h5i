@@ -43,8 +43,7 @@ fn ssi_exhaustion_reports_are_retryable_and_real_oom_is_not() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "needs max_connections >= 200 to overflow the conflict pool; see the module docs"]
 async fn conflict_pool_overflow_is_retryable() {
-    let Ok(url) = std::env::var("H5I_APP_TEST_DATABASE_URL") else {
-        eprintln!("H5I_APP_TEST_DATABASE_URL not set; skipping");
+    let Some(url) = crate::test_env("H5I_APP_TEST_DATABASE_URL") else {
         return;
     };
     let connect = || async {

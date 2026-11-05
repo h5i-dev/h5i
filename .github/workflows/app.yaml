@@ -54,6 +54,11 @@ jobs:
           --health-retries 10
     env:
       H5I_APP_TEST_DATABASE_URL: postgres://h5i:h5i@127.0.0.1:5432/h5i
+      # The service's own user is a superuser: h5i-app-pg's fault tests
+      # terminate backends and read every backend's locks with it.
+      H5I_APP_TEST_ADMIN_URL: postgres://h5i:h5i@127.0.0.1:5432/h5i
+      # A database test whose URL is missing fails instead of skipping.
+      H5I_APP_TEST_REQUIRE_DB: "1"
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -77,6 +82,11 @@ jobs:
       # A TLS-only PostgreSQL for h5i-app-pg's `tls` tests.
       - run: scripts/app/pg-tls.sh "$RUNNER_TEMP/pg-tls" >> "$GITHUB_ENV"
       - run: scripts/app/ci-rust-tests.sh
+      # A6: restart the service container under load; the same process must
+      # recover. Last, since it restarts the database the other tests use.
+      - run: scripts/app/ci-restart-test.sh
+        env:
+          H5I_APP_TEST_RESTART_CMD: docker restart ${{ job.services.postgres.id }}
       # Routes take an Actor; no client-set identity in a Command.
       - run: cargo app lint --all crates examples/app examples/embedded
       - uses: taiki-e/install-action@v2

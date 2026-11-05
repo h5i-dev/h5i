@@ -19,8 +19,7 @@ fn sorted(mut s: k::Snapshot) -> k::Snapshot {
 
 #[tokio::test]
 async fn store_agrees_with_apply() {
-    let Ok(url) = std::env::var("H5I_APP_TEST_DATABASE_URL") else {
-        eprintln!("H5I_APP_TEST_DATABASE_URL not set; skipping");
+    let Some(url) = h5i_app_pg::test_env("H5I_APP_TEST_DATABASE_URL") else {
         return;
     };
     let pg = Engine::<Ledger, LedgerStore>::new(pool(&h5i_app_pg::with_schema(&url, "ledger").unwrap(), 4).unwrap(), EngineConfig::default());

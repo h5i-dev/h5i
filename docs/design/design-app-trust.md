@@ -2,7 +2,9 @@
 
 Assumption IDs (A1 to A11) come from the ledger in
 [design-app-roadmap.md](design-app-roadmap.md); code and other docs cite
-them.
+them. The IDs and names are defined once, in
+`crates/h5i-app-report/src/assumptions.rs`; its tests fail if the roadmap's
+ledger or this page disagrees with it.
 
 ## Proven in Lean
 
@@ -72,7 +74,7 @@ guarantee.
 | A3 | Reply rendering shows the kernel's reply. | Bytes come from the proven `h5i-app-json` writer. Trusted: the app's reply-to-`Value` mapping and `Value` flattening (tested against serde_json). |
 | A4 | PostgreSQL runs the rendered subset (`CREATE TABLE IF NOT EXISTS`, `INSERT ... ON CONFLICT`, `DELETE ... WHERE`, `SELECT ... WHERE`) as `H5iAppLib.Pg` says: `=` only for equal non-`NULL` values, `IS NOT DISTINCT FROM` also for `NULL`, a statement fails or has the modeled effect, text compares byte by byte, the driver converts `Val` losslessly, and existing tables came from the same schema. `schema_spec()` describes the tables correctly. | The path up to the model is proven. Each server's `tests/postgres.rs` runs against PostgreSQL. Every compile checks `h5i_app_pgsql::valid`; `schema_is_valid` checks numbering and key lengths. |
 | A5 | SERIALIZABLE commits equal some serial order. | Documented PostgreSQL guarantee. Theorems over `H5iAppLib.Run` cover concurrency only through this. |
-| A6 | `crates/h5i-app-pg` meets the engine contract below. | App code cannot reach its pool or transaction. Integration tests cover concurrency, retries, idempotency, connection loss, scoped reads and the outbox. |
+| A6 | `crates/h5i-app-pg` meets the engine contract below. | App code cannot reach its pool or transaction. Each bullet of the contract has a test against PostgreSQL with injected faults (killed backends, lost COMMITs, forced serialization failures and deadlocks, cancelled requests, 64 concurrent clients, a server restart); CI fails a run that skips them. [What is tested](#how-the-contract-is-tested) lists them and what is not. |
 | A7 | Charon, Aeneas and Lean translate faithfully and check soundly. | Axiom gate; Rust-vs-Lean differential test. |
 | A8 | The engine role is not a superuser and no other service has its credentials. | h5i-app cannot stop a superuser. |
 | A11 | For `[authz]` apps, the reviewed surface (`Policy`, `View`, `Disclose`, the `authz_kernel!` call and its tenant unless `tenant-of-token` is proven and linked, the `h5i-app-*` dependencies, the engine line) is what the author meant, and the author does not deceive their reviewer. `Disclose` lists every row a reply carries; `View` hides what `visible` hides; a write command's handler does not copy hidden rows into its writes or derived reply values; replayed idempotent replies were shown to the same user before. | The surface is Rust extracted with the kernel, with no generator between it and the theorem. Read-only commands under `guard_viewed` do not rely on `Disclose`. |
@@ -95,13 +97,13 @@ guarantee.
 - A refused transition rolls back and writes no app or framework rows.
 - App writes, the idempotency reply, `h5i_clock` and outbox rows commit in the same transaction.
 - Keys are stored per `(tenant, ReplyCodec::scope(actor), key)`; reuse with another fingerprint is rejected.
-- A connection lost before COMMIT aborts or retries from BEGIN. If lost during COMMIT, a keyed request retries; an unkeyed one returns `DbError::CommitUnknown`, and the caller must assume neither outcome.
-- Advisory locks (`Store::lock_for`) are taken before BEGIN in one global order and released before the connection returns to the pool. No proof depends on them.
+- A connection lost before COMMIT aborts or retries from BEGIN. If lost during COMMIT, a keyed request retries; an unkeyed one returns `DbError::CommitUnknown`, and the caller must assume neither outcome. An unkeyed request whose connection dropped just before COMMIT, so that only COMMIT notices, also returns `CommitUnknown` (it did not commit). A keyed request that runs out of attempts after an unknown COMMIT returns `RetriesExhausted` although it may have committed; resending the key returns the stored reply.
+- Advisory locks (`Store::lock_for`) are taken before BEGIN in one global order and released before the connection returns to the pool. If the request is cancelled (its future dropped) or the release fails, the connection stays counted against the pool while a cleanup task cancels any statement still running on it (over TLS if the pool uses TLS), rolls back and releases every advisory lock, and only then returns it; this applies to row-lock waits and to the read-only path too. A connection the cleanup cannot reset within 30 s is detached, at most 2 per pool at a time, so cancellations cannot hold more server backends than the pool's size plus 2. `EngineConfig::lock_timeout` (off by default) bounds a write's lock waits: one that exceeds it fails with 55P03 before COMMIT. No proof depends on the locks.
 - A `Kernel::read_only` command runs in one `SERIALIZABLE READ ONLY DEFERRABLE` transaction, without locks or an idempotency key (a keyed request takes the write path), retried only on connection loss. A non-empty write set fails the request instead of being dropped.
 - Outbox deliveries may repeat, keep a stable key, and go only through the destination registry.
 
 Also trusted: the `ReplyCodec` fingerprint and scope, the clock source, the
-registry, pool cancellation, and the code implementing the contract. If all
+registry, PostgreSQL's cancel requests, and the code implementing the contract. If all
 this holds, each tenant's committed state comes from a serial sequence of
 successful transitions, so `db_inv` applies to it and every later load.
 
@@ -113,6 +115,88 @@ shows a prefix of the serial order, the reply is `transition` of a reachable
 state. Trusted: the safe-snapshot guarantee, and that `Kernel::read_only`
 delegates to the proven function (the lint checks a proof exists, not the
 delegation).
+
+### How the contract is tested
+
+`crates/h5i-app-pg/tests/faults.rs` runs a small kernel through the engine
+against PostgreSQL. Its store calls a per-tenant hook at fixed points of an
+attempt (in `load`, before and after the writes, after the outbox rows), so a
+test can terminate the attempt's backend (`pg_terminate_backend`), fail the
+call, block it or race an outside transaction there. A TCP proxy in the test
+loses a COMMIT either before forwarding it or after the server answered it.
+The only engine change for this is `Tx::info`, behind the `testing` feature.
+`H5I_APP_TEST_ADMIN_URL` (a superuser) is needed besides
+`H5I_APP_TEST_DATABASE_URL`. A database test skips when its variables are
+unset, except with `H5I_APP_TEST_REQUIRE_DB` set: then it fails
+(`h5i_app_pg::test_env`). CI and `scripts/app/ci-rust-tests.sh` set it, so
+a run without the database fails instead of passing every test (libtest
+hides what passing tests print, so a printed skip alone goes unseen).
+
+| Contract bullet | Tests |
+|---|---|
+| One attempt, one SERIALIZABLE transaction; a retry is a new transaction, reloads, reads a new time and reruns `transition` | `serialization_failures_retry_in_a_new_transaction` (two forced 40001s: three transactions with distinct virtual xids, each reload sees the outside commit, times increase), `serialization_failures_exhaust_after_max_attempts`, `deadlocks_are_retried` (a real 40P01 between the advisory lock and a row lock), `monotonic_time_never_goes_back` |
+| A refusal writes no app or framework row | `idempotency_keys_replay_and_conflict` |
+| App writes, reply, `h5i_clock` and outbox rows commit together | `framework_rows_commit_with_the_app_writes` (COMMIT lost before: none of the four; after: all four), `outbox_is_atomic_and_redelivers_with_one_key` |
+| Keys per `(tenant, scope, key)`; another fingerprint is rejected | `idempotency_keys_replay_and_conflict`, `concurrent_requests_with_one_key_run_once` (32 clients, with and without locks: one write, 31 replays, one reply) |
+| Connection lost before or during COMMIT | `killed_before_commit_retries_once` (killed at each hook point, keyed and unkeyed: one effect, new connection), `lost_commit_with_key_runs_once`, `lost_commit_without_key_is_unknown` (`CommitUnknown`, not retried; one case committed, one did not) |
+| Advisory locks before BEGIN, one order, released | `advisory_locks_are_released` (after a failed attempt and a killed connection, `pg_locks` shows none and another pool gets the tenant at once; a queued request waits in `pg_advisory_lock` before its snapshot and commits without a retry), `cancelled_requests_leave_no_write_and_no_lock` |
+| Read-only commands | `read_only_path` (READ ONLY DEFERRABLE, no advisory lock, retried once after a kill, not retried otherwise, a non-empty write set fails with 25006, a keyed read takes the write path) |
+| Outbox deliveries repeat with a stable key, only through the registry | `outbox_is_atomic_and_redelivers_with_one_key` (a failed delivery and a dispatcher that dies holding its lease are redelivered with the same key; an unknown destination is marked dead) |
+| Commits equal a serial order (with A5) | `concurrent_moves_are_serial` (64 clients, 512 moves on 4 cells, with and without advisory locks: total conserved, one commit per successful reply, a serial order of exactly those commands through `transition` reproduces every reply and write set and ends in the stored state) and the same for the ledger example (`examples/app/ledger/server/tests/concurrency.rs`: `Spec.Inv` holds afterwards) |
+| Cancellation | `cancelled_requests_leave_no_write_and_no_lock` (dropped after its writes, keyed and unkeyed, and while waiting for the tenant lock), `cancelled_waiters_stay_within_the_pool` (40 requests cancelled while waiting for the tenant's advisory lock or, without advisory locks, its row lock: the engine's backends stay within its pools, another client still connects, every connection is cleaned and none detached), `tls_test::cancelled_waiter_is_cleaned_over_tls`, `lock_timeout_bounds_lock_waits` |
+
+`tests/restart.rs` restarts the server (`H5I_APP_TEST_RESTART_CMD`) while
+32 clients write, half with keys: every keyed request, resent after an error,
+takes effect exactly once; every unkeyed success once, an unknown commit at
+most once, any other error not at all; the same engine serves again without
+a process restart. It restarts the database, so it is `#[ignore]`d and run
+alone: in CI by `scripts/app/ci-restart-test.sh`, which restarts the service
+container (`docker restart`).
+
+`cancelled_requests_leave_no_write_and_no_lock` found a bug, now fixed: a
+request dropped between taking its advisory locks and releasing them returned
+its connection to the pool still holding them, so every other server blocked
+on that tenant until the same pooled connection ran another locked request.
+The first fix closed such connections instead; a review found that a
+connection detached while its statement still waited on the server kept its
+backend open outside the pool's count, so each cancelled waiter cost one
+backend until `max_connections` ran out for every client of the server
+(`cancelled_waiters_stay_within_the_pool`: 41 backends for pools of 2 + 1).
+The cleanup task above replaced it.
+
+Not tested: the cleanup's fallbacks (detaching after 30 s, the limit of 2,
+and a drop without a tokio runtime); `Clock::Database` and `monotonic` under concurrency or faults;
+`Engine::migrate` under faults; TLS connections under faults other than a
+cancelled waiter; a crash of the
+server or of the host (`docker restart` shuts PostgreSQL down cleanly);
+network partitions and delays short of a closed connection; a server that
+stays down longer than a restart; overflowing SERIALIZABLE's conflict pool, which needs
+`max_connections ≥ 200` (`ssi_test.rs`, ignored); that a deferrable
+read-only transaction never fails to serialize.
+
+### Per-route guarantee report
+
+`h5i app report` (`--json` for the versioned form, schema
+`h5i_app_report::guarantees`) lists, for each project and each HTTP route:
+the kernel commands the route may build and whether each runs on the
+read-only path, whether the handler takes an `Actor`, the theorems that
+cover it with their Lean file, the assumption IDs it rests on, and what
+nothing verifies. Everything comes from the syntax trees of the server and
+kernel crates, `h5i-app.toml` and `.h5i/app/runs`: a theorem is reported
+`passed` only when the latest recorded `h5i app check` run passed and gated
+it, and `passed_on_other_inputs` when the sources changed since.
+
+The report proves nothing. It reads routes registered with
+`.route("<literal>", get(handler)…)` and `rpc_router`; a `nest`, fallback or
+non-literal path is listed as an error and its routes are missing. "Takes an
+`Actor`" means a parameter's type names `Actor`, as in `h5i app lint`. A
+route's commands are the `Command::…` paths in its handler, or every variant
+for `/rpc`, whose decoder is trusted (A2). The read-only path is read off a
+`read_only` written as a `match` or `matches!`; any other shape is reported
+as unknown. That a theorem covers a route means the theorem is about every
+command (or every read-only one) of the kernel the route runs; that the
+route runs that kernel is A8, checked by `lint` and `cargo deny`, not by the
+report.
 
 ## Not covered
 
