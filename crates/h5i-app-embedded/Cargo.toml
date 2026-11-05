@@ -1,0 +1,29 @@
+[package]
+name = "h5i-app-embedded"
+description = "An async, no_std, heap-free HTTP/1.1 server for h5i-app kernels on microcontrollers, over the verified h5i-app-h1 parser"
+edition = "2024"
+license = "Apache-2.0"
+version = "0.5.3"
+repository = "https://github.com/h5i-dev/h5i"
+homepage = "https://github.com/h5i-dev/h5i"
+readme = "README.md"
+
+# The trusted shell: it moves bytes between a socket and the verified core
+# (h5i-app-h1), and between the core and a kernel. No allocator, no runtime.
+[dependencies]
+h5i-app-h1.workspace = true
+h5i-app-core = { workspace = true, default-features = false }
+# The I/O traits: tokio (through embedded-io-adapters), embassy-net or a UART.
+embedded-io-async = "0.7"
+# The device engine's lock: interrupts off on a single core, a mutex on a host.
+critical-section = "1.2"
+
+[dev-dependencies]
+critical-section = { version = "1.2", features = ["std"] }
+embedded-io-adapters = { version = "0.7", features = ["tokio-1"] }
+tokio = { version = "1", features = ["rt", "macros", "io-util", "time"] }
+proptest = "1"
+
+[lints.clippy]
+# No heap: a parsed `Head` is moved by value, never boxed.
+large_enum_variant = "allow"

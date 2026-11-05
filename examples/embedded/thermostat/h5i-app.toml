@@ -1,0 +1,28 @@
+# Read by `h5i app` (extract, check, prove, mutate, doctor).
+
+[extract]
+start-from = ["transition", "apply", "read_only", "INITIAL"]
+
+[check]
+# Must exist and use only the standard axioms (every theorem in a hand-written
+# module is gated as well).
+theorems = [
+    "thermostat_kernel.Proofs.transition_total",
+    "thermostat_kernel.Proofs.inv_reachable",
+    "thermostat_kernel.ReadOnly.sound",
+]
+
+[[mutant]]
+name = "interlock_boundary"
+old = "if temp_dc >= MAX_TEMP_DC {"
+new = "if temp_dc > MAX_TEMP_DC {"
+
+[[mutant]]
+name = "relay_bound"
+old = "if i >= RELAYS {"
+new = "if i > RELAYS {"
+
+[[mutant]]
+name = "setpoint_upper"
+old = "*dc > MAX_SETPOINT_DC"
+new = "*dc > MAX_TEMP_DC"

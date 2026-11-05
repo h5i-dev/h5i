@@ -1,0 +1,18 @@
+[package]
+name = "thermostat-host"
+description = "Runs the thermostat's server over tokio, for development, fuzzing and curl"
+edition = "2024"
+license = "Apache-2.0"
+version = "0.1.0"
+publish = false
+
+[dependencies]
+thermostat-app = { path = "../app" }
+h5i-app-embedded = { path = "../../../../crates/h5i-app-embedded" }
+critical-section = { version = "1.2", features = ["std"] }
+embedded-io-adapters = { version = "0.7", features = ["tokio-1"] }
+tokio = { version = "1", features = ["rt", "net", "macros", "io-util", "time"] }
+
+[dev-dependencies]
+proptest = "1"
+thermostat-kernel = { path = "../kernel" }

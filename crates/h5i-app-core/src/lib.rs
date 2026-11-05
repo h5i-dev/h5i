@@ -29,9 +29,28 @@
 //!     }
 //! }
 //! ```
+//!
+//! # Features
+//!
+//! Without `std` (`default-features = false`) the crate is `no_std` and has
+//! [`Kernel`], [`TenantId`] and [`Timestamp`] (without [`Timestamp::now`]):
+//! enough for a kernel on a microcontroller. `alloc` adds [`ReplyCodec`],
+//! [`Executor`] and [`sorted_by_key`]; `std` (the default) adds
+//! [`MemoryEngine`], `Timestamp::now` and the `[authz]` binding, whose guard
+//! (`h5i-app-std`) needs `std`.
 
+#![cfg_attr(not(feature = "std"), no_std)]
+
+#[cfg(feature = "alloc")]
+extern crate alloc;
+
+#[cfg(feature = "alloc")]
+use alloc::{string::String, vec::Vec};
+#[cfg(feature = "std")]
 use std::collections::HashMap;
+#[cfg(feature = "std")]
 use std::sync::Mutex;
+#[cfg(feature = "std")]
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// An organization. Every row and every SQL statement is scoped by one.
@@ -46,6 +65,7 @@ impl Timestamp {
     pub const EPOCH: Timestamp = Timestamp(0);
 
     /// The system clock of this process.
+    #[cfg(feature = "std")]
     pub fn now() -> Self {
         Timestamp(SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_micros() as u64).unwrap_or(0))
     }
@@ -65,7 +85,9 @@ impl Timestamp {
     }
 }
 
+#[cfg(feature = "std")]
 pub mod authz;
+#[cfg(feature = "std")]
 pub use authz::{Authz, AuthzKernel};
 
 /// Implement on a marker type in the server crate, delegating to the kernel crate.
@@ -118,33 +140,40 @@ pub trait Kernel: Send + Sync + 'static {
 /// Runs commands one at a time in memory. A real engine must behave like this
 /// on its committed requests, in some serial order.
 /// Identifies a stored reply: (tenant, reply scope, idempotency key).
+#[cfg(feature = "std")]
 type ReplyKey = (TenantId, String, String);
 /// A stored reply: (command fingerprint, encoded reply bytes).
+#[cfg(feature = "std")]
 type StoredReply = (Vec<u8>, Vec<u8>);
 
+#[cfg(feature = "std")]
 pub struct MemoryEngine<K: Kernel> {
     tenants: Mutex<HashMap<TenantId, Tenant<K>>>,
     replies: Mutex<HashMap<ReplyKey, StoredReply>>,
 }
 
+#[cfg(feature = "std")]
 struct Tenant<K: Kernel> {
     snap: K::Snapshot,
     /// Time of the latest commit through `execute_at`.
     last: Timestamp,
 }
 
+#[cfg(feature = "std")]
 impl<K: Kernel> Default for Tenant<K> {
     fn default() -> Self {
         Tenant { snap: K::Snapshot::default(), last: Timestamp::EPOCH }
     }
 }
 
+#[cfg(feature = "std")]
 impl<K: Kernel> Default for MemoryEngine<K> {
     fn default() -> Self {
         MemoryEngine { tenants: Mutex::new(HashMap::new()), replies: Mutex::new(HashMap::new()) }
     }
 }
 
+#[cfg(feature = "std")]
 impl<K: Kernel> MemoryEngine<K> {
     /// Run `cmd` with `actor` as given: no clock, no stamp.
     pub fn execute(&self, actor: &K::Principal, cmd: &K::Command) -> Result<K::Reply, K::Error> {
@@ -188,13 +217,14 @@ impl<K: Kernel> MemoryEngine<K> {
 }
 
 /// Sort rows by key, for comparing snapshots.
+#[cfg(feature = "alloc")]
 pub fn sorted_by_key<T: Clone, O: Ord, F: Fn(&T) -> O>(rows: &[T], key: F) -> Vec<T> {
     let mut v = rows.to_vec();
     v.sort_by_key(|r| key(r));
     v
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "std"))]
 mod tests {
     use super::*;
 
@@ -242,6 +272,7 @@ mod tests {
 }
 
 /// Needed to replay stored replies for idempotency keys.
+#[cfg(feature = "alloc")]
 pub trait ReplyCodec<K: Kernel>: Send + Sync + 'static {
     /// Rejects a key reused for a different command. Leave out the time, since retries arrive later.
     fn fingerprint(cmd: &K::Command) -> Vec<u8>;
@@ -255,24 +286,30 @@ pub trait ReplyCodec<K: Kernel>: Send + Sync + 'static {
 /// A command's outcome: the kernel's own result (a reply or a typed refusal),
 /// wrapped in the executor's infrastructure result (`E`). The inner `Result` is
 /// the application's decision; the outer is whether the executor could run it.
+#[cfg(feature = "alloc")]
 pub type Executed<K, E> = Result<Result<<K as Kernel>::Reply, <K as Kernel>::Error>, E>;
 
 /// Async execution contract. Infrastructure failures are separate from kernel refusals.
 /// Implementations must publish committed state before acknowledging a write.
+#[cfg(feature = "alloc")]
 pub trait Executor<K: Kernel>: Send + Sync + 'static {
-    type Error: std::error::Error + Send + Sync;
+    type Error: core::error::Error + Send + Sync;
     fn is_idempotency_conflict(error: &Self::Error) -> bool;
-    fn execute(&self, actor: &K::Principal, cmd: &K::Command) -> impl std::future::Future<Output = Executed<K, Self::Error>> + Send;
-    fn execute_idempotent<C: ReplyCodec<K>>(&self, actor: &K::Principal, key: &str, cmd: &K::Command) -> impl std::future::Future<Output = Executed<K, Self::Error>> + Send;
-    fn snapshot_for(&self, actor: &K::Principal, cmd: &K::Command) -> impl std::future::Future<Output = Result<K::Snapshot, Self::Error>> + Send;
+    fn execute(&self, actor: &K::Principal, cmd: &K::Command) -> impl core::future::Future<Output = Executed<K, Self::Error>> + Send;
+    fn execute_idempotent<C: ReplyCodec<K>>(&self, actor: &K::Principal, key: &str, cmd: &K::Command) -> impl core::future::Future<Output = Executed<K, Self::Error>> + Send;
+    fn snapshot_for(&self, actor: &K::Principal, cmd: &K::Command) -> impl core::future::Future<Output = Result<K::Snapshot, Self::Error>> + Send;
 }
 
+#[cfg(feature = "std")]
 #[derive(Debug)]
 pub enum MemoryError { IdempotencyConflict, Decode(String) }
+#[cfg(feature = "std")]
 impl std::fmt::Display for MemoryError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "{self:?}") }
 }
+#[cfg(feature = "std")]
 impl std::error::Error for MemoryError {}
+#[cfg(feature = "std")]
 impl<K: Kernel> Executor<K> for MemoryEngine<K> {
     type Error = MemoryError;
     fn is_idempotency_conflict(e: &MemoryError) -> bool { matches!(e, MemoryError::IdempotencyConflict) }
