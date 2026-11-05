@@ -792,7 +792,9 @@ mod tests {
         let t = &r.theorems[0];
         assert_eq!((t.name.as_str(), t.source, t.covers), ("ledger_kernel.Storage.db_inv", TheoremSource::CheckTheorems, Covers::AllCommands));
         assert_eq!(t.file.as_deref(), Some("proofs/Storage.lean"));
-        assert_eq!(rpc.theorems, ["ledger_kernel.Storage.db_inv"]);
+        assert_eq!(rpc.theorems, ["ledger_kernel.Storage.db_inv", "ledger_kernel.Theorems.panic_free"]);
+        let pf = &r.theorems[1];
+        assert_eq!((pf.source, pf.file.as_deref()), (TheoremSource::Obligation, Some("proofs/Theorems.lean")));
         assert_eq!(rpc.assumptions, ["A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9", "A10"]);
         assert!(rpc.not_verified.iter().any(|n| n.contains("request decoding")));
     }
