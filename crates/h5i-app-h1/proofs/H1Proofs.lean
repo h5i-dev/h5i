@@ -769,4 +769,175 @@ theorem parse_head_spec (buf : Slice U8) (lim : Limits) :
   all_goals (try (exfalso; simp_all [fieldsView]; done))
   all_goals (try (simp_all [resultView, headView, framingView, fieldsView]; done))
 
+/-! ## Chunked decoding -/
+
+def csView (st : ChunkState) : Spec.CState := ⟨st.phase.val, st.size.val, st.digits.val, st.total.val⟩
+
+def coView : ChunkOut → Spec.COut
+  | .Nothing => .nothing
+  | .Data => .data
+  | .Done => .done
+  | .Reject s => .reject s.val
+
+@[step]
+theorem hex_value_spec (c : U8) : hex_value c ⦃ v => v.val = Spec.hexv c.val ⦄ := by
+  unfold hex_value Spec.hexv
+  step*
+  all_goals (simp only [UScalar.le_equiv, ge_iff_le] at *)
+  all_goals (split_ifs <;> scalar_tac)
+
+theorem ch_vals : CH_SIZE.val = 0 ∧ CH_SIZE_LF.val = 1 ∧ CH_DATA.val = 2 ∧ CH_DATA_CR.val = 3 ∧
+    CH_DATA_LF.val = 4 ∧ CH_LAST_CR.val = 5 ∧ CH_LAST_LF.val = 6 ∧ CH_END.val = 7 ∧
+    MAX_CHUNK_DIGITS.val = 8 := by
+  unfold CH_SIZE CH_SIZE_LF CH_DATA CH_DATA_CR CH_DATA_LF CH_LAST_CR CH_LAST_LF CH_END MAX_CHUNK_DIGITS
+  simp
+
+@[step]
+theorem chunk_size_spec (st : ChunkState) (b : U8) (mb : U32) :
+    chunk_size st b mb ⦃ r => (csView r.1, coView r.2) = Spec.sizeStep (csView st) b.val mb.val ⦄ := by
+  obtain ⟨h0, h1, h2, h3, h4, h5, h6, h7, h8⟩ := ch_vals
+  unfold chunk_size Spec.sizeStep
+  step*
+  all_goals (simp only [csView, UScalar.eq_equiv, UScalar.lt_equiv, UScalar.le_equiv, ge_iff_le, gt_iff_lt,
+    cr_val, h1, h8, UScalar.ofNatCore_val_eq] at *)
+  all_goals (try (rw [show (UScalar.cast UScalarTy.U64 mb).val = mb.val by simp] at *))
+  all_goals (split_ifs <;> first
+    | (simp [coView, bad_request_val, payload_too_large_val]; done)
+    | (simp [coView]; scalar_tac)
+    | (exfalso; scalar_tac))
+
+@[step]
+theorem expect_spec (st : ChunkState) (b want next : U8) (o : ChunkOut) :
+    expect st b want next o ⦃ r => (csView r.1, coView r.2) =
+      Spec.expectStep (csView st) b.val want.val next.val (coView o) ⦄ := by
+  unfold expect Spec.expectStep
+  step*
+  all_goals (simp only [bne_iff_ne, ne_eq, u8_eq_iff'] at *)
+  all_goals (split_ifs <;> first | (simp [coView, csView]; done) | (exfalso; scalar_tac))
+
+/-- `chunk_step` computes `Spec.chunkStep` for every state, byte and limit:
+it never panics, even in states no byte sequence reaches. -/
+@[step]
+theorem chunk_step_spec (st : ChunkState) (b : U8) (mb : U32) :
+    chunk_step st b mb ⦃ r => (csView r.1, coView r.2) = Spec.chunkStep (csView st) b.val mb.val ⦄ := by
+  obtain ⟨h0, h1, h2, h3, h4, h5, h6, h7, h8⟩ := ch_vals
+  unfold chunk_step chunk_size_lf chunk_data Spec.chunkStep
+  step*
+  all_goals (simp only [csView, UScalar.eq_equiv, UScalar.le_equiv, bne_iff_ne, ne_eq, u8_eq_iff', lf_val, cr_val,
+    h0, h1, h2, h3, h4, h5, h6, h7, UScalar.ofNatCore_val_eq] at *)
+  all_goals (try rw [← r_post])
+  all_goals (split_ifs <;> first
+    | (simp [coView, csView, bad_request_val, h0, h1, h2, h3, h4, h5, h6, h7]; done)
+    | (simp [coView, csView, Spec.expectStep, cr_val, lf_val, h0, h1, h2, h3, h4, h5, h6, h7]; done)
+    | (simp [coView, csView]; scalar_tac)
+    | (exfalso; scalar_tac)
+    | (simp_all [coView]; done))
+
+/-! ## Response heads: panic freedom -/
+
+theorem splice_step {α} (o : List α) (src : List α) (pos q : Nat) (hq : q < src.length)
+    (hlen : pos + src.length ≤ o.length) :
+    (o.take pos ++ src.take q ++ o.drop (pos + q)).set (pos + q) (src[q]'hq) =
+      o.take pos ++ src.take (q + 1) ++ o.drop (pos + (q + 1)) := by
+  have hl1 : (o.take pos ++ src.take q).length = pos + q := by
+    simp [List.length_take]; omega
+  rw [List.set_append_right _ _ (by omega), hl1, Nat.sub_self]
+  have hd : o.drop (pos + q) = o[pos + q]'(by omega) :: o.drop (pos + (q + 1)) := by
+    rw [List.drop_eq_getElem_cons (by omega)]; rfl
+  rw [hd, List.set_cons_zero, List.take_add_one, List.getElem?_eq_getElem hq]
+  simp only [Option.toList_some, List.append_assoc, List.singleton_append]
+
+theorem put_loop_spec (out : Slice U8) (pos : Usize) (src : Slice U8) (q : Usize) (L : List U8)
+    (hlen : pos.val + src.length ≤ out.length) (hq : q.val ≤ src.length)
+    (hL : out.val = L.take pos.val ++ src.val.take q.val ++ L.drop (pos.val + q.val))
+    (hLl : L.length = out.length) :
+    put_loop out pos src q ⦃ o => o.length = out.length ∧
+      o.val = L.take pos.val ++ src.val ++ L.drop (pos.val + src.length) ⦄ := by
+  unfold put_loop
+  apply loop.spec_decr_nat (measure := fun (x : Slice U8 × Usize) => src.length - x.2.val)
+    (inv := fun x => x.1.length = out.length ∧ x.2.val ≤ src.length ∧
+      x.1.val = L.take pos.val ++ src.val.take x.2.val ++ L.drop (pos.val + x.2.val))
+  · rintro ⟨o, j⟩ ⟨h1, h3, h4⟩
+    simp only at h1 h3 h4 ⊢
+    unfold put_loop.body
+    step*
+    · have hjs : j.val < src.val.length := by clear h4 hL; scalar_tac
+      have hpl : pos.val + src.val.length ≤ L.length := by
+        rw [hLl]; simp only [Slice.length] at hlen ⊢; exact hlen
+      refine ⟨by rw [s_post]; simp only [Slice.length, Slice.set_val_eq, List.length_set] at h1 ⊢; exact h1,
+        by clear h4 hL; scalar_tac, ?_, by clear h4 hL; scalar_tac⟩
+      rw [s_post, Slice.set_val_eq, h4, i1_post]
+      have : i2.val = pos.val + j.val := by clear h4 hL; scalar_tac
+      rw [this, q1_post]
+      exact splice_step L src.val pos.val j.val hjs hpl
+    · refine ⟨h1, ?_⟩
+      rw [h4, show j.val = src.length by clear h4 hL; scalar_tac, List.take_of_length_le (l := src.val) (by simp)]
+  · exact ⟨rfl, hq, hL⟩
+
+@[step]
+theorem put_spec (out : Slice U8) (pos : Usize) (src : Slice U8) :
+    put out pos src ⦃ r o => o.length = out.length ∧ match r with
+      | none => out.length < pos.val + src.length
+      | some p => p.val = pos.val + src.length ∧
+          o.val = out.val.take pos.val ++ src.val ++ out.val.drop (pos.val + src.length) ⦄ := by
+  unfold put
+  have hs := Slice.length_ineq src
+  have ho := Slice.length_ineq out
+  dsimp only
+  split
+  · simp only [WP.spec_ok, Slice.len_val, gt_iff_lt, UScalar.lt_equiv] at *
+    refine ⟨rfl, by omega⟩
+  · step
+    split
+    · simp only [WP.spec_ok, Slice.len_val, gt_iff_lt, UScalar.lt_equiv] at *
+      refine ⟨rfl, by omega⟩
+    · rename_i h1 h2
+      simp only [Slice.len_val, gt_iff_lt, UScalar.lt_equiv, not_lt] at *
+      step with put_loop_spec out pos src 0#usize out.val (by simp only [Slice.length] at *; omega)
+        (by simp) (by simp) rfl
+      step
+      simp only [Slice.len_val] at *
+      exact ⟨out1_post, by omega, out1_post1⟩
+
+@[step]
+theorem put1_spec (out : Slice U8) (pos : Usize) (b : U8) :
+    put1 out pos b ⦃ r o => o.length = out.length ∧ match r with
+      | none => out.length ≤ pos.val
+      | some p => p.val = pos.val + 1 ∧ o.val = out.val.set pos.val b ⦄ := by
+  unfold put1
+  step*
+  all_goals (simp_all; try scalar_tac)
+
+@[step]
+theorem put_dec_loop_spec (out : Slice U8) (n p : U32) (a : Usize) (started : Bool) :
+    put_dec_loop out n p a started ⦃ _ _ => True ⦄ := by
+  unfold put_dec_loop
+  apply loop.spec_decr_nat (measure := fun (x : Slice U8 × U32 × Usize × Bool) => x.2.1.val)
+    (inv := fun _ => True)
+  · rintro ⟨o, q, at', st⟩ -
+    unfold put_dec_loop.body
+    step*
+    all_goals (try (have := d_post.1; simp only [UScalar.ofNatCore_val_eq] at *; scalar_tac))
+    all_goals (try (simp only [UScalar.cast_val_eq]; scalar_tac))
+    all_goals (try simp)
+    all_goals scalar_tac
+  · trivial
+
+@[step]
+theorem put_reason_spec (out : Slice U8) (pos : Usize) (status : U16) :
+    put_reason out pos status ⦃ _ _ => True ⦄ := by
+  unfold put_reason
+  split <;> step*
+
+/-- `write_head` never panics, for every buffer (of any length), status,
+content type and body length. -/
+theorem write_head_total (out : Slice U8) (status : U16) (ct : Slice U8) (bl : U32) (close : Bool) :
+    write_head out status ct bl close ⦃ _ _ => True ⦄ := by
+  unfold write_head
+  have hR : Reads ct (fun k => (ct.val.getD k 0#u8).val) ct.length := by
+    refine ⟨le_refl _, fun k hk _ => ?_⟩
+    simp [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hk]
+  step*
+  all_goals (try (simp only [UScalar.ofNatCore_val_eq] at *; scalar_tac))
+
 end h5i_app_h1.Proofs

@@ -588,81 +588,73 @@ pub fn hex_value(c: u8) -> u64 {
 /// chunk extensions, no trailer fields, sizes summing to at most `max_body`.
 /// Loop-free; the state is four integers.
 pub fn chunk_step(st: ChunkState, b: u8, max_body: u32) -> (ChunkState, ChunkOut) {
-    let mut s = st;
     if st.phase == CH_SIZE {
-        let v = hex_value(b);
-        if v < 16 {
-            // `size < 16^digits`, so the second test only matters for a
-            // state no byte sequence reaches; it keeps `chunk_step` total.
-            if st.digits >= MAX_CHUNK_DIGITS || st.size > 268435455 {
-                return (st, ChunkOut::Reject(BAD_REQUEST));
-            }
-            s.size = st.size * 16 + v;
-            s.digits = st.digits + 1;
-            return (s, ChunkOut::Nothing);
-        }
-        if b == CR && st.digits > 0 {
-            let max = max_body as u64;
-            if st.total > max || st.size > max - st.total {
-                return (st, ChunkOut::Reject(PAYLOAD_TOO_LARGE));
-            }
-            s.total = st.total + st.size;
-            s.phase = CH_SIZE_LF;
-            return (s, ChunkOut::Nothing);
-        }
-        return (st, ChunkOut::Reject(BAD_REQUEST));
+        chunk_size(st, b, max_body)
+    } else if st.phase == CH_SIZE_LF {
+        chunk_size_lf(st, b)
+    } else if st.phase == CH_DATA {
+        chunk_data(st)
+    } else if st.phase == CH_DATA_CR {
+        expect(st, b, CR, CH_DATA_LF, ChunkOut::Nothing)
+    } else if st.phase == CH_DATA_LF {
+        let s = ChunkState { phase: st.phase, size: 0, digits: st.digits, total: st.total };
+        expect(s, b, LF, CH_SIZE, ChunkOut::Nothing)
+    } else if st.phase == CH_LAST_CR {
+        expect(st, b, CR, CH_LAST_LF, ChunkOut::Nothing)
+    } else if st.phase == CH_LAST_LF {
+        expect(st, b, LF, CH_END, ChunkOut::Done)
+    } else {
+        (st, ChunkOut::Reject(BAD_REQUEST))
     }
-    if st.phase == CH_SIZE_LF {
-        if b != LF {
+}
+
+/// A size digit, or the CR after the size.
+fn chunk_size(st: ChunkState, b: u8, max_body: u32) -> (ChunkState, ChunkOut) {
+    let v = hex_value(b);
+    if v < 16 {
+        // `size < 16^digits`, so the second test only matters for a state
+        // no byte sequence reaches; it keeps `chunk_step` total.
+        if st.digits >= MAX_CHUNK_DIGITS || st.size > 268435455 {
             return (st, ChunkOut::Reject(BAD_REQUEST));
         }
-        s.digits = 0;
-        if st.size == 0 {
-            s.phase = CH_LAST_CR;
-        } else {
-            s.phase = CH_DATA;
-        }
+        let s = ChunkState { phase: st.phase, size: st.size * 16 + v, digits: st.digits + 1, total: st.total };
         return (s, ChunkOut::Nothing);
     }
-    if st.phase == CH_DATA {
-        if st.size <= 1 {
-            s.size = 0;
-            s.phase = CH_DATA_CR;
-        } else {
-            s.size = st.size - 1;
+    if b == CR && st.digits > 0 {
+        let max = max_body as u64;
+        if st.total > max || st.size > max - st.total {
+            return (st, ChunkOut::Reject(PAYLOAD_TOO_LARGE));
         }
-        return (s, ChunkOut::Data);
-    }
-    if st.phase == CH_DATA_CR {
-        if b != CR {
-            return (st, ChunkOut::Reject(BAD_REQUEST));
-        }
-        s.phase = CH_DATA_LF;
+        let s = ChunkState { phase: CH_SIZE_LF, size: st.size, digits: st.digits, total: st.total + st.size };
         return (s, ChunkOut::Nothing);
-    }
-    if st.phase == CH_DATA_LF {
-        if b != LF {
-            return (st, ChunkOut::Reject(BAD_REQUEST));
-        }
-        s.phase = CH_SIZE;
-        s.size = 0;
-        return (s, ChunkOut::Nothing);
-    }
-    if st.phase == CH_LAST_CR {
-        if b != CR {
-            return (st, ChunkOut::Reject(BAD_REQUEST));
-        }
-        s.phase = CH_LAST_LF;
-        return (s, ChunkOut::Nothing);
-    }
-    if st.phase == CH_LAST_LF {
-        if b != LF {
-            return (st, ChunkOut::Reject(BAD_REQUEST));
-        }
-        s.phase = CH_END;
-        return (s, ChunkOut::Done);
     }
     (st, ChunkOut::Reject(BAD_REQUEST))
+}
+
+/// The LF after the size: data next, or the end for size 0.
+fn chunk_size_lf(st: ChunkState, b: u8) -> (ChunkState, ChunkOut) {
+    if b != LF {
+        return (st, ChunkOut::Reject(BAD_REQUEST));
+    }
+    let next = if st.size == 0 { CH_LAST_CR } else { CH_DATA };
+    (ChunkState { phase: next, size: st.size, digits: 0, total: st.total }, ChunkOut::Nothing)
+}
+
+/// A byte of chunk-data, whatever its value.
+fn chunk_data(st: ChunkState) -> (ChunkState, ChunkOut) {
+    if st.size <= 1 {
+        (ChunkState { phase: CH_DATA_CR, size: 0, digits: st.digits, total: st.total }, ChunkOut::Data)
+    } else {
+        (ChunkState { phase: st.phase, size: st.size - 1, digits: st.digits, total: st.total }, ChunkOut::Data)
+    }
+}
+
+/// Exactly `want`, then phase `next` with output `out`.
+fn expect(st: ChunkState, b: u8, want: u8, next: u8, out: ChunkOut) -> (ChunkState, ChunkOut) {
+    if b != want {
+        return (st, ChunkOut::Reject(BAD_REQUEST));
+    }
+    (ChunkState { phase: next, size: st.size, digits: st.digits, total: st.total }, out)
 }
 
 // ---------------------------------------------------------------------------

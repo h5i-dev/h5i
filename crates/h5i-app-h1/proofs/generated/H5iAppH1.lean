@@ -1193,96 +1193,105 @@ def hex_value (c : Std.U8) : Result Std.U64 := do
         else ok 16#u64
       else ok 16#u64
 
+/-- [h5i_app_h1::expect]:
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 653:0-658:1 -/
+def expect
+  (st : ChunkState) (b : Std.U8) (want : Std.U8) (next : Std.U8)
+  (out : ChunkOut) :
+  Result (ChunkState × ChunkOut)
+  := do
+  if b != want
+  then ok (st, ChunkOut.Reject BAD_REQUEST)
+  else ok ({ st with phase := next }, out)
+
+/-- [h5i_app_h1::chunk_data]:
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 644:0-650:1 -/
+def chunk_data (st : ChunkState) : Result (ChunkState × ChunkOut) := do
+  if st.size <= 1#u64
+  then ok ({ st with phase := CH_DATA_CR, size := 0#u64 }, ChunkOut.Data)
+  else let i ← st.size - 1#u64
+       ok ({ st with size := i }, ChunkOut.Data)
+
+/-- [h5i_app_h1::chunk_size_lf]:
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 635:0-641:1 -/
+def chunk_size_lf
+  (st : ChunkState) (b : Std.U8) : Result (ChunkState × ChunkOut) := do
+  if b != LF
+  then ok (st, ChunkOut.Reject BAD_REQUEST)
+  else
+    if st.size = 0#u64
+    then
+      ok ({ st with phase := CH_LAST_CR, digits := 0#u64 }, ChunkOut.Nothing)
+    else ok ({ st with phase := CH_DATA, digits := 0#u64 }, ChunkOut.Nothing)
+
+/-- [h5i_app_h1::chunk_size]:
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 612:0-632:1 -/
+def chunk_size
+  (st : ChunkState) (b : Std.U8) (max_body : Std.U32) :
+  Result (ChunkState × ChunkOut)
+  := do
+  let v ← hex_value b
+  if v < 16#u64
+  then
+    if st.digits >= MAX_CHUNK_DIGITS
+    then ok (st, ChunkOut.Reject BAD_REQUEST)
+    else
+      if st.size > 268435455#u64
+      then ok (st, ChunkOut.Reject BAD_REQUEST)
+      else
+        let i ← st.size * 16#u64
+        let i1 ← i + v
+        let i2 ← st.digits + 1#u64
+        ok ({ st with size := i1, digits := i2 }, ChunkOut.Nothing)
+  else
+    if b = CR
+    then
+      if st.digits > 0#u64
+      then
+        let max ← lift (UScalar.cast .U64 max_body)
+        if st.total > max
+        then ok (st, ChunkOut.Reject PAYLOAD_TOO_LARGE)
+        else
+          let i ← max - st.total
+          if st.size > i
+          then ok (st, ChunkOut.Reject PAYLOAD_TOO_LARGE)
+          else
+            let i1 ← st.total + st.size
+            ok ({ st with phase := CH_SIZE_LF, total := i1 }, ChunkOut.Nothing)
+      else ok (st, ChunkOut.Reject BAD_REQUEST)
+    else ok (st, ChunkOut.Reject BAD_REQUEST)
+
 /-- [h5i_app_h1::chunk_step]:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 590:0-666:1
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 590:0-609:1
     Visibility: public -/
 def chunk_step
   (st : ChunkState) (b : Std.U8) (max_body : Std.U32) :
   Result (ChunkState × ChunkOut)
   := do
   if st.phase = CH_SIZE
-  then
-    let v ← hex_value b
-    if v < 16#u64
-    then
-      if st.digits >= MAX_CHUNK_DIGITS
-      then ok (st, ChunkOut.Reject BAD_REQUEST)
-      else
-        if st.size > 268435455#u64
-        then ok (st, ChunkOut.Reject BAD_REQUEST)
-        else
-          let i ← st.size * 16#u64
-          let i1 ← i + v
-          let i2 ← st.digits + 1#u64
-          ok ({ st with size := i1, digits := i2 }, ChunkOut.Nothing)
-    else
-      if b = CR
-      then
-        if st.digits > 0#u64
-        then
-          let max ← lift (UScalar.cast .U64 max_body)
-          if st.total > max
-          then ok (st, ChunkOut.Reject PAYLOAD_TOO_LARGE)
-          else
-            let i ← max - st.total
-            if st.size > i
-            then ok (st, ChunkOut.Reject PAYLOAD_TOO_LARGE)
-            else
-              let i1 ← st.total + st.size
-              ok ({ st with phase := CH_SIZE_LF, total := i1 },
-                ChunkOut.Nothing)
-        else ok (st, ChunkOut.Reject BAD_REQUEST)
-      else ok (st, ChunkOut.Reject BAD_REQUEST)
+  then chunk_size st b max_body
   else
     if st.phase = CH_SIZE_LF
-    then
-      if b != LF
-      then ok (st, ChunkOut.Reject BAD_REQUEST)
-      else
-        if st.size = 0#u64
-        then
-          ok ({ st with phase := CH_LAST_CR, digits := 0#u64 },
-            ChunkOut.Nothing)
-        else
-          ok ({ st with phase := CH_DATA, digits := 0#u64 }, ChunkOut.Nothing)
+    then chunk_size_lf st b
     else
       if st.phase = CH_DATA
-      then
-        if st.size <= 1#u64
-        then ok ({ st with phase := CH_DATA_CR, size := 0#u64 }, ChunkOut.Data)
-        else
-          let i ← st.size - 1#u64
-          ok ({ st with size := i }, ChunkOut.Data)
+      then chunk_data st
       else
         if st.phase = CH_DATA_CR
-        then
-          if b != CR
-          then ok (st, ChunkOut.Reject BAD_REQUEST)
-          else ok ({ st with phase := CH_DATA_LF }, ChunkOut.Nothing)
+        then expect st b CR CH_DATA_LF ChunkOut.Nothing
         else
           if st.phase = CH_DATA_LF
-          then
-            if b != LF
-            then ok (st, ChunkOut.Reject BAD_REQUEST)
-            else
-              ok ({ st with phase := CH_SIZE, size := 0#u64 },
-                ChunkOut.Nothing)
+          then expect { st with size := 0#u64 } b LF CH_SIZE ChunkOut.Nothing
           else
             if st.phase = CH_LAST_CR
-            then
-              if b != CR
-              then ok (st, ChunkOut.Reject BAD_REQUEST)
-              else ok ({ st with phase := CH_LAST_LF }, ChunkOut.Nothing)
+            then expect st b CR CH_LAST_LF ChunkOut.Nothing
             else
               if st.phase = CH_LAST_LF
-              then
-                if b != LF
-                then ok (st, ChunkOut.Reject BAD_REQUEST)
-                else ok ({ st with phase := CH_END }, ChunkOut.Done)
+              then expect st b LF CH_END ChunkOut.Done
               else ok (st, ChunkOut.Reject BAD_REQUEST)
 
 /-- [h5i_app_h1::put]: loop body 0:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 677:4-680:5 -/
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 669:4-672:5 -/
 @[rust_loop_body]
 def put_loop.body
   (pos : Std.Usize) (src : Slice Std.U8) (out : Slice Std.U8) (q : Std.Usize) :
@@ -1299,7 +1308,7 @@ def put_loop.body
   else ok (done out)
 
 /-- [h5i_app_h1::put]: loop 0:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 677:4-680:5 -/
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 669:4-672:5 -/
 @[rust_loop]
 def put_loop
   (out : Slice Std.U8) (pos : Std.Usize) (src : Slice Std.U8) (q : Std.Usize) :
@@ -1310,7 +1319,7 @@ def put_loop
     (out, q)
 
 /-- [h5i_app_h1::put]:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 672:0-682:1 -/
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 664:0-674:1 -/
 def put
   (out : Slice Std.U8) (pos : Std.Usize) (src : Slice Std.U8) :
   Result ((Option Std.Usize) × (Slice Std.U8))
@@ -1331,7 +1340,7 @@ def put
       ok (some i5, out1)
 
 /-- [h5i_app_h1::put1]:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 685:0-691:1 -/
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 677:0-683:1 -/
 def put1
   (out : Slice Std.U8) (pos : Std.Usize) (b : Std.U8) :
   Result ((Option Std.Usize) × (Slice Std.U8))
@@ -1345,7 +1354,7 @@ def put1
     ok (some i1, out1)
 
 /-- [h5i_app_h1::put_dec]: loop body 0:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 698:4-710:1 -/
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 690:4-702:1 -/
 @[rust_loop_body]
 def put_dec_loop.body
   (n : Std.U32) (out : Slice Std.U8) (p : Std.U32) («at» : Std.Usize)
@@ -1391,7 +1400,7 @@ def put_dec_loop.body
   else ok (done (some «at», out))
 
 /-- [h5i_app_h1::put_dec]: loop 0:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 698:4-710:1 -/
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 690:4-702:1 -/
 @[rust_loop]
 def put_dec_loop
   (out : Slice Std.U8) (n : Std.U32) (p : Std.U32) («at» : Std.Usize)
@@ -1403,7 +1412,7 @@ def put_dec_loop
     (out, p, «at», started)
 
 /-- [h5i_app_h1::put_dec]:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 694:0-710:1 -/
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 686:0-702:1 -/
 @[reducible]
 def put_dec
   (out : Slice Std.U8) (pos : Std.Usize) (n : Std.U32) :
@@ -1412,7 +1421,7 @@ def put_dec
   put_dec_loop out n 1000000000#u32 pos false
 
 /-- [h5i_app_h1::put_reason]:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 714:0-736:1 -/
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 706:0-728:1 -/
 def put_reason
   (out : Slice Std.U8) (pos : Std.Usize) (status : Std.U16) :
   Result ((Option Std.Usize) × (Slice Std.U8))
@@ -1562,7 +1571,7 @@ def put_reason
   | _ => ok (some pos, out)
 
 /-- [h5i_app_h1::write_head]:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 752:0-820:1
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 744:0-812:1
     Visibility: public -/
 def write_head
   (out : Slice Std.U8) (status : Std.U16) (content_type : Slice Std.U8)

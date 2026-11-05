@@ -352,4 +352,60 @@ def parseHead (L : List Nat) (maxHead maxBody : Nat) : HeadR :=
         else .done ⟨(ms, me), (ts, te), minor, f.headers, len,
           if f.te then .chunked else if f.hasCl then .length f.cl else .empty⟩
 
+/-! ## Chunked bodies -/
+
+/-- The decoder's state: phase, chunk size (or bytes left), size digits, total. -/
+structure CState where
+  phase : Nat
+  size : Nat
+  digits : Nat
+  total : Nat
+  deriving DecidableEq, Repr
+
+def cStart : CState := ⟨0, 0, 0, 0⟩
+
+inductive COut where
+  | nothing
+  | data
+  | done
+  | reject (status : Nat)
+  deriving DecidableEq, Repr
+
+/-- A hex digit's value, either case, or 16. -/
+def hexv (c : Nat) : Nat :=
+  if 48 ≤ c ∧ c ≤ 57 then c - 48
+  else if 97 ≤ c ∧ c ≤ 102 then c - 87
+  else if 65 ≤ c ∧ c ≤ 70 then c - 55
+  else 16
+
+/-- Phase 0: a size digit, or the CR after at least one. -/
+def sizeStep (st : CState) (b maxBody : Nat) : CState × COut :=
+  if hexv b < 16 then
+    if 8 ≤ st.digits ∨ 268435455 < st.size then (st, .reject 400)
+    else ({ st with size := st.size * 16 + hexv b, digits := st.digits + 1 }, .nothing)
+  else if b = 13 ∧ 0 < st.digits then
+    if maxBody < st.total ∨ maxBody - st.total < st.size then (st, .reject 413)
+    else ({ st with phase := 1, total := st.total + st.size }, .nothing)
+  else (st, .reject 400)
+
+/-- Exactly byte `want`, then phase `next` with output `o`. -/
+def expectStep (st : CState) (b want next : Nat) (o : COut) : CState × COut :=
+  if b ≠ want then (st, .reject 400) else ({ st with phase := next }, o)
+
+/-- One byte of `chunked`: `1*8HEXDIG CRLF`, data, CRLF, ..., `0 CRLF CRLF`.
+Phases: 0 size, 1 size LF, 2 data, 3 data CR, 4 data LF, 5 last CR, 6 last LF, 7 end. -/
+def chunkStep (st : CState) (b maxBody : Nat) : CState × COut :=
+  if st.phase = 0 then sizeStep st b maxBody
+  else if st.phase = 1 then
+    if b ≠ 10 then (st, .reject 400)
+    else ({ st with phase := if st.size = 0 then 5 else 2, digits := 0 }, .nothing)
+  else if st.phase = 2 then
+    if st.size ≤ 1 then ({ st with phase := 3, size := 0 }, .data)
+    else ({ st with size := st.size - 1 }, .data)
+  else if st.phase = 3 then expectStep st b 13 4 .nothing
+  else if st.phase = 4 then expectStep { st with size := 0 } b 10 0 .nothing
+  else if st.phase = 5 then expectStep st b 13 6 .nothing
+  else if st.phase = 6 then expectStep st b 10 7 .done
+  else (st, .reject 400)
+
 end h5i_app_h1.Spec
