@@ -105,6 +105,9 @@ fn check_recorded(
         crate::report::step(record, "obligation_library", out, |log| util::run(&mut build, log))?;
     }
     let mut problems = scan(&proofs)?;
+    if !is_framework_project(p) {
+        problems.extend(scan_extensions(&proofs)?);
+    }
     problems.extend(crate::deps::framework_problems(p)?);
     let (mut built, unbuilt) = hand_written_modules(&proofs, &p.manifest.check.targets)?;
     record.run.unbuilt_modules = unbuilt.clone();
@@ -321,6 +324,170 @@ pub fn scan(proofs: &Path) -> Result<Vec<String>> {
         }
     }
     Ok(bad)
+}
+
+/// `text` with comments and string literals blanked out, line breaks kept,
+/// so a line number in the result is the line number in `text`.
+pub fn blank_comments_and_strings(text: &str) -> String {
+    let b: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let blank = |c: char| if c == '\n' { '\n' } else { ' ' };
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == '-' && b.get(i + 1) == Some(&'-') {
+            while i < b.len() && b[i] != '\n' {
+                out.push(' ');
+                i += 1;
+            }
+        } else if b[i] == '/' && b.get(i + 1) == Some(&'-') {
+            // Block comments nest.
+            let mut depth = 0;
+            while i < b.len() {
+                if b[i] == '/' && b.get(i + 1) == Some(&'-') {
+                    depth += 1;
+                    out.push_str("  ");
+                    i += 2;
+                } else if b[i] == '-' && b.get(i + 1) == Some(&'/') {
+                    depth -= 1;
+                    out.push_str("  ");
+                    i += 2;
+                    if depth == 0 {
+                        break;
+                    }
+                } else {
+                    out.push(blank(b[i]));
+                    i += 1;
+                }
+            }
+        } else if b[i] == '"' {
+            out.push('"');
+            i += 1;
+            while i < b.len() && b[i] != '"' {
+                if b[i] == '\\' && i + 1 < b.len() {
+                    out.push(' ');
+                    i += 1;
+                }
+                out.push(blank(b[i]));
+                i += 1;
+            }
+            if i < b.len() {
+                out.push('"');
+                i += 1;
+            }
+        } else {
+            out.push(b[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
+/// Whether `p` is one of the framework's own crates (`crates/h5i-app-*`
+/// next to this CLI), whose Lean libraries define tactics, attributes and
+/// commands (`H5iAppLib`, `AuthzSpecs`). Every other project's hand-written
+/// modules go through [`scan_extensions`].
+pub fn is_framework_project(p: &Project) -> bool {
+    let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let (Ok(crates), Ok(root)) = (crates.canonicalize(), p.root.canonicalize()) else { return false };
+    root.parent() == Some(crates.as_path()) && root.file_name().is_some_and(|n| n.to_string_lossy().starts_with("h5i-app-"))
+}
+
+/// Constructs a hand-written module may not use, because they run code at
+/// import or change how later Lean text elaborates (`check`'s gate program
+/// and the obligation statements included): `initialize`, `implemented_by`,
+/// `extern`, `unsafe`, term syntax (`notation`, `infix`, `prefix`, ...), and
+/// `macro_rules`, `syntax`, `macro`, `elab`, `elab_rules` outside the `tactic`
+/// category. Tactic macros only build proofs the kernel checks, and are
+/// allowed. Comments and strings are ignored.
+pub fn scan_extensions(proofs: &Path) -> Result<Vec<String>> {
+    let mut files = Vec::new();
+    lean_files(proofs, &mut files);
+    files.sort();
+    let mut bad = Vec::new();
+    for f in files {
+        if is_generated(proofs, &f) {
+            continue;
+        }
+        let rel = f.strip_prefix(proofs).unwrap_or(&f).display().to_string();
+        bad.extend(extension_problems(&rel, &std::fs::read_to_string(&f)?));
+    }
+    Ok(bad)
+}
+
+/// [`scan_extensions`] on one file's text; `rel` names it in messages.
+pub fn extension_problems(rel: &str, text: &str) -> Vec<String> {
+    const ANYWHERE: [&str; 5] = ["initialize", "builtin_initialize", "implemented_by", "extern", "unsafe"];
+    const TERM_SYNTAX: [&str; 8] = ["notation", "notation3", "infix", "infixl", "infixr", "prefix", "postfix", "binder_predicate"];
+    const MACROS: [&str; 5] = ["macro_rules", "syntax", "macro", "elab", "elab_rules"];
+    let code = blank_comments_and_strings(text);
+    let lines: Vec<&str> = code.lines().collect();
+    let mut bad = Vec::new();
+    for (i, line) in lines.iter().enumerate() {
+        let n = i + 1;
+        let mut words = line.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '\'')).filter(|w| !w.is_empty());
+        if let Some(w) = words.find(|w| ANYWHERE.contains(w)) {
+            bad.push(format!("{rel}:{n}: `{w}` is not allowed in a hand-written module (it runs code or replaces it): {}", line.trim()));
+            continue;
+        }
+        // A command starts in column 0; its keyword comes after attributes
+        // and modifiers.
+        if !line.starts_with(|c: char| !c.is_whitespace()) {
+            continue;
+        }
+        let mut rest = line.trim_start();
+        // `open Lean in macro_rules …`, `set_option … in notation …`.
+        while (rest.starts_with("open ") || rest.starts_with("set_option ")) && rest.contains(" in ") {
+            rest = rest.split_once(" in ").map_or("", |(_, r)| r).trim_start();
+        }
+        while rest.starts_with("@[") {
+            match rest.find(']') {
+                Some(e) => rest = rest[e + 1..].trim_start(),
+                None => break,
+            }
+        }
+        let mut cw = rest.split_whitespace();
+        let mut kw = cw.next().unwrap_or("");
+        while matches!(kw, "local" | "scoped" | "private" | "protected") {
+            kw = cw.next().unwrap_or("");
+        }
+        // `macro:max`, `syntax:arg`, `elab (name := x)`.
+        let kw = kw.split([':', '(']).next().unwrap_or("");
+        if TERM_SYNTAX.contains(&kw) {
+            bad.push(format!(
+                "{rel}:{n}: `{kw}` is not allowed in a hand-written module: term syntax changes how later Lean, the \
+                 obligation statements included, elaborates"
+            ));
+            continue;
+        }
+        if !MACROS.contains(&kw) {
+            continue;
+        }
+        // The whole command: up to the next line starting in column 0.
+        let mut cmd = rest.to_string();
+        for l in lines.iter().skip(i + 1) {
+            if l.starts_with(|c: char| !c.is_whitespace()) {
+                break;
+            }
+            cmd.push('\n');
+            cmd.push_str(l);
+        }
+        let tactic = if kw == "macro_rules" {
+            // Every quotation, pattern and result, is a tactic one.
+            let quotes: Vec<&str> = cmd.split("`(").skip(1).collect();
+            !quotes.is_empty() && quotes.iter().all(|q| q.starts_with("tactic|"))
+        } else {
+            // `macro "run" : tactic => …`, `syntax "x" : tactic`, `elab_rules : tactic`.
+            let head = cmd.split("=>").next().unwrap_or(&cmd);
+            head.rsplit(':').next().is_some_and(|c| c.split_whitespace().next() == Some("tactic"))
+        };
+        if !tactic {
+            bad.push(format!(
+                "{rel}:{n}: `{kw}` outside the `tactic` category is not allowed in a hand-written module: it changes \
+                 how later Lean, the obligation statements included, elaborates (tactic macros are allowed)"
+            ));
+        }
+    }
+    bad
 }
 
 /// The hand-written modules, split into those this `lake build` built and
@@ -1012,6 +1179,69 @@ mod tests {
         assert_eq!(got["other_fn"], "mismatch", "the same property of another function");
         assert_eq!(got["hole"], "ok", "the app's part resolves to what the theorem chose");
         assert_eq!(got["missing"], "missing");
+    }
+
+    #[test]
+    fn hand_written_modules_may_not_change_elaboration_or_run_code() {
+        let rejected = [
+            ("initialize do\n  IO.println \"H5I-GATE done 0 0\"\n", "initialize"),
+            ("builtin_initialize foo : IO.Ref Nat ← IO.mkRef 0\n", "builtin_initialize"),
+            ("@[implemented_by g] def f : Nat := 0\n", "implemented_by"),
+            ("@[extern \"c_f\"] opaque f : Nat\n", "extern"),
+            ("unsafe def f : Nat := 0\n", "unsafe"),
+            ("open Lean in\nmacro_rules\n  | `(H5iAppLib.Obligation.PanicFree $_f) => `(True)\n", "macro_rules"),
+            ("open Lean in macro_rules | `(Foo $x) => `(True)\n", "macro_rules"),
+            ("notation \"PF\" => True\n", "notation"),
+            ("local notation \"PF\" => True\n", "notation"),
+            ("scoped infixl:65 \" +++ \" => Nat.add\n", "infixl"),
+            ("prefix:max \"√\" => Nat.sqrt\n", "prefix"),
+            ("postfix:max \"!\" => Nat.succ\n", "postfix"),
+            ("syntax \"pf\" : term\n", "syntax"),
+            ("macro \"pf\" : term => `(True)\n", "macro"),
+            ("elab \"pf\" : term => return Lean.mkConst ``True\n", "elab"),
+            ("elab_rules : command\n  | `(pf) => pure ()\n", "elab_rules"),
+            ("@[simp] macro:max \"pf\" : term => `(True)\n", "macro"),
+        ];
+        for (src, what) in rejected {
+            let bad = extension_problems("A.lean", src);
+            assert!(bad.len() == 1 && bad[0].contains(&format!("`{what}`")) && bad[0].starts_with("A.lean:"), "{src}: {bad:?}");
+        }
+        // Tactic macros, as the examples and h5i-app-pgsql use them, and the
+        // constructs in comments or strings, are fine.
+        let allowed = [
+            "macro \"run\" : tactic => `(tactic| (\n    simp only [x]\n    step*))\n",
+            "elab \"bpush\" : tactic => do\n  pure ()\n",
+            "macro \"emit\" x:term : tactic => `(tactic| exact $x)\n",
+            "syntax \"mytac\" : tactic\nmacro_rules\n  | `(tactic| mytac) => `(tactic| simp)\n",
+            "elab_rules : tactic\n  | `(tactic| mytac) => pure ()\n",
+            "-- initialize, notation, unsafe in a comment\n/- macro_rules | `(x) => `(True)\n  /- nested -/ -/\ntheorem t : True := trivial\n",
+            "def s : String := \"initialize notation unsafe extern\"\n",
+            "theorem select_sound' : True := trivial -- unsafe\n",
+        ];
+        for src in allowed {
+            assert_eq!(extension_problems("A.lean", src), Vec::<String>::new(), "{src}");
+        }
+        // Line numbers survive the blanking of a multi-line comment.
+        let bad = extension_problems("B.lean", "/- a\nb\n-/\n\nnotation \"x\" => True\n");
+        assert!(bad[0].starts_with("B.lean:5:"), "{bad:?}");
+    }
+
+    #[test]
+    fn the_examples_hand_written_proofs_pass_the_extension_scan() {
+        let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/app");
+        for p in crate::manifest::Project::discover(&examples).unwrap() {
+            assert!(!is_framework_project(&p), "{}", p.display());
+            assert_eq!(scan_extensions(&p.proofs()).unwrap(), Vec::<String>::new(), "{}", p.display());
+        }
+        // h5i-app-pgsql is a framework project, but its tactic macros are
+        // exactly what the rule allows.
+        let pgsql = Path::new(env!("CARGO_MANIFEST_DIR")).join("../h5i-app-pgsql/proofs");
+        for f in ["Render.lean", "Sound.lean"] {
+            let text = std::fs::read_to_string(pgsql.join(f)).unwrap();
+            assert_eq!(extension_problems(f, &text), Vec::<String>::new());
+        }
+        let core = Path::new(env!("CARGO_MANIFEST_DIR")).join("../h5i-app-core/h5i-app.toml");
+        assert!(is_framework_project(&crate::manifest::Project::load(&core).unwrap()));
     }
 
     #[test]
