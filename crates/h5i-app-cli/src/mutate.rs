@@ -483,7 +483,9 @@ fn principal_mutant(p: &Project, files: &[PathBuf]) -> Result<Option<Mutant>> {
             };
             let finder = Finder { src: &src, lines: line_starts(&src), func: String::new(), found: Vec::new() };
             let Some(at) = finder.offset(func.block.brace_token.span.open().end()) else { continue };
-            let rel = file.strip_prefix(&p.root).unwrap_or(file).to_path_buf();
+            // `p.root` is canonical (on macOS the temp dir `/var` is `/private/var`).
+            let canon = file.canonicalize().unwrap_or_else(|_| file.clone());
+            let rel = canon.strip_prefix(&p.root).unwrap_or(file).to_path_buf();
             return Ok(Some(Mutant {
                 name: PRINCIPAL_MUTANT.into(),
                 what: Some(format!("{what} (linked: the kernel's `{f}`, its `{tenant}` shadowed by 0)")),
