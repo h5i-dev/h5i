@@ -31,6 +31,7 @@ pub mod lint;
 pub mod manifest;
 pub mod mutate;
 pub mod new;
+pub mod obligations;
 pub mod packages;
 pub mod pins;
 pub mod report;
@@ -186,6 +187,13 @@ pub struct MutateArgs {
     /// forced `if` conditions.
     #[arg(long)]
     pub auto: bool,
+    /// Also generate security mutants: a `Policy` conjunct dropped,
+    /// `visible`/`stored` made `true`, a comparison with the actor made
+    /// `true`, the guard removed or weakened, the tenant fixed; for a policy
+    /// from `schema!`, the same in its generator. Each line says which proofs
+    /// broke.
+    #[arg(long)]
+    pub security: bool,
     /// With --auto: at most this many generated mutants per project.
     #[arg(long)]
     pub limit: Option<usize>,
@@ -300,6 +308,11 @@ pub fn mutate_project(p: &Project, args: &MutateArgs) -> Result<()> {
         }
         mutants.extend(g);
     }
+    if args.security {
+        let mut g = mutate::security(p)?;
+        g.retain(&wanted);
+        mutants.extend(g);
+    }
     if args.list {
         for m in &mutants {
             match &m.what {
@@ -310,7 +323,7 @@ pub fn mutate_project(p: &Project, args: &MutateArgs) -> Result<()> {
         return Ok(());
     }
     if mutants.is_empty() {
-        bail!("{}: no mutants. Add [[mutant]] entries to h5i-app.toml, or pass --auto", p.display());
+        bail!("{}: no mutants. Add [[mutant]] entries to h5i-app.toml, or pass --auto or --security", p.display());
     }
     let opts = mutate::Options { jobs: args.jobs, keep: args.keep, baseline: !args.no_baseline };
     summarize(&mutate::run(p, mutants, &opts)?)

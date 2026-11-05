@@ -1078,3 +1078,242 @@ pub fn check(path: &str, text: &str) {
     let old = std::fs::read_to_string(path).unwrap_or_default();
     assert!(old == text, "{path} is stale; rerun with H5I_APP_BLESS=1");
 }
+
+/// A `policy` block of `schema!`, as names (`crate::policy`).
+pub struct PolicyDecl<'a> {
+    pub krate: &'a str,
+    pub snapshot: &'a str,
+    pub principal: &'a str,
+    /// The principal's user field.
+    pub user: &'a str,
+    pub write: &'a str,
+    pub row: &'a str,
+    /// `admin <table field>.<column>`.
+    pub admin: Option<(&'a str, &'a str)>,
+    pub tables: Vec<PolicyTable<'a>>,
+}
+
+/// One `table` of a `policy` block.
+pub struct PolicyTable<'a> {
+    pub row_type: &'a str,
+    /// The snapshot field holding the rows.
+    pub field: &'a str,
+    pub key: &'a str,
+    /// The key's Rust type (`std::any::type_name`).
+    pub key_type: &'a str,
+    pub put: &'a str,
+    pub del: Option<&'a str>,
+    /// The `Row` variant.
+    pub variant: &'a str,
+    pub owner: Option<&'a str>,
+    pub write: Vec<&'a str>,
+    pub visible: Vec<&'a str>,
+}
+
+/// `PolicySpec`: the policy block's meaning over lists, written from the
+/// block alone (not from the Rust `crate::policy` generates), and the theorems
+/// that the extracted `policy::permits`, `visible` and `stored` compute it.
+pub fn render_policy(p: &PolicyDecl) -> String {
+    let k = p.krate;
+    let (snap, prin, uf) = (p.snapshot, p.principal, p.user);
+    let mut s = String::new();
+    let _ = writeln!(
+        s,
+        "
+/-! # The policy, from `schema!`'s `policy` block
+
+`PolicySpec` states what each write and row rule of the block means, over the
+snapshot's lists. It is rendered from the block itself, not from the Rust the
+block generates; the theorems below prove the extracted `policy::permits`,
+`policy::visible` and `policy::stored` compute exactly it. -/
+
+namespace {k}.PolicySpec
+open {k}.Schema
+
+-- The specs of the extracted `==` the `stored` checks use (Authz.lean's
+-- `h5i_derive_all` skips what is derived here).
+h5i_derive_all
+
+/-- `first`: a table is empty. -/
+@[simp] theorem vec_len_zero {{α : Type}} (v : alloc.vec.Vec α) : (alloc.vec.Vec.len v = 0#usize) ↔ v.val = [] := by
+  constructor
+  · intro h
+    have := congrArg (fun u : Usize => u.val) h
+    simp [alloc.vec.Vec.len] at this
+    exact this
+  · intro h
+    apply UScalar.eq_of_val_eq
+    simp [alloc.vec.Vec.len, h]
+"
+    );
+    let any = |atoms: Vec<String>| if atoms.len() == 1 { atoms[0].clone() } else { atoms.iter().map(|a| format!("({a})")).collect::<Vec<_>>().join(" ∨ ") };
+    for t in &p.tables {
+        let (ty, f, key) = (t.row_type, t.field, t.key);
+        let kt = lean_ty(&col(t.key_type));
+        let _ = writeln!(
+            s,
+            "/-- The `{f}` row stored under key `k`, if any. -/
+def {f}.find (v : List {ty}) (k : {kt}) : Option {ty} := v.find? (fun y => y.{key} = k)
+"
+        );
+    }
+    if let Some((af, col_name)) = p.admin {
+        let _ = writeln!(
+            s,
+            "/-- `admin {af}.{col_name}`: the principal's own `{af}` row has `{col_name}` set. -/
+def IsAdmin (s : {snap}) (a : {prin}) : Prop := ∃ r, {af}.find s.{af}.val a.{uf} = some r ∧ r.{col_name} = true
+"
+        );
+    }
+    for t in &p.tables {
+        let (ty, f, key) = (t.row_type, t.field, t.key);
+        let ow = |x: &str| t.owner.map(|o| format!("{x}.{o}")).unwrap_or_else(|| "?".into());
+        let create = any(t.write.iter().map(|a| match *a {
+            "owner" => format!("{} = a.{uf}", ow("x")),
+            "admin" => "IsAdmin s a".to_string(),
+            "first" => format!("s.{f}.val = []"),
+            other => panic!("policy: unknown write atom `{other}` (owner, admin, first)"),
+        }).collect());
+        let modify = any(t.write.iter().map(|a| match *a {
+            "owner" => format!("{} = a.{uf}", ow("old")),
+            "admin" => "IsAdmin s a".to_string(),
+            _ => "False".to_string(),
+        }).collect());
+        let keep = match t.owner {
+            Some(o) => format!("x.{o} = old.{o} ∧ "),
+            None => String::new(),
+        };
+        let visible = any(t.visible.iter().map(|a| match *a {
+            "all" => "True".to_string(),
+            "owner" => format!("{} = a.{uf}", ow("x")),
+            "admin" => "IsAdmin s a".to_string(),
+            c => format!("x.{c} = true"),
+        }).collect());
+        let _ = writeln!(
+            s,
+            "/-- `{f}`: a new row, by `write [{w}]`. -/
+def {f}.Create (a : {prin}) (s : {snap}) (x : {ty}) : Prop := {create}
+
+/-- `{f}`: replacing or deleting the stored row `old`, by `write [{w}]`. -/
+def {f}.Modify (a : {prin}) (s : {snap}) (old : {ty}) : Prop := {modify}
+
+/-- A put of `x`: a creation, or a replacement that keeps the owner. -/
+def {f}.Put (a : {prin}) (s : {snap}) (x : {ty}) : Prop :=
+  match {f}.find s.{f}.val x.{key} with
+  | none => {f}.Create a s x
+  | some old => {keep}{f}.Modify a s old
+
+/-- A delete of the row stored under the key, `found`. -/
+def {f}.Del (a : {prin}) (s : {snap}) (found : Option {ty}) : Prop :=
+  match found with
+  | none => False
+  | some old => {f}.Modify a s old
+
+/-- `visible [{v}]`. -/
+def {f}.Visible (a : {prin}) (s : {snap}) (x : {ty}) : Prop := {visible}
+
+/-- Stored under its key, exactly as given. -/
+def {f}.Stored (s : {snap}) (x : {ty}) : Prop := {f}.find s.{f}.val x.{key} = some x
+",
+            w = t.write.join(", "),
+            v = t.visible.join(", "),
+        );
+    }
+    let _ = writeln!(s, "/-- Which writes the policy permits. -/\ndef Permits (a : {prin}) (s : {snap}) : {w} → Prop", w = p.write);
+    for t in &p.tables {
+        let _ = writeln!(s, "  | .{} x => {}.Put a s x", t.put, t.field);
+        if let Some(d) = t.del {
+            let _ = writeln!(s, "  | .{d} k => {f}.Del a s ({f}.find s.{f}.val k)", f = t.field);
+        }
+    }
+    let _ = writeln!(s, "\n/-- Which rows the policy lets the principal see. -/\ndef Visible (a : {prin}) (s : {snap}) : {r} → Prop", r = p.row);
+    for t in &p.tables {
+        let _ = writeln!(s, "  | .{} x => {}.Visible a s x", t.variant, t.field);
+    }
+    let _ = writeln!(s, "\n/-- Rows stored exactly as given. -/\ndef Stored (s : {snap}) : {r} → Prop", r = p.row);
+    for t in &p.tables {
+        let _ = writeln!(s, "  | .{} x => {}.Stored s x", t.variant, t.field);
+    }
+    let _ = writeln!(s, "\n/-! ## The extracted policy computes it -/\n");
+    for t in &p.tables {
+        let (ty, f, key) = (t.row_type, t.field, t.key);
+        let kt = lean_ty(&col(t.key_type));
+        let _ = writeln!(
+            s,
+            "@[step] theorem {f}.find_spec (v : alloc.vec.Vec {ty}) (k : {kt}) :
+    {k}.policy.{f}.find v k ⦃ o => o = {f}.find v.val k ⦄ := by
+  unfold {k}.policy.{f}.find {k}.policy.{f}.find_loop
+  apply WP.spec_mono (loop_search v.val (fun y => decide (y.{key} = k)) (fun o : Option {ty} => o)
+    (fun _ y => some y) none _ ?_ 0#usize (by simp))
+  · intro r hr; rw [hr, searchFrom_find]; simp [{f}.find]
+  · intro j hj; unfold {k}.policy.{f}.find_loop.body; h5i_step
+"
+        );
+    }
+    if let Some((af, _)) = p.admin {
+        let _ = writeln!(
+            s,
+            "@[step] theorem is_admin_spec (s : {snap}) (a : {prin}) :
+    {k}.policy.is_admin s a ⦃ b => (b = true ↔ IsAdmin s a) ⦄ := by
+  unfold {k}.policy.is_admin
+  rcases h : {af}.find s.{af}.val a.{uf} with _ | r <;> h5i_steps <;> simp_all [IsAdmin]
+
+"
+        );
+    }
+    let defs = |f: &str| format!("{f}.Put, {f}.Create, {f}.Modify, {f}.Del, {f}.Visible, {f}.Stored");
+    for t in &p.tables {
+        let (ty, f, key) = (t.row_type, t.field, t.key);
+        let d = defs(f);
+        let _ = writeln!(
+            s,
+            "@[step] theorem {f}.put_spec (a : {prin}) (s : {snap}) (x : {ty}) :
+    {k}.policy.{f}.put a s x ⦃ b => (b = true ↔ {f}.Put a s x) ⦄ := by
+  unfold {k}.policy.{f}.put
+  rcases h : {f}.find s.{f}.val x.{key} with _ | old <;> h5i_steps <;> simp_all [{d}]
+
+@[step] theorem {f}.del_spec (a : {prin}) (s : {snap}) (found : Option {ty}) :
+    {k}.policy.{f}.del a s found ⦃ b => (b = true ↔ {f}.Del a s found) ⦄ := by
+  unfold {k}.policy.{f}.del
+  cases found <;> h5i_steps <;> simp_all [{d}]
+
+@[step] theorem {f}.visible_spec (a : {prin}) (s : {snap}) (x : {ty}) :
+    {k}.policy.{f}.visible a s x ⦃ b => (b = true ↔ {f}.Visible a s x) ⦄ := by
+  unfold {k}.policy.{f}.visible
+  h5i_steps <;> simp_all [{d}]
+
+@[step] theorem {f}.stored_spec (s : {snap}) (x : {ty}) :
+    {k}.policy.{f}.stored s x ⦃ b => (b = true ↔ {f}.Stored s x) ⦄ := by
+  unfold {k}.policy.{f}.stored
+  rcases h : {f}.find s.{f}.val x.{key} with _ | old <;> h5i_steps <;> simp_all [{d}]
+"
+        );
+    }
+    let all: Vec<String> = p.tables.iter().map(|t| defs(t.field)).collect();
+    let _ = writeln!(
+        s,
+        "/-- The extracted `policy::permits` is `Permits`. -/
+theorem permits_spec (a : {prin}) (s : {snap}) (w : {w}) :
+    {k}.policy.permits a s w ⦃ b => (b = true ↔ Permits a s w) ⦄ := by
+  unfold {k}.policy.permits
+  cases w <;> h5i_steps <;> simp_all [Permits, {all}]
+
+/-- The extracted `policy::visible` is `Visible`. -/
+theorem visible_spec (a : {prin}) (s : {snap}) (d : {r}) :
+    {k}.policy.visible a s d ⦃ b => (b = true ↔ Visible a s d) ⦄ := by
+  unfold {k}.policy.visible
+  cases d <;> h5i_steps <;> simp_all [Visible, {all}]
+
+/-- The extracted `policy::stored` is `Stored`. -/
+theorem stored_spec (s : {snap}) (d : {r}) :
+    {k}.policy.stored s d ⦃ b => (b = true ↔ Stored s d) ⦄ := by
+  unfold {k}.policy.stored
+  cases d <;> h5i_steps <;> simp_all [Stored, {all}]
+
+end {k}.PolicySpec",
+        w = p.write,
+        r = p.row,
+        all = all.join(", "),
+    );
+    s
+}

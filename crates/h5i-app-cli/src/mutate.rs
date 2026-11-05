@@ -315,6 +315,246 @@ impl<'ast> Visit<'ast> for Finder<'_> {
     // mutated.
 }
 
+/// Security-oriented mutants (`--security`): each breaks an authorization
+/// property, and is caught only if some spec the project proves depends on
+/// it. A survivor is a property no spec pins down.
+///
+/// - In a hand-written `impl Policy`: drop a conjunct of `permits` (each
+///   operand of each `&&`), make `visible` or `stored` return `true`, replace
+///   a comparison with `actor` in `permits` or `visible` by `true`.
+/// - In a policy from `schema!`'s `policy` block: the same changes made to the
+///   generator (`h5i-app-schema/src/policy.rs`, copied into the sandbox).
+/// - For `[authz]`: `guarded_transition` without the guard, and the guard
+///   without its write check (`h5i-app-std/src/authz.rs`); the tenant of every
+///   principal set to 0 in `authz_kernel!`.
+pub fn security(p: &Project) -> Result<Vec<Mutant>> {
+    let Some(krate) = p.krate() else {
+        bail!("{}: no [extract] crate to mutate", p.display())
+    };
+    let mut out = Vec::new();
+    // The crate's module files, test modules left out.
+    let mut files: Vec<PathBuf> = crate::rust::Sources::of_crate(&krate).files.into_iter().map(|(f, _, _)| f).collect();
+    files.sort();
+    files.dedup();
+    let mut generated_policy = false;
+    for f in &files {
+        let src = std::fs::read_to_string(f)?;
+        generated_policy |= src.contains("schema!") && src.contains("\n    policy ");
+        let ast = syn::parse_file(&src).with_context(|| format!("parsing {}", f.display()))?;
+        let rel = f.strip_prefix(&p.root)?.to_path_buf();
+        let mut v = PolicyFinder { src: &src, lines: line_starts(&src), fun: None, found: Vec::new() };
+        v.visit_file(&ast);
+        let short = f.strip_prefix(&krate).unwrap_or(f).display().to_string();
+        let mut names = std::collections::HashMap::new();
+        for (fun, kind, line, start, end, was, new) in v.found {
+            let base = format!("security:{fun}@{short}:{line}:{kind}");
+            let n = names.entry(base.clone()).or_insert(0);
+            *n += 1;
+            let name = if *n == 1 { base } else { format!("{base}#{n}") };
+            out.push(Mutant {
+                name,
+                what: Some(format!("`{}` -> `{new}`", trunc(&was))),
+                file: rel.clone(),
+                change: Change::Splice { start, end, was, new },
+            });
+        }
+        if !p.manifest.authz.guarded.is_empty() && src.contains("authz_kernel!") {
+            for (old, new) in [("tenant: |actor| actor.org", "tenant: |actor| 0"), ("tenant: |actor| actor.tenant", "tenant: |actor| 0")] {
+                if src.matches(old).count() == 1 {
+                    out.push(declared_edit("security:tenant-zero", "every principal in tenant 0", rel.clone(), old, new));
+                }
+            }
+        }
+    }
+    let meta = util::metadata(&krate, true)?;
+    let framework = |pkg: &str, file: &str| -> Option<PathBuf> {
+        let q = meta.packages.iter().find(|q| q.name == pkg)?;
+        let path = q.manifest_path.parent()?.join(file);
+        relative(&p.root, &path)
+    };
+    if generated_policy && let Some(file) = framework("h5i-app-schema", "src/policy.rs") {
+        for (name, what, old, new) in [
+            (
+                "security:policy-owner-may-change",
+                "a replacement no longer keeps the owner",
+                "Some(old) => $crate::__policy_keep!($owg x old) && (",
+                "Some(old) => (",
+            ),
+            (
+                "security:policy-create-as-anyone",
+                "`owner` lets anyone create a row",
+                "    (owner [$ow:ident] $a:ident $s:ident $x:ident $uf:ident $tf:ident) => {\n        $x.$ow == $a.$uf\n    };",
+                "    (owner [$ow:ident] $a:ident $s:ident $x:ident $uf:ident $tf:ident) => {\n        true\n    };",
+            ),
+            (
+                "security:policy-modify-anyones",
+                "`owner` lets anyone replace or delete a row",
+                "    (owner [$ow:ident] $a:ident $s:ident $old:ident $uf:ident) => {\n        $old.$ow == $a.$uf\n    };",
+                "    (owner [$ow:ident] $a:ident $s:ident $old:ident $uf:ident) => {\n        true\n    };",
+            ),
+            (
+                "security:policy-visible-true",
+                "every row visible",
+                "$( $crate::__policy_visible!($va $owg actor s x $uf) )||+",
+                "true",
+            ),
+            ("security:policy-stored-true", "`stored` accepts any row with a stored key", "Some(r) => r == *x,", "Some(r) => true,"),
+            ("security:policy-everyone-admin", "every member is an admin", "Some(r) => r.$af,", "Some(r) => true,"),
+        ] {
+            out.push(declared_edit(name, what, file.clone(), old, new));
+        }
+    }
+    if !p.manifest.authz.guarded.is_empty()
+        && let Some(file) = framework("h5i-app-std", "src/authz.rs")
+    {
+        out.push(declared_edit(
+            "security:no-guard",
+            "`guarded_transition` runs the kernel without the guard",
+            file.clone(),
+            "$crate::authz::guard_viewed::<$p, $s, $c, $w, $r, $e, $d, $app, $app, $app>(actor, s, cmd)",
+            "match <$app as $crate::authz::Transition<$p, $s, $c, $w, $r, $e>>::kernel_transition(actor, s, cmd) {\n                ::core::result::Result::Ok(o) => ::core::result::Result::Ok(o),\n                ::core::result::Result::Err(e) => ::core::result::Result::Err($crate::authz::Guarded::App(e)),\n            }",
+        ));
+        out.push(declared_edit(
+            "security:guard-skips-writes",
+            "the guard no longer checks writes",
+            file,
+            "if !check_writes::<A, S, C, W, R, E, D, T, P>(actor, s, &out.0) {",
+            "if false {",
+        ));
+    }
+    Ok(out)
+}
+
+fn declared_edit(name: &str, what: &str, file: PathBuf, old: &str, new: &str) -> Mutant {
+    Mutant {
+        name: name.into(),
+        what: Some(what.into()),
+        file,
+        change: Change::Replace(vec![Edit { old: old.into(), new: new.into() }]),
+    }
+}
+
+/// `to` relative to `from`, through `..` where needed.
+fn relative(from: &Path, to: &Path) -> Option<PathBuf> {
+    let from = from.canonicalize().ok()?;
+    let to = to.canonicalize().ok()?;
+    let common = from.ancestors().find(|a| to.starts_with(a))?;
+    let mut out = PathBuf::new();
+    for _ in from.strip_prefix(common).ok()?.components() {
+        out.push("..");
+    }
+    out.push(to.strip_prefix(common).ok()?);
+    Some(out)
+}
+
+/// Finds the security mutants of a hand-written `impl Policy`.
+struct PolicyFinder<'a> {
+    src: &'a str,
+    lines: Vec<usize>,
+    /// The `Policy` method being visited.
+    fun: Option<String>,
+    /// (function, kind, line, start, end, was, new)
+    found: Vec<(String, &'static str, usize, usize, usize, String, String)>,
+}
+
+impl PolicyFinder<'_> {
+    fn span(&self, t: &impl ToTokens) -> Option<(usize, usize, usize)> {
+        let f = Finder { src: self.src, lines: self.lines.clone(), func: String::new(), found: Vec::new() };
+        f.range(t)
+    }
+
+    fn push(&mut self, t: &impl ToTokens, kind: &'static str, new: String) {
+        let (Some(fun), Some((line, start, end))) = (self.fun.clone(), self.span(t)) else { return };
+        let was = self.src[start..end].to_string();
+        self.found.push((fun, kind, line, start, end, was, new));
+    }
+}
+
+/// Mentions the identifier `actor`.
+fn mentions_actor(e: &syn::Expr) -> bool {
+    e.to_token_stream().to_string().split(|c: char| !c.is_alphanumeric() && c != '_').any(|w| w == "actor")
+}
+
+impl<'ast> Visit<'ast> for PolicyFinder<'_> {
+    fn visit_item_mod(&mut self, m: &'ast syn::ItemMod) {
+        if !is_test(&m.attrs) {
+            syn::visit::visit_item_mod(self, m);
+        }
+    }
+
+    fn visit_item_impl(&mut self, i: &'ast syn::ItemImpl) {
+        let is_policy = i
+            .trait_
+            .as_ref()
+            .and_then(|(_, path, _)| path.segments.last())
+            .is_some_and(|s| s.ident == "Policy");
+        if !is_policy {
+            return;
+        }
+        for item in &i.items {
+            let syn::ImplItem::Fn(f) = item else { continue };
+            let name = f.sig.ident.to_string();
+            self.fun = Some(name.clone());
+            if name == "visible" || name == "stored" {
+                self.push(&f.block, if name == "visible" { "visible-true" } else { "stored-true" }, "{ true }".into());
+            }
+            if name == "permits" || name == "visible" {
+                syn::visit::visit_block(self, &f.block);
+            }
+            self.fun = None;
+        }
+    }
+
+    fn visit_expr_binary(&mut self, e: &'ast syn::ExprBinary) {
+        let Some(fun) = self.fun.clone() else { return };
+        match e.op {
+            syn::BinOp::And(_) if fun == "permits" => {
+                let left = self.span(&*e.left).map(|(_, s, t)| self.src[s..t].to_string());
+                let right = self.span(&*e.right).map(|(_, s, t)| self.src[s..t].to_string());
+                if let (Some(l), Some(r)) = (left, right) {
+                    self.push(e, "drop-right-conjunct", l);
+                    self.push(e, "drop-left-conjunct", r);
+                }
+            }
+            syn::BinOp::Eq(_) if mentions_actor(&e.left) || mentions_actor(&e.right) => {
+                self.push(e, "actor-check-true", "true".into());
+            }
+            _ => {}
+        }
+        syn::visit::visit_expr_binary(self, e);
+    }
+}
+
+/// The declarations a failed build reported errors in: each `error:
+/// <file>.lean:<line>:` line of `log` as `<file>: <name>`, the `theorem`,
+/// `def` or `h5i_authz` command at or above that line of the proofs' file.
+pub fn broken_declarations(log: &str, proofs: &Path) -> Vec<String> {
+    static ERR: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"error: ([^\s:]+\.lean):(\d+):").unwrap());
+    let mut out: Vec<String> = Vec::new();
+    for c in ERR.captures_iter(log) {
+        let Ok(text) = std::fs::read_to_string(proofs.join(&c[1])) else { continue };
+        let line: usize = c[2].parse().unwrap_or(1);
+        let found = text.lines().take(line).collect::<Vec<_>>().into_iter().rev().find_map(|l| {
+            let mut w = l.split_whitespace();
+            let mut first = w.next()?;
+            if first.starts_with("@[") {
+                first = w.next()?;
+            }
+            match first {
+                "theorem" | "lemma" | "def" | "instance" | "h5i_authz" => w.next().map(str::to_string),
+                _ => None,
+            }
+        });
+        let file = Path::new(&c[1]).file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+        let name = format!("{file}: {}", found.unwrap_or_else(|| format!("line {line}")));
+        if !out.contains(&name) {
+            out.push(name);
+        }
+    }
+    out
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Verdict {
     /// The proofs no longer build.
@@ -559,7 +799,7 @@ fn evaluate(
     targets: &[String],
     keep: bool,
     observe: &mut impl FnMut(h5i_app_report::Stage) -> Result<()>,
-) -> Result<(Verdict, Option<PathBuf>)> {
+) -> Result<(Verdict, Option<PathBuf>, Vec<String>)> {
     let name = m.map_or("baseline", |m| m.name.as_str());
     let sb = measured("sandbox", None, observe, || sandbox(p, name))?;
     let out = Out::Log(sb.log.clone());
@@ -611,8 +851,14 @@ fn evaluate(
             (true, false) => Verdict::Caught,
         })
     })()?;
+    // Which specs the mutant broke, read off the failed build's errors.
+    let broke = if verdict == Verdict::Caught {
+        broken_declarations(&std::fs::read_to_string(&sb.log).unwrap_or_default(), &sb.project.proofs())
+    } else {
+        Vec::new()
+    };
     let kept = if keep { Some(sb._tmp.keep()) } else { None };
-    Ok((verdict, kept))
+    Ok((verdict, kept, broke))
 }
 
 fn measured<T>(
@@ -725,6 +971,9 @@ pub struct Outcome {
     pub verdict: Verdict,
     /// Generated rather than declared in the manifest.
     pub generated: bool,
+    /// For a caught mutant, the declarations whose proofs failed
+    /// (`file: name`), read off the build's errors.
+    pub broke: Vec<String>,
 }
 
 /// Run `mutants` against `p`, printing one line each.
@@ -772,7 +1021,7 @@ pub fn run(p: &Project, mutants: Vec<Mutant>, opts: &Options) -> Result<Vec<Outc
         let baseline = evaluate(p, None, targets, opts.keep, &mut |stage| {
             record_stage(&record, 0, stage)
         });
-        let (v, kept) = match baseline {
+        let (v, kept, _) = match baseline {
             Ok(value) => value,
             Err(e) => {
                 let mut r = record.lock().unwrap();
@@ -817,7 +1066,7 @@ pub fn run(p: &Project, mutants: Vec<Mutant>, opts: &Options) -> Result<Vec<Outc
                         break;
                     };
                     let t = Instant::now();
-                    let (v, kept) = match evaluate(p, Some(&m), targets, opts.keep, &mut |stage| {
+                    let (v, kept, broke) = match evaluate(p, Some(&m), targets, opts.keep, &mut |stage| {
                         let result = record_stage(&record, i + 1, stage);
                         if let Err(e) = &result {
                             recording_errors.lock().unwrap().push(e.to_string());
@@ -827,14 +1076,15 @@ pub fn run(p: &Project, mutants: Vec<Mutant>, opts: &Options) -> Result<Vec<Outc
                         Ok(r) => r,
                         Err(e) => {
                             eprintln!("{:<48} error: {e:#}", m.name);
-                            (Verdict::Invalid("error"), None)
+                            (Verdict::Invalid("error"), None, Vec::new())
                         }
                     };
                     if let Err(e) = record_verdict(&record, i + 1, v) {
                         recording_errors.lock().unwrap().push(e.to_string());
                     }
+                    let by = if broke.is_empty() { String::new() } else { format!(" by {}", broke.join(", ")) };
                     eprintln!(
-                        "[{}/{total}] {:<40} {v}  {:.0}s{}",
+                        "[{}/{total}] {:<40} {v}{by}  {:.0}s{}",
                         i + 1,
                         m.name,
                         t.elapsed().as_secs_f32(),
@@ -844,6 +1094,7 @@ pub fn run(p: &Project, mutants: Vec<Mutant>, opts: &Options) -> Result<Vec<Outc
                         name: m.name.clone(),
                         verdict: v,
                         generated: m.what.is_some(),
+                        broke,
                     };
                     results.lock().unwrap().push((i, o));
                 }

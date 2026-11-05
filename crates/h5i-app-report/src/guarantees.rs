@@ -6,7 +6,9 @@
 //! recorded `h5i app check` runs; a theorem is `passed` only if a recorded
 //! check run gated it on the current inputs. The report says what is claimed
 //! and by what; it proves nothing itself (docs/design/design-app-trust.md,
-//! "Per-route guarantee report").
+//! "Per-route guarantee report"). A `passed` run under `.h5i/app/runs` is a
+//! local record of a run, not evidence: a repository can ship a forged one,
+//! and only running `h5i app check` again establishes the result.
 
 use crate::assumptions::ASSUMPTIONS;
 use serde::{Deserialize, Serialize};
@@ -46,6 +48,11 @@ pub struct Project {
     pub check: CheckRun,
     pub theorems: Vec<Theorem>,
     pub routes: Vec<Route>,
+    /// The framework-defined obligations (`H5iAppLib.Obligation`) and what
+    /// the latest passed check run found for each; `not_stated` ones say
+    /// why no statement exists.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub obligations: Vec<crate::ObligationResult>,
     /// What could not be analyzed; a route or theorem it hides is missing
     /// from the report, so a non-empty list means the report is incomplete.
     pub errors: Vec<String>,
@@ -97,6 +104,9 @@ pub enum TheoremSource {
     /// A hand-written proof stating `H5iAppLib.ReadOnly.Sound`, for a kernel
     /// that overrides `Kernel::read_only`.
     ReadOnlyProof,
+    /// Named in `[obligations]`, or generated, for a framework-defined
+    /// obligation: `check` requires exactly the obligation's statement.
+    Obligation,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -235,6 +245,9 @@ impl Guarantees {
                 None => "no recorded run".into(),
             };
             let _ = writeln!(s, "  h5i app check: {run}");
+            if p.check.run.is_some() {
+                let _ = writeln!(s, "    (a local record of a run, not evidence: rerun `h5i app check` to establish it)");
+            }
             if p.theorems.is_empty() {
                 let _ = writeln!(s, "  theorems: none required");
             } else {
@@ -251,6 +264,13 @@ impl Guarantees {
                         word(&t.check),
                         t.file.as_deref().unwrap_or("file not found")
                     );
+                }
+            }
+            if !p.obligations.is_empty() {
+                let _ = writeln!(s, "  obligations:");
+                for o in &p.obligations {
+                    let by = o.theorem.as_deref().map(|t| format!(" by {t}")).unwrap_or_default();
+                    let _ = writeln!(s, "    {} [{}]{by}", o.name, o.status);
                 }
             }
             for r in &p.routes {
@@ -330,6 +350,7 @@ mod tests {
                 not_verified: vec![],
             }],
             errors: vec![],
+            obligations: vec![],
         }])
     }
 

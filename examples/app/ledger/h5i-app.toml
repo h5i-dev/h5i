@@ -10,6 +10,10 @@ include = ["h5i_app_sql"]
 # module is gated as well).
 theorems = ["ledger_kernel.Storage.db_inv"]
 
+[obligations]
+# `check` requires exactly `H5iAppLib.Obligation.PanicFree ledger_kernel.transition`.
+panic-free = "ledger_kernel.Theorems.panic_free"
+
 [[mutant]]
 name = "withdraw_from_others_account"
 old = "if a.owner != user {\n                Err(Error::Forbidden)\n            } else if l.deposited >"

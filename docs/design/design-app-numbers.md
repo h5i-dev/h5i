@@ -97,6 +97,29 @@ per command; that cost is not in this table.
 | Axioms (`h5i app check`) | only `propext`, `Classical.choice`, `Quot.sound`, for all 3,974 theorems in hand-written modules |
 | Extraction drift (CI) | every kernel and extracted crate re-extracted and compared |
 
+### Security mutants
+
+`h5i app mutate --security`, 5 November 2026. "Caught by" is the
+declarations whose proofs failed.
+
+| Mutant | forum (policy in Rust) | notes (policy from `schema!`) |
+|---|---|---|
+| drop a conjunct of `permits` (14 in forum) | 14 survived | generator: owner may change on replace: caught by `members.put_spec`, `notes.put_spec` |
+| an actor comparison made `true` (5 in forum) | 5 survived | generator: `owner` creates as anyone: caught by `notes.put_spec`; replaces or deletes anyone's: caught by `notes.put_spec`, `notes.del_spec` |
+| `visible` returns `true` | survived | caught by `members.visible_spec`, `notes.visible_spec` |
+| `stored` returns `true` | survived | caught by `members.stored_spec`, `notes.stored_spec` |
+| every member an admin | (no such rule) | caught by `is_admin_spec` |
+| `guarded_transition` without the guard | refused by `extract` (invalid) | refused by `extract` (invalid) |
+| the guard skips its write check | caught by `guard_authorized`, `guard_only_denies` | same |
+| every principal in tenant 0 | survived | survived |
+
+Forum: 1 of 19 caught, 17 survived, 1 invalid. Notes: 7 of 9 caught, 1
+survived, 1 invalid. The survivors are expected: the guard's theorems hold for
+any policy, so a hand-written policy is pinned only by review (A11), and the
+tenant function is trusted. `members.put_spec` also fails on the owner mutant
+although the member table's owner is its key, so that mutant changes nothing
+there; the proof does not see that.
+
 ## Time
 
 On a 128-core machine:

@@ -63,6 +63,11 @@ theorem transition_total (a : Principal) (s : Snapshot) (c : Command) :
   obtain ⟨r, hr, -⟩ := (WP.spec_equiv_exists _ _).1 h
   exact ⟨r, hr⟩
 
+/-- Panic freedom, as `H5iAppLib.Obligation.PanicFree` states it
+(`[obligations] panic-free`). -/
+theorem panic_free : H5iAppLib.Obligation.PanicFree transition :=
+  H5iAppLib.Obligation.panicFree_of_total transition_total
+
 /-- `apply` computes exactly `eval` on my memory: the new value when there is
 one, the same refusal when there is not. -/
 theorem apply_correct (a : Principal) (s : Snapshot) (op : Op) (arg : U64) :

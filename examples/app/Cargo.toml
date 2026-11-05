@@ -15,4 +15,5 @@ members = [
     "inbox/server",
     "ledger/kernel",
     "ledger/server",
+    "notes/kernel",
 ]

@@ -19,7 +19,11 @@ writer, and the storage path.
 | `h5i_app_pgsql::valid`, `create`, `select`, `compile`, `render` | under `H5iAppLib.Pg`, a compiled statement does to the tenant's rows what `H5iAppLib.Sql.exec` says and touches no other tenant or table (`Pg.compile_sound`); a compiled `SELECT` returns the tenant's matching rows once each (`Pg.select_sound`); a quoted name reads back as itself (`Pg.lexName_quote`) | `crates/h5i-app-pgsql/proofs` |
 | `H5iAppLib.Query` | the meaning of declarative reads, and slice lemmas for frame theorems | `crates/h5i-app-core/proofs/H5iAppLib/Query.lean` |
 | generated `PgServed`, `pg_loaded_inv` | an invariant kept by accepted write sets holds in every state of a multi-tenant database and every snapshot loaded from it | `generated/Schema.lean` |
+| `h5i_app_h1::parse_head`, `chunk_step`, `write_head` | `parse_head` computes `Spec.parseHead` and `chunk_step` `Spec.chunkStep` on every input (so neither panics), `write_head` never panics; accepted heads are well formed (`accept_wellformed`); the result depends only on the first `max_head` bytes (`parse_head_reads`); every parser in the lenient family `Interp` agrees on head length and framing (`no_smuggling`, relative to that family; see [design-app-embedded.md](design-app-embedded.md)) | `crates/h5i-app-h1/proofs` |
+| thermostat `transition`, `apply`, `read_only` | no panic for any command (a relay index ≥ 4 is refused, not indexed); heater interlock and setpoint range in every reachable state; `ReadOnly.Sound` | `examples/embedded/thermostat/proofs` |
 | `h5i_app_std::authz::guard`, `guard_viewed` | for every kernel and policy: a committed command's writes are permitted, each in the state the writes before it leave; its disclosed rows are stored as disclosed and visible; read-only commands under `guard_viewed` are noninterfering with what the view hides, and `ReadOnly.Sound` | `crates/h5i-app-std/proofs/AuthzSpecs.lean`, `generated/Authz.lean` |
+| framework-defined obligations | `H5iAppLib.Obligation`: each app's read-only, storage, panic-freedom and authorization theorems, where named or generated, have exactly the framework's statement for its extracted functions (`check` compares types); `TenantIsolation` is proven once from `Pg.compileAll_sound` and `Pg.select_sound` | `crates/h5i-app-core/proofs/H5iAppLib/Obligation.lean`, [design-app-authz.md](design-app-authz.md#obligations) |
+| `schema!` `policy` blocks | the extracted `policy::permits`, `visible` and `stored` compute `PolicySpec`, which is rendered from the block, not from the generated Rust | `generated/Schema.lean` (`examples/app/notes`) |
 
 Each server app with hand-written proofs applies `pg_loaded_inv` to its
 extracted `transition`, `sql_writes` and `decode` as `db_inv`: for the
@@ -55,9 +59,10 @@ guarantee.
 | Property | How |
 |---|---|
 | Handlers go through the kernel (A8) | App code gets `H5iApp::respond` / `Engine::execute`, never a DB handle. A `Store` gets an opaque `h5i_app_pg::Tx` with only `load_table`, `load_read`, `count_read` and `store_writes`. `cargo deny check bans` rejects database crates outside `h5i-app-pg`. `h5i_app_pg::lockdown` gives the tables to a NOLOGIN owner and row access only to the engine's role. Not confined: `H5iApp::engine()` executes as any principal, and `Engine::snapshot`/`snapshot_for` and `Engine::migrate` act outside commands (`h5i app lint` flags the first two for `[authz]` apps). A superuser bypasses all of this. |
-| Tenant isolation | Every compiled statement filters on or writes its tenant, `tenant_id` is in every primary key, and `Pg.compile_sound` proves other tenants' rows stay as they were. The engine and each `Store` must pass `K::tenant(actor)` consistently. |
+| Tenant isolation | Every compiled statement filters on or writes its tenant, `tenant_id` is in every primary key, and `Pg.compile_sound` proves other tenants' rows stay as they were; `H5iAppLib.Obligation.TenantIsolation` states it, with reads, for each app's schema. The engine and each `Store` must pass `K::tenant(actor)` consistently. |
 | Every column is persisted | `table!` must list every field to compile. |
 | Running code is the extracted code (A9) | CI re-extracts every kernel and extracted crate with pinned tools and fails on a diff. |
+| Embedded memory per connection, no heap | `h5i-app-h1` and `h5i-app-embedded` are `no_std` without `alloc`; buffers are the caller's fixed arrays; the thermostat firmware's link fails if statics plus a 16 KiB stack exceed RAM (`firmware/size.x`). Not a Lean theorem. |
 
 ## Assumed
 
@@ -75,6 +80,8 @@ guarantee.
 | | Shell inputs in the principal are true: slugs (Wastebin), GitHub teams and download counts (crates.io), password checks (Atuin, Wastebin, Conduit), time in Conduit's commands. | Theorems hold for every value; each app's README lists them. |
 | | The clock (`Clock::System`, or `Clock::Database` via `transaction_timestamp()`) is right; `HmacAuth` expiry uses the system clock. | A wrong time only leads to decisions on that time. `H5iAppLib.ReachableT` proofs hold for database runs only under `monotonic`. |
 | | axum, hyper and tokio deliver requests and responses intact. | Widely used. |
+| | On devices: the `h5i-app-embedded` shell (routing, `Request` views, body reading, kernel binding, command decoding, UART framing in `link`) is trusted; embassy, the HAL, `embedded-io`, `critical-section` and Renode's models are assumed. `write_head`'s bytes match `Spec.renderHead` by test, not proof. | Shell tests, smuggling corpus, proptest, `httparse` differential, Renode smoke test. |
+| | A shared UART: connection boundaries come from `uart-gateway.py` and the device's `link` framing (one gateway connection's bytes never join another's request; each holds the line for at most 5 s; no client receives another's response). Structural and tested, not proven. The line authenticates nobody: a direct writer to the UART (or Renode's UART socket) can forge markers. | Host tests on a mock line (`h5i-app-embedded` `tests::uart`), Renode smoke (hijack, silent client, stale responses). |
 
 ## Deployment
 

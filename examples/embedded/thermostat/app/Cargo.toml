@@ -1,0 +1,12 @@
+[package]
+name = "thermostat-app"
+description = "The thermostat's HTTP API: the same no_std code on the host runner and the firmware"
+edition = "2024"
+license = "Apache-2.0"
+version = "0.1.0"
+publish = false
+
+[dependencies]
+thermostat-kernel = { path = "../kernel" }
+h5i-app-core = { path = "../../../../crates/h5i-app-core", default-features = false }
+h5i-app-embedded = { path = "../../../../crates/h5i-app-embedded" }

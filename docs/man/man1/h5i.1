@@ -2627,7 +2627,7 @@ Put bugs in the kernel and make sure each one breaks a proof. A bug that survive
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBmutate\fR [\fB\-\-all\fR] [\fB\-\-only\fR] [\fB\-\-auto\fR] [\fB\-\-limit\fR] [\fB\-\-list\fR] [\fB\-j\fR|\fB\-\-jobs\fR] [\fB\-\-keep\fR] [\fB\-\-no\-baseline\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATHS\fR] 
+\fBmutate\fR [\fB\-\-all\fR] [\fB\-\-only\fR] [\fB\-\-auto\fR] [\fB\-\-security\fR] [\fB\-\-limit\fR] [\fB\-\-list\fR] [\fB\-j\fR|\fB\-\-jobs\fR] [\fB\-\-keep\fR] [\fB\-\-no\-baseline\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATHS\fR] 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -2640,6 +2640,9 @@ Only mutants whose name contains this (repeatable)
 .TP
 \fB\-\-auto\fR
 Also generate mutants from the kernel\*(Aqs syntax: comparison boundaries, flipped equalities, swapped `&&`/`||`, dropped `!`, forced `if` conditions
+.TP
+\fB\-\-security\fR
+Also generate security mutants: a `Policy` conjunct dropped, `visible`/`stored` made `true`, a comparison with the actor made `true`, the guard removed or weakened, the tenant fixed; for a policy from `schema!`, the same in its generator. Each line says which proofs broke
 .TP
 \fB\-\-limit\fR \fI<LIMIT>\fR
 With \-\-auto: at most this many generated mutants per project

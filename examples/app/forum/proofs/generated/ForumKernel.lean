@@ -512,13 +512,13 @@ structure Principal where
   user : Std.U64
 
 /-- [forum_kernel::Counter]
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 95:12-98:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 108:12-111:13
     Visibility: public -/
 structure Counter where
   next_id : Std.U64
 
 /-- [forum_kernel::Post]
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 95:12-98:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 108:12-111:13
     Visibility: public -/
 structure Post where
   id : Std.U64
@@ -528,14 +528,14 @@ structure Post where
   published : Bool
 
 /-- [forum_kernel::User]
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 95:12-98:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 108:12-111:13
     Visibility: public -/
 structure User where
   user : Std.U64
   admin : Bool
 
 /-- [forum_kernel::Snapshot]
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 278:8-280:9
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 291:8-293:9
     Visibility: public -/
 structure Snapshot where
   counter : Counter
@@ -1013,7 +1013,7 @@ def transition
   | Command.ReadUser user => read_user s user
 
 /-- [forum_kernel::{forum_kernel::Post}::del]: loop body 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 234:16-239:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 247:16-252:17
     Visibility: public -/
 @[rust_loop_body]
 def Post.del_loop.body
@@ -1038,7 +1038,7 @@ def Post.del_loop.body
   else ok (done out)
 
 /-- [forum_kernel::{forum_kernel::Post}::del]: loop 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 234:16-239:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 247:16-252:17
     Visibility: public -/
 @[rust_loop]
 def Post.del_loop
@@ -1051,7 +1051,7 @@ def Post.del_loop
     (out, i)
 
 /-- [forum_kernel::{forum_kernel::Post}::del]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 231:12-241:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 244:12-254:13
     Visibility: public -/
 @[reducible]
 def Post.del
@@ -1059,7 +1059,7 @@ def Post.del
   Post.del_loop v id (alloc.vec.Vec.new Post) 0#usize
 
 /-- [forum_kernel::{forum_kernel::Post}::put]: loop body 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 220:16-228:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 233:16-241:13
     Visibility: public -/
 @[rust_loop_body]
 def Post.put_loop.body
@@ -1084,7 +1084,7 @@ def Post.put_loop.body
        ok (done v1)
 
 /-- [forum_kernel::{forum_kernel::Post}::put]: loop 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 220:16-228:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 233:16-241:13
     Visibility: public -/
 @[rust_loop]
 def Post.put_loop
@@ -1096,7 +1096,7 @@ def Post.put_loop
     i
 
 /-- [forum_kernel::{forum_kernel::Post}::put]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 218:12-228:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 231:12-241:13
     Visibility: public -/
 @[reducible]
 def Post.put
@@ -1104,7 +1104,7 @@ def Post.put
   Post.put_loop v x 0#usize
 
 /-- [forum_kernel::{forum_kernel::User}::put]: loop body 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 220:16-228:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 233:16-241:13
     Visibility: public -/
 @[rust_loop_body]
 def User.put_loop.body
@@ -1129,7 +1129,7 @@ def User.put_loop.body
        ok (done v1)
 
 /-- [forum_kernel::{forum_kernel::User}::put]: loop 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 220:16-228:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 233:16-241:13
     Visibility: public -/
 @[rust_loop]
 def User.put_loop
@@ -1141,7 +1141,7 @@ def User.put_loop
     i
 
 /-- [forum_kernel::{forum_kernel::User}::put]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 218:12-228:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 231:12-241:13
     Visibility: public -/
 @[reducible]
 def User.put
@@ -1161,12 +1161,12 @@ def apply_write (s : Snapshot) (w : Write) : Result Snapshot := do
   | Write.SetCounter c => ok { s with counter := c }
 
 /-- [forum_kernel::{forum_kernel::Post}::TABLE]
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 135:12-135:60
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 148:12-148:60
     Visibility: public -/
 @[global_simps, irreducible] def Post.TABLE : Std.U32 := 1#u32
 
 /-- [forum_kernel::{forum_kernel::Post}::sql_del]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 257:12-261:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 270:12-274:13
     Visibility: public -/
 def Post.sql_del (id : Std.U64) : Result h5i_app_sql.Write := do
   let v ← U64.Insts.H5i_app_sqlColumn.to_val id
@@ -1174,7 +1174,7 @@ def Post.sql_del (id : Std.U64) : Result h5i_app_sql.Write := do
   ok (h5i_app_sql.Write.Del Post.TABLE key)
 
 /-- [forum_kernel::{forum_kernel::Counter}::to_row]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 138:12-143:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 151:12-156:13
     Visibility: public -/
 def Counter.to_row
   (self : Counter) : Result (alloc.vec.Vec h5i_app_sql.Val) := do
@@ -1182,24 +1182,24 @@ def Counter.to_row
   alloc.vec.Vec.push (alloc.vec.Vec.new h5i_app_sql.Val) v
 
 /-- [forum_kernel::{forum_kernel::Counter}::KEY_LEN]
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 136:12-136:62
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 149:12-149:62
     Visibility: public -/
 @[global_simps, irreducible] def Counter.KEY_LEN : Std.U32 := 0#u32
 
 /-- [forum_kernel::{forum_kernel::Counter}::TABLE]
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 135:12-135:60
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 148:12-148:60
     Visibility: public -/
 @[global_simps, irreducible] def Counter.TABLE : Std.U32 := 2#u32
 
 /-- [forum_kernel::{forum_kernel::Counter}::sql_put]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 189:12-191:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 202:12-204:13
     Visibility: public -/
 def Counter.sql_put (self : Counter) : Result h5i_app_sql.Write := do
   let v ← Counter.to_row self
   ok (h5i_app_sql.Write.Put Counter.TABLE Counter.KEY_LEN v)
 
 /-- [forum_kernel::{forum_kernel::Post}::to_row]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 138:12-143:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 151:12-156:13
     Visibility: public -/
 def Post.to_row (self : Post) : Result (alloc.vec.Vec h5i_app_sql.Val) := do
   let v ← U64.Insts.H5i_app_sqlColumn.to_val self.id
@@ -1214,19 +1214,19 @@ def Post.to_row (self : Post) : Result (alloc.vec.Vec h5i_app_sql.Val) := do
   alloc.vec.Vec.push out3 v4
 
 /-- [forum_kernel::{forum_kernel::Post}::KEY_LEN]
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 136:12-136:62
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 149:12-149:62
     Visibility: public -/
 @[global_simps, irreducible] def Post.KEY_LEN : Std.U32 := 1#u32
 
 /-- [forum_kernel::{forum_kernel::Post}::sql_put]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 189:12-191:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 202:12-204:13
     Visibility: public -/
 def Post.sql_put (self : Post) : Result h5i_app_sql.Write := do
   let v ← Post.to_row self
   ok (h5i_app_sql.Write.Put Post.TABLE Post.KEY_LEN v)
 
 /-- [forum_kernel::{forum_kernel::User}::to_row]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 138:12-143:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 151:12-156:13
     Visibility: public -/
 def User.to_row (self : User) : Result (alloc.vec.Vec h5i_app_sql.Val) := do
   let v ← U64.Insts.H5i_app_sqlColumn.to_val self.user
@@ -1235,17 +1235,17 @@ def User.to_row (self : User) : Result (alloc.vec.Vec h5i_app_sql.Val) := do
   alloc.vec.Vec.push out v1
 
 /-- [forum_kernel::{forum_kernel::User}::KEY_LEN]
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 136:12-136:62
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 149:12-149:62
     Visibility: public -/
 @[global_simps, irreducible] def User.KEY_LEN : Std.U32 := 1#u32
 
 /-- [forum_kernel::{forum_kernel::User}::TABLE]
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 135:12-135:60
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 148:12-148:60
     Visibility: public -/
 @[global_simps, irreducible] def User.TABLE : Std.U32 := 0#u32
 
 /-- [forum_kernel::{forum_kernel::User}::sql_put]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 189:12-191:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 202:12-204:13
     Visibility: public -/
 def User.sql_put (self : User) : Result h5i_app_sql.Write := do
   let v ← User.to_row self
@@ -1566,7 +1566,7 @@ def Forum.Insts.H5i_app_stdAuthzViewPrincipalSnapshotCommand :
 }
 
 /-- [forum_kernel::apply]: loop body 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 306:12-309:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 319:12-322:13
     Visibility: public -/
 @[rust_loop_body]
 def apply_loop.body
@@ -1585,7 +1585,7 @@ def apply_loop.body
   else ok (done s)
 
 /-- [forum_kernel::apply]: loop 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 306:12-309:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 319:12-322:13
     Visibility: public -/
 @[rust_loop]
 def apply_loop
@@ -1597,7 +1597,7 @@ def apply_loop
     (s, i)
 
 /-- [forum_kernel::apply]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 303:8-311:9
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 316:8-324:9
     Visibility: public -/
 def apply (snap : Snapshot) (ws : alloc.vec.Vec Write) : Result Snapshot := do
   let s ← Snapshot.Insts.CoreCloneClone.clone snap
@@ -1635,7 +1635,7 @@ def
 }
 
 /-- [forum_kernel::{forum_kernel::Counter}::from_row]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 146:12-167:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 159:12-180:13
     Visibility: public -/
 def Counter.from_row
   (row : alloc.vec.Vec h5i_app_sql.Val) : Result (Option Counter) := do
@@ -1653,7 +1653,7 @@ def Counter.from_row
     | some x => ok (some { next_id := x })
 
 /-- [forum_kernel::{forum_kernel::User}::from_row]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 146:12-167:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 159:12-180:13
     Visibility: public -/
 def User.from_row
   (row : alloc.vec.Vec h5i_app_sql.Val) : Result (Option User) := do
@@ -1680,7 +1680,7 @@ def User.from_row
                    ok (some { user := x, admin := x1 })
 
 /-- [forum_kernel::{forum_kernel::Post}::from_row]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 146:12-167:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 159:12-180:13
     Visibility: public -/
 def Post.from_row
   (row : alloc.vec.Vec h5i_app_sql.Val) : Result (Option Post) := do
@@ -1742,7 +1742,7 @@ def Post.from_row
                 })
 
 /-- [forum_kernel::{forum_kernel::User}::from_rows]: loop body 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 174:16-180:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 187:16-193:17
     Visibility: public -/
 @[rust_loop_body]
 def User.from_rows_loop.body
@@ -1769,7 +1769,7 @@ def User.from_rows_loop.body
   else ok (done (out, ok1))
 
 /-- [forum_kernel::{forum_kernel::User}::from_rows]: loop 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 174:16-180:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 187:16-193:17
     Visibility: public -/
 @[rust_loop]
 def User.from_rows_loop
@@ -1782,7 +1782,7 @@ def User.from_rows_loop
     (out, ok1, i)
 
 /-- [forum_kernel::{forum_kernel::User}::from_rows]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 170:12-186:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 183:12-199:13
     Visibility: public -/
 def User.from_rows
   (rows : alloc.vec.Vec (alloc.vec.Vec h5i_app_sql.Val)) :
@@ -1795,7 +1795,7 @@ def User.from_rows
   else ok none
 
 /-- [forum_kernel::{forum_kernel::Post}::from_rows]: loop body 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 174:16-180:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 187:16-193:17
     Visibility: public -/
 @[rust_loop_body]
 def Post.from_rows_loop.body
@@ -1822,7 +1822,7 @@ def Post.from_rows_loop.body
   else ok (done (out, ok1))
 
 /-- [forum_kernel::{forum_kernel::Post}::from_rows]: loop 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 174:16-180:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 187:16-193:17
     Visibility: public -/
 @[rust_loop]
 def Post.from_rows_loop
@@ -1835,7 +1835,7 @@ def Post.from_rows_loop
     (out, ok1, i)
 
 /-- [forum_kernel::{forum_kernel::Post}::from_rows]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 170:12-186:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 183:12-199:13
     Visibility: public -/
 def Post.from_rows
   (rows : alloc.vec.Vec (alloc.vec.Vec h5i_app_sql.Val)) :
@@ -1848,7 +1848,7 @@ def Post.from_rows
   else ok none
 
 /-- [forum_kernel::{forum_kernel::Counter}::from_rows]: loop body 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 174:16-180:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 187:16-193:17
     Visibility: public -/
 @[rust_loop_body]
 def Counter.from_rows_loop.body
@@ -1875,7 +1875,7 @@ def Counter.from_rows_loop.body
   else ok (done (out, ok1))
 
 /-- [forum_kernel::{forum_kernel::Counter}::from_rows]: loop 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 174:16-180:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 187:16-193:17
     Visibility: public -/
 @[rust_loop]
 def Counter.from_rows_loop
@@ -1888,7 +1888,7 @@ def Counter.from_rows_loop
     (out, ok1, i)
 
 /-- [forum_kernel::{forum_kernel::Counter}::from_rows]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 170:12-186:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 183:12-199:13
     Visibility: public -/
 def Counter.from_rows
   (rows : alloc.vec.Vec (alloc.vec.Vec h5i_app_sql.Val)) :
@@ -1901,7 +1901,7 @@ def Counter.from_rows
   else ok none
 
 /-- [forum_kernel::{forum_kernel::Counter}::from_one]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 204:12-212:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 217:12-225:13
     Visibility: public -/
 def Counter.from_one
   (rows : alloc.vec.Vec (alloc.vec.Vec h5i_app_sql.Val)) :
@@ -1922,7 +1922,7 @@ def Counter.from_one
     else ok none
 
 /-- [forum_kernel::{forum_kernel::User}::del]: loop body 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 234:16-239:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 247:16-252:17
     Visibility: public -/
 @[rust_loop_body]
 def User.del_loop.body
@@ -1947,7 +1947,7 @@ def User.del_loop.body
   else ok (done out)
 
 /-- [forum_kernel::{forum_kernel::User}::del]: loop 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 234:16-239:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 247:16-252:17
     Visibility: public -/
 @[rust_loop]
 def User.del_loop
@@ -1960,7 +1960,7 @@ def User.del_loop
     (out, i)
 
 /-- [forum_kernel::{forum_kernel::User}::del]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 231:12-241:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 244:12-254:13
     Visibility: public -/
 @[reducible]
 def User.del
@@ -1968,7 +1968,7 @@ def User.del
   User.del_loop v user (alloc.vec.Vec.new User) 0#usize
 
 /-- [forum_kernel::{forum_kernel::User}::del_where]: loop body 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 247:16-252:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 260:16-265:17
     Visibility: public -/
 @[rust_loop_body]
 def User.del_where_loop.body
@@ -1995,7 +1995,7 @@ def User.del_where_loop.body
   else ok (done out)
 
 /-- [forum_kernel::{forum_kernel::User}::del_where]: loop 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 247:16-252:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 260:16-265:17
     Visibility: public -/
 @[rust_loop]
 def User.del_where_loop
@@ -2008,7 +2008,7 @@ def User.del_where_loop
     (out, i)
 
 /-- [forum_kernel::{forum_kernel::User}::del_where]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 244:12-254:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 257:12-267:13
     Visibility: public -/
 @[reducible]
 def User.del_where
@@ -2018,7 +2018,7 @@ def User.del_where
   User.del_where_loop v col val (alloc.vec.Vec.new User) 0#usize
 
 /-- [forum_kernel::{forum_kernel::Post}::del_where]: loop body 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 247:16-252:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 260:16-265:17
     Visibility: public -/
 @[rust_loop_body]
 def Post.del_where_loop.body
@@ -2045,7 +2045,7 @@ def Post.del_where_loop.body
   else ok (done out)
 
 /-- [forum_kernel::{forum_kernel::Post}::del_where]: loop 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 247:16-252:17
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 260:16-265:17
     Visibility: public -/
 @[rust_loop]
 def Post.del_where_loop
@@ -2058,7 +2058,7 @@ def Post.del_where_loop
     (out, i)
 
 /-- [forum_kernel::{forum_kernel::Post}::del_where]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 244:12-254:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 257:12-267:13
     Visibility: public -/
 @[reducible]
 def Post.del_where
@@ -2068,7 +2068,7 @@ def Post.del_where
   Post.del_where_loop v col val (alloc.vec.Vec.new Post) 0#usize
 
 /-- [forum_kernel::{forum_kernel::User}::sql_del]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 257:12-261:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 270:12-274:13
     Visibility: public -/
 def User.sql_del (user : Std.U64) : Result h5i_app_sql.Write := do
   let v ← U64.Insts.H5i_app_sqlColumn.to_val user
@@ -2076,21 +2076,21 @@ def User.sql_del (user : Std.U64) : Result h5i_app_sql.Write := do
   ok (h5i_app_sql.Write.Del User.TABLE key)
 
 /-- [forum_kernel::{forum_kernel::User}::sql_del_where]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 264:12-266:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 277:12-279:13
     Visibility: public -/
 def User.sql_del_where
   (col : Std.U32) (val : h5i_app_sql.Val) : Result h5i_app_sql.Write := do
   ok (h5i_app_sql.Write.DelWhere User.TABLE col val)
 
 /-- [forum_kernel::{forum_kernel::Post}::sql_del_where]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 264:12-266:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 277:12-279:13
     Visibility: public -/
 def Post.sql_del_where
   (col : Std.U32) (val : h5i_app_sql.Val) : Result h5i_app_sql.Write := do
   ok (h5i_app_sql.Write.DelWhere Post.TABLE col val)
 
 /-- [forum_kernel::Rows]
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 284:8-286:9
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 297:8-299:9
     Visibility: public -/
 structure Rows where
   counter : alloc.vec.Vec (alloc.vec.Vec h5i_app_sql.Val)
@@ -2098,7 +2098,7 @@ structure Rows where
   posts : alloc.vec.Vec (alloc.vec.Vec h5i_app_sql.Val)
 
 /-- [forum_kernel::decode]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 289:8-297:9
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 302:8-310:9
     Visibility: public -/
 def decode (r : Rows) : Result (Option Snapshot) := do
   let o ← Counter.from_one r.counter
@@ -2115,7 +2115,7 @@ def decode (r : Rows) : Result (Option Snapshot) := do
       | some x2 => ok (some { counter := x, users := x1, posts := x2 })
 
 /-- [forum_kernel::sql_writes]: loop body 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 317:12-320:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 330:12-333:13
     Visibility: public -/
 @[rust_loop_body]
 def sql_writes_loop.body
@@ -2135,7 +2135,7 @@ def sql_writes_loop.body
   else ok (done out)
 
 /-- [forum_kernel::sql_writes]: loop 0:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 317:12-320:13
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 330:12-333:13
     Visibility: public -/
 @[rust_loop]
 def sql_writes_loop
@@ -2148,7 +2148,7 @@ def sql_writes_loop
     (out, i)
 
 /-- [forum_kernel::sql_writes]:
-    Source: 'crates/h5i-app-schema/src/lib.rs', lines 314:8-322:9
+    Source: 'crates/h5i-app-schema/src/lib.rs', lines 327:8-335:9
     Visibility: public -/
 @[reducible]
 def sql_writes

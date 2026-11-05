@@ -29,7 +29,11 @@ use crate::util::Out;
 pub fn lint(p: &Project, out: &Out) -> Result<()> {
     let mut bad = route_coverage(p);
     bad.extend(command_hygiene(p));
-    bad.extend(read_only_proof(p));
+    let (ro_bad, ro_notes) = read_only_proof_notes(p);
+    bad.extend(ro_bad);
+    for n in ro_notes {
+        out.note(&n);
+    }
     bad.extend(guarded_wiring(p));
     let (actor_bad, actor_notes) = actor_paths(p);
     bad.extend(actor_bad);
@@ -195,28 +199,50 @@ fn rel_str(p: &Project, s: &str) -> String {
     s.replace(&format!("{}/", p.root.display()), "")
 }
 
-/// Every `impl Kernel` that overrides `read_only` has a hand-written
-/// `ReadOnly.Sound` proof. (An `[authz]` app writes no `impl Kernel`:
+/// Every `impl Kernel` that overrides `read_only` names its proof of
+/// `H5iAppLib.Obligation.ReadOnlySound` as `[obligations] read-only`, which
+/// `h5i app check` holds to exactly that statement. A hand-written proof that
+/// only mentions `ReadOnly.Sound` is still accepted, with a note: its
+/// statement is not checked. (An `[authz]` app writes no `impl Kernel`:
 /// `Authz<T>` declares the view's read-only commands, and `h5i app check`
 /// requires `<fn>.read_only_sound`.) A source that does not parse fails.
+#[cfg(test)]
 fn read_only_proof(p: &Project) -> Vec<String> {
-    let proven = crate::check::has_read_only_proof(p);
+    read_only_proof_notes(p).0
+}
+
+fn read_only_proof_notes(p: &Project) -> (Vec<String>, Vec<String>) {
+    let named = p.manifest.obligations.read_only.is_some();
+    let proven = named || crate::check::has_read_only_proof(p);
     let (impls, mut bad) = kernel_impls(p);
+    let mut notes = Vec::new();
     for i in impls {
         // h5i-app-core's `Authz<T>`: its `read_only` is the view's, proven
         // for each app that runs it (`<fn>.read_only_sound`, required by
         // `h5i app check`), so it carries no proof of its own.
         let framework = i.self_ty == "Authz" && crate::util::package_name(&i.krate).as_deref() == Some("h5i-app-core");
-        if i.fns.contains("read_only") && !proven && !framework {
+        if !i.fns.contains("read_only") || framework {
+            continue;
+        }
+        if !proven {
             bad.push(format!(
-                "{}:{}: Kernel::read_only is overridden, but no proof in {} states `H5iAppLib.ReadOnly.Sound`",
+                "{}:{}: Kernel::read_only is overridden, but no proof in {} states `H5iAppLib.ReadOnly.Sound`; prove \
+                 `H5iAppLib.Obligation.ReadOnlySound` and name the theorem as `[obligations] read-only`",
                 rel(p, &i.file),
                 i.line,
                 p.proofs().display()
             ));
+        } else if !named {
+            notes.push(format!(
+                "{}:{}: Kernel::read_only is overridden and a proof mentions `ReadOnly.Sound`, but its statement is not \
+                 checked: name it as `[obligations] read-only` in {}",
+                rel(p, &i.file),
+                i.line,
+                crate::manifest::FILE
+            ));
         }
     }
-    bad
+    (bad, notes)
 }
 
 /// With `[authz] guarded`, the project writes no `Kernel`, `Store` or
@@ -464,6 +490,12 @@ mod tests {
         assert_eq!(read_only_proof(&p).len(), 1, "a comment is not a proof");
         std::fs::write(d.path().join("proofs/ReadOnly.lean"), "theorem ro : H5iAppLib.ReadOnly.Sound k t w := k_sound\n").unwrap();
         assert!(read_only_proof(&p).is_empty());
+        assert_eq!(read_only_proof_notes(&p).1.len(), 1, "accepted, but its statement is not checked");
+        // Named as the obligation: `check` holds it to the statement.
+        std::fs::remove_file(d.path().join("proofs/ReadOnly.lean")).unwrap();
+        std::fs::write(d.path().join("h5i-app.toml"), "[obligations]\nread-only = \"k.ro\"\n").unwrap();
+        let p = Project::load(&d.path().join("h5i-app.toml")).unwrap();
+        assert_eq!(read_only_proof_notes(&p), (Vec::new(), Vec::new()));
     }
 
     /// A kernel crate on the framework's real packages, with `extra` deps.

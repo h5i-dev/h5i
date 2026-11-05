@@ -10,6 +10,7 @@ on:
     paths:
       - "crates/h5i-app*/**"
       - "examples/app/**"
+      - "examples/embedded/**"
       - "scripts/app/**"
       - "deny.toml"
       - "Cargo.lock"
@@ -19,6 +20,7 @@ on:
     paths:
       - "crates/h5i-app*/**"
       - "examples/app/**"
+      - "examples/embedded/**"
       - "scripts/app/**"
       - "deny.toml"
       - "Cargo.lock"
@@ -70,6 +72,13 @@ jobs:
       - run: cargo build -p 'h5i-app*' --all-features --all-targets --locked
       - run: cargo build --workspace --all-targets --locked
         working-directory: examples/app
+      # The embedded examples: host workspace, then the firmware for Cortex-M.
+      - run: cargo test --workspace --locked
+        working-directory: examples/embedded
+      - run: rustup target add thumbv7em-none-eabihf
+      - run: cargo build -p h5i-app-h1 -p h5i-app-embedded --target thumbv7em-none-eabihf --locked
+      - run: cargo build --release --locked
+        working-directory: examples/embedded/thermostat/firmware
       # A TLS-only PostgreSQL for h5i-app-pg's `tls` tests.
       - run: scripts/app/pg-tls.sh "$RUNNER_TEMP/pg-tls" >> "$GITHUB_ENV"
       - run: scripts/app/ci-rust-tests.sh
@@ -79,7 +88,7 @@ jobs:
         env:
           H5I_APP_TEST_RESTART_CMD: docker restart ${{ job.services.postgres.id }}
       # Routes take an Actor; no client-set identity in a Command.
-      - run: cargo app lint --all crates examples/app
+      - run: cargo app lint --all crates examples/app examples/embedded
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-deny
@@ -164,7 +173,7 @@ jobs:
       # Build every proof project and gate it: no sorry, native_decide or
       # axiom, every theorem of a hand-written module on the standard axioms
       # only, and the theorems each h5i-app.toml names present.
-      - run: target/release/h5i-app-xtask check --all crates examples/app
+      - run: target/release/h5i-app-xtask check --all crates examples/app examples/embedded
   # A9: the committed Lean must be exactly what Aeneas extracts from the kernel.
   extract:
     runs-on: ubuntu-latest
@@ -206,4 +215,4 @@ jobs:
           build "github:AeneasVerif/aeneas/$AENEAS_REV#charon" "$RUNNER_TEMP/charon"
           echo "$RUNNER_TEMP/aeneas/bin" >> "$GITHUB_PATH"
           echo "$RUNNER_TEMP/charon/bin" >> "$GITHUB_PATH"
-      - run: target/release/h5i-app-xtask extract --check --all crates examples/app
+      - run: target/release/h5i-app-xtask extract --check --all crates examples/app examples/embedded
