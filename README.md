@@ -51,33 +51,27 @@ h5i provides a unified CLI for building, verifying, debugging, and security-test
 **CLI Examples**
 
 ```bash
-# Project tooling: Scaffold Rust web applications, extract Lean 4 models, check proofs, and test proof sensitivity.
-h5i app new counter && cd counter
-h5i app extract
-h5i app prove
-h5i app mutate
 
-# Browser automation: Navigate websites, interact with forms, and inspect authenticated workflows.
-h5i browser open https://example.com
-h5i browser click @e3
+h5i app new counter && cd counter            # Scaffold a new Rust web app
+h5i app extract                              # Extract Lean 4 models from Rust
+h5i app prove                                # Verify properties with Lean 4
+h5i app mutate                               # Test proof sensitivity with mutations
 
-# HTTP security testing: Capture, modify, replay, and compare HTTP requests.
-h5i websec requests
-h5i websec replay req_42 --set query.id=456
+h5i browser open https://example.com         # Browser automation: Open a webpage
+h5i browser click @e3                        # Click an element by reference
 
-# Reconnaissance: Discover endpoints, parameters, and hidden attack surfaces.
-h5i recon crawl --max-requests 200
+h5i websec requests                          # HTTP security testing: Inspect captured requests
+h5i websec replay req_42 --set query.id=456  # Modify and replay a request
 
-# CI/CD: Replay security tests and enforce API coverage requirements.
-h5i test .h5i-tests/tests/auth.yaml --target https://staging.example.com
-h5i test --target https://staging.example.com --openapi openapi.yaml --min-coverage 80
+h5i recon crawl --max-requests 200           # Reconnaissance: Discover attack surfaces
 
-# Sandboxed environment: Run isolated workflows with filesystem and network restrictions.
-h5i box --name lab --profile browser
-h5i box shell lab -- claude
+h5i test .h5i-tests/tests/auth.yaml --target https://staging.example.com                # CI/CD: Run security tests
+h5i test --target https://staging.example.com --openapi openapi.yaml --min-coverage 80  # Enforce API coverage
 
-# Dashboard: Monitor browser sessions and agent activity through a local web interface.
-h5i ui
+h5i box --name lab --profile browser         # Sandbox: Create an isolated environment
+h5i box shell lab -- claude                  # Run Claude inside the sandbox
+
+h5i ui                                       # Dashboard: Launch the local web interface
 ```
 
 <p align="center">
