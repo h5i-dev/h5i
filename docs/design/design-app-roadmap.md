@@ -16,7 +16,7 @@ Code and other docs cite these IDs; keep them stable.
 | A3 | Reply encoder adds nothing | JSON writer proven (`crates/h5i-app-json/proofs`): output equals the spec printer; string bytes cannot close a string early. Mapping replies to JSON is trusted, per app. | Parser round trip |
 | A4 | Postgres store matches `apply` | Proven up to the model `H5iAppLib.Pg`: planner, SQL compiler and printer, `schema!`-generated table code, `apply`, `sql_writes`, `decode`, `PgServed`/`pg_loaded_inv`. Server apps prove `db_inv`; `[authz]` apps get `Committed.pg_stored` generated. Trusted: PostgreSQL matches `H5iAppLib.Pg`, driver value conversion, schema description. | Test `H5iAppLib.Pg` against PostgreSQL with generated statements |
 | A5 | SERIALIZABLE equals a serial order | Trusted; theorems over `H5iAppLib.Run` rest on it | Stays trusted (PostgreSQL guarantee) |
-| A6 | Engine protocol (retry, idempotency, lock, clock, outbox) is correct | Trusted contract in design-app-trust.md; integration and fault tests. No refinement proof from `h5i-app-pg`. | Keep the engine small; extend tests with the contract |
+| A6 | Engine protocol (retry, idempotency, lock, clock, outbox) is correct | Trusted contract in design-app-trust.md; a fault test per bullet in CI (killed backends, lost COMMITs, forced 40001/40P01, cancellation, 64 concurrent clients, a server restart). No refinement proof from `h5i-app-pg`. | Keep the engine small; extend tests with the contract |
 | A7 | Charon, Aeneas, Lean are sound | Trusted. Axiom gate; Rust-vs-Lean differential test (the document service in h5i-web-app, 55k cases, no mismatch) | Stays trusted |
 | A8 | No handler bypasses the engine | Opaque `Tx` and pool; `cargo deny check bans` keeps DB crates in `h5i-app-pg`; `h5i_app_pg::lockdown` role separation. In CI. | Superusers out of scope |
 | A9 | Running code is the extracted code | CI re-extracts every kernel and extracted crate with pinned tools and fails on a diff | Done |
@@ -31,9 +31,12 @@ Trust:
   conflicts, scoped reads (A4).
 - Bind the tenant into the transaction API, so a `Store` cannot touch
   another tenant. `schema!` already generates the store for `[authz]` apps.
-- Test retries, unknown commits, cancellation, advisory-lock cleanup,
-  idempotency and outbox delivery on the production path in CI, and reject
-  a run that skipped them (A6).
+- Engine faults not yet tested (A6): `Clock::Database` and `monotonic`
+  under concurrency or faults, `Engine::migrate` under faults, TLS
+  connections under faults, server or host crashes (only a clean restart is
+  tested), network partitions and slow links, a server down for longer than
+  a restart, and SERIALIZABLE's conflict pool overflowing on CI's
+  `max_connections`. The tested part is listed in design-app-trust.md.
 - Per-actor loads: the plan-to-SQL compilation (`compile_read`) is
   differential-tested, not proven against `H5iAppLib.Pg`, and commands
   without a read plan still load the whole tenant.
