@@ -551,11 +551,11 @@ dependencies = [
 
 [[package]]
 name = "h5i-app-core"
-version = "0.5.3"
+version = "0.5.4"
 
 [[package]]
 name = "h5i-app-embedded"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "critical-section",
  "embedded-io-async 0.7.0",
@@ -565,7 +565,7 @@ dependencies = [
 
 [[package]]
 name = "h5i-app-h1"
-version = "0.5.3"
+version = "0.5.4"
 
 [[package]]
 name = "hash32"
