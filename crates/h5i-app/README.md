@@ -1,40 +1,43 @@
 # h5i-app
 
-The Axum-based application framework for [h5i](https://github.com/h5i-dev/h5i).
-Write application logic in Rust and prove its properties in Lean 4.
+A Rust application framework for [h5i](https://github.com/h5i-dev/h5i).
+Write application logic in Rust, reuse framework-proven guarantees, and prove application-specific properties in Lean 4.
 
 [![Crates.io](https://img.shields.io/crates/v/h5i-app)](https://crates.io/crates/h5i-app)
 
 ```toml
 [dependencies]
-h5i-app = { version = "5.3", features = ["http", "postgres"] }
+h5i-app = { version = "0.5", features = ["http", "postgres"] }
 ```
 
 | Crate | Role |
 |---|---|
-| `h5i-app` | the entry point: re-exports the crates below behind features |
+| `h5i-app` | feature-gated entry point for web and database integrations |
 | `h5i-app-core` | the `Kernel` contract and an in-memory reference engine |
-| `h5i-app-http` | axum integration: `Actor`, `H5iApp::respond`, `rpc_router` |
+| `h5i-app-http` | Axum integration: `Actor`, `H5iApp::respond`, `rpc_router` |
 | `h5i-app-pg` | the PostgreSQL engine |
 | `h5i-app-schema` | `schema!`: row types, table mappings, generated Lean |
 | `h5i-app-sql` | write sets to keyed SQL statements (extracted, proven) |
 | `h5i-app-pgsql` | statements to PostgreSQL text (extracted, proven) |
 | `h5i-app-json` | the reply JSON writer (extracted, proven) |
 | `h5i-app-token` | bearer-token encoding and parsing (extracted, proven) |
-| `h5i-app-std` | byte strings, sets, maps, reachability and expiry checks for kernels (extracted, proven) |
+| `h5i-app-std` | extractable kernel utilities and reusable verified authorization guards |
+| `h5i-app-h1` | `no_std`, heap-free HTTP/1.1 parsing and framing (extracted, proven) |
+| `h5i-app-embedded` | async, heap-free HTTP server for embedded kernels |
+| `h5i-app-gpu` | optional batch execution adapters with CPU fallback and differential checks |
 
-A kernel crate depends on `h5i-app-sql`, `h5i-app-schema` and, for text,
-sets or maps, `h5i-app-std` directly, so that extraction sees only the code
-it translates.
+Kernel crates depend directly on the extractable components they use, so extraction does not pull in Axum or PostgreSQL drivers. Embedded and GPU support are separate crates, not `h5i-app` feature flags.
 
 ## High level features
 
-- Write the logic as pure Rust functions and prove it in Lean 4 via [Aeneas](https://github.com/AeneasVerif/aeneas).
-- Serve it with [axum](https://github.com/tokio-rs/axum); handlers never touch the database.
-- Run each request in a SERIALIZABLE PostgreSQL transaction, with retries and idempotency keys.
-- Declare tables once with `schema!` and get Rust mappings and Lean proofs.
-- Prove that invariants hold for the rows loaded back from the database.
-- Prove properties across requests, for every order in which clients' requests commit.
+- **Framework-provided proofs:** Reuse verified components and generic guarantees, including authorization guards and storage compilation, without reproving them for every application.
+- **Application-specific proofs:** Write application logic as pure Rust functions and prove custom properties in Lean 4 via [Aeneas](https://github.com/AeneasVerif/aeneas).
+- Serve kernels with [Axum](https://github.com/tokio-rs/axum) or an async `no_std` embedded HTTP server.
+- Run web requests in SERIALIZABLE PostgreSQL transactions, with retries and idempotency keys.
+- Declare tables once with `schema!` to generate Rust mappings and Lean proof artifacts.
+- Optionally accelerate eligible batch workloads on GPUs, with CPU fallback and differential testing.
+
+The Axum/PostgreSQL path separates extracted logic from trusted infrastructure:
 
 ```mermaid
 flowchart LR
@@ -42,8 +45,8 @@ flowchart LR
     K --> S["storage: plan, SQL compiler (extracted)"]
     S --> DB["engine, PostgreSQL (trusted)"]
 
-    K -. Aeneas .-> A["kernel proofs"]
-    S -. Aeneas .-> B["storage proofs"]
+    K -. Aeneas .-> A["application-specific proofs"]
+    S -. Aeneas .-> B["framework-provided proofs"]
     DB -. "SQL model" .-> B
     SP["Spec (reviewed)"] --> A
     A --> D["db_inv"]
@@ -53,7 +56,7 @@ flowchart LR
 ## Usage example
 
 The kernel is one function that decides what a command does. This one, from
-the [calculator tutorial](../../examples/app/calculator/TUTORIAL.md), keeps one number per user:
+[the calculator tutorial](https://github.com/h5i-dev/h5i/blob/main/examples/app/calculator/TUTORIAL.md), keeps one number per user:
 
 ```rust
 pub fn transition(actor: &Principal, snap: &Snapshot, cmd: &Command) -> Result<(Option<Memory>, Reply), Error> {
@@ -71,7 +74,7 @@ pub fn transition(actor: &Principal, snap: &Snapshot, cmd: &Command) -> Result<(
 }
 ```
 
-The server around it is an ordinary axum application:
+The server around it is an ordinary Axum application:
 
 ```rust
 let engine = Arc::new(Engine::<Calc, CalcStore>::new(pool(&url, 8)?, EngineConfig::default()));
@@ -81,14 +84,7 @@ let router = Router::new().route("/healthz", get(|| async { "ok" })).merge(rpc_r
 axum::serve(TcpListener::bind("127.0.0.1:8080").await?, router).await?;
 ```
 
-`pool` connects over plain TCP. With the `tls` feature, `pool_tls(&url, 8,
-&Roots::PemFile(ca))` encrypts every connection and verifies the server's
-certificate chain and host name (libpq's `verify-full`); a server without TLS
-is refused, never used in the clear. Use `Roots::WebPki` for a publicly
-trusted certificate, or the provider's CA bundle (e.g. Amazon RDS's) as a PEM
-file. `lockdown_tls` does the same for `lockdown`. SCRAM channel binding
-(`SCRAM-SHA-256-PLUS`) is offered for RSA (PKCS#1 v1.5) and ECDSA server
-certificates; add `channel_binding=require` to the URL to insist on it.
+`pool` connects over plain TCP. For certificate-verified TLS to PostgreSQL, enable the `tls` feature and use `pool_tls` with `Roots::WebPki` or `Roots::PemFile(ca)`. For the full trust boundary and assumptions, see [what h5i-app proves and assumes](https://github.com/h5i-dev/h5i/blob/main/docs/design/design-app-trust.md).
 
 After the kernel is translated to Lean, you can prove properties of it, for
 example that after any successful command a `get` by the same user returns its
@@ -103,4 +99,4 @@ theorem get_after (a : Principal) (s s' : Snapshot) (c : Command) (w : Option Me
 
 ## License
 
-This project is licensed under the [Apache-2.0 license](../../LICENSE).
+This project is licensed under the [Apache-2.0 license](https://github.com/h5i-dev/h5i/blob/main/LICENSE).
