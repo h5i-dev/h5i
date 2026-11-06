@@ -6,7 +6,7 @@ license = "Apache-2.0"
 version = "0.5.4"
 repository = "https://github.com/h5i-dev/h5i"
 homepage = "https://github.com/h5i-dev/h5i"
-readme = "../../README.md"
+readme = "../h5i-app/README.md"
 
 [dependencies]
 h5i-app-core.workspace = true
