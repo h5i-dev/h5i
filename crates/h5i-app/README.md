@@ -31,7 +31,7 @@ Kernel crates depend directly on the extractable components they use, so extract
 ## High level features
 
 - Write application logic as pure Rust functions and prove custom properties in Lean 4 via [Aeneas](https://github.com/AeneasVerif/aeneas).
-- Reuse verified components and generic guarantees, including authorization guards and storage compilation, without reproving them for every application.
+- Reuse verified components and generic guarantees, including authorization guards and storage compilation.
 - Serve kernels with [Axum](https://github.com/tokio-rs/axum) or an async `no_std` embedded HTTP server.
 - Run web requests in SERIALIZABLE PostgreSQL transactions, with retries and idempotency keys.
 - Declare tables once with `schema!` to generate Rust mappings and Lean proof artifacts.
