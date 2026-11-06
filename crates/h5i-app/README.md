@@ -1,7 +1,7 @@
 # h5i-app
 
 A Rust application framework for [h5i](https://github.com/h5i-dev/h5i).
-Write application logic in Rust, reuse framework-proven guarantees, and prove application-specific properties in Lean 4.
+Write application logic in Rust and prove its properties in Lean 4.
 
 [![Crates.io](https://img.shields.io/crates/v/h5i-app)](https://crates.io/crates/h5i-app)
 
