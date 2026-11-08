@@ -472,7 +472,6 @@
     .proof-diagram .pd-num { fill: var(--spot); }
     .proof-diagram .pd-note { font-size: 10.5px; fill: var(--dim); }
     .proof-diagram .pd-col { fill: var(--spot); }
-    .proof-diagram .pd-src text.pd-head { font-size: 12.5px; font-weight: 500; fill: var(--ink); }
 
     /* ── Hero: the title and its copy, then the stage at full width ── */
     #hero { padding: 60px var(--gut) 52px; }
@@ -923,19 +922,19 @@
         <text x="700" y="299" class="pd-lbl pd-col">h5i-app-embedded</text>
         <text x="908" y="299" class="pd-lbl pd-col">h5i-app-gpu</text>
         <g class="pd-src" xml:space="preserve">
-          <text x="492" y="323" class="pd-head">Axum server</text>
+          <text x="492" y="322"><tspan class="pd-cm">// Axum server</tspan></text>
           <text x="492" y="346"><tspan class="pd-kw">let</tspan> router <tspan class="pd-pu">=</tspan> <tspan class="pd-ty">Router</tspan><tspan class="pd-pu">::</tspan>new<tspan class="pd-pu">()</tspan></text>
           <text x="492" y="365">  <tspan class="pd-pu">.</tspan>merge<tspan class="pd-pu">(</tspan>rpc_router<tspan class="pd-pu">(</tspan>app<tspan class="pd-pu">));</tspan></text>
           <text x="492" y="384">axum<tspan class="pd-pu">::</tspan>serve<tspan class="pd-pu">(</tspan>listener<tspan class="pd-pu">,</tspan> router<tspan class="pd-pu">)</tspan></text>
           <text x="492" y="403">  <tspan class="pd-pu">.</tspan><tspan class="pd-kw">await</tspan><tspan class="pd-pu">?;</tspan></text>
 
-          <text x="700" y="323" class="pd-head">Embedded, no_std</text>
+          <text x="700" y="322"><tspan class="pd-cm">// Embedded, no_std</tspan></text>
           <text x="700" y="346"><tspan class="pd-kw">let mut</tspan> rx <tspan class="pd-pu">=</tspan> <tspan class="pd-pu">[</tspan>0u8<tspan class="pd-pu">;</tspan> 2048<tspan class="pd-pu">];</tspan></text>
           <text x="700" y="365"><tspan class="pd-kw">let mut</tspan> tx <tspan class="pd-pu">=</tspan> <tspan class="pd-pu">[</tspan>0u8<tspan class="pd-pu">;</tspan> 1024<tspan class="pd-pu">];</tspan></text>
           <text x="700" y="384">serve<tspan class="pd-pu">(&amp;</tspan>cfg<tspan class="pd-pu">, &amp;</tspan>router<tspan class="pd-pu">, &amp;</tspan>app<tspan class="pd-pu">,</tspan></text>
           <text x="700" y="403"> <tspan class="pd-pu">&amp;</tspan><tspan class="pd-kw">mut</tspan> rx<tspan class="pd-pu">, &amp;</tspan><tspan class="pd-kw">mut</tspan> tx<tspan class="pd-pu">,</tspan> io<tspan class="pd-pu">).</tspan><tspan class="pd-kw">await</tspan><tspan class="pd-pu">?</tspan></text>
 
-          <text x="908" y="323" class="pd-head">GPU acceleration</text>
+          <text x="908" y="322"><tspan class="pd-cm">// GPU acceleration</tspan></text>
           <text x="908" y="346"><tspan class="pd-ty">ld.global.u8</tspan>  %r1, [%rd1]<tspan class="pd-pu">;</tspan></text>
           <text x="908" y="365"><tspan class="pd-ty">setp.ne.u32</tspan>   %p1, %r1, 0<tspan class="pd-pu">;</tspan></text>
           <text x="908" y="384"><tspan class="pd-ty">selp.u32</tspan>      %r2, 1, 0, %p1<tspan class="pd-pu">;</tspan></text>
