@@ -72,7 +72,11 @@ h5i test --target https://staging.example.com --openapi openapi.yaml --min-cover
 
 h5i box --name lab --profile browser         # Sandbox: Create an isolated environment
 h5i box shell lab -- claude                  # Run Claude inside the sandbox
+```
 
+## 4. Dashboard
+
+```bash
 h5i ui                                       # Dashboard: Launch the local web interface
 ```
 
