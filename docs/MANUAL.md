@@ -1,9 +1,9 @@
 # h5i Manual
 
-The command reference for h5i. [What h5i is](#what-h5i-is) gives the shape of
-the tool in a page. After that, [`h5i app`](#h5i-app) covers the framework
-side, [The engagement](#the-engagement) and the sections that follow it cover
-the security workspace, and [Containment](#containment-optional) covers boxes.
+The command reference for h5i, in the order an application lives: build it and
+prove its kernel, test the running application for what the proofs do not
+cover, give the agent doing either a box, and watch all of it from one
+dashboard. [What h5i is](#what-h5i-is) gives that shape in a page.
 
 `h5i <command> --help` is authoritative for flags. This manual explains what
 the commands are for.
@@ -14,33 +14,54 @@ the commands are for.
 
 h5i (pronounced high-five) is an Axum-based Rust web framework built around
 application kernels that can be formally verified with Lean 4 and executed on
-servers, bare-metal embedded devices, and GPUs. The same binary also carries
-the development infrastructure around such an application: a red-teaming
-workbench, security regression tests, and confined boxes for AI agents.
+servers, bare-metal embedded devices, and GPUs. The same binary carries the
+development infrastructure around such an application: a red-teaming
+workbench, security regression tests, confined boxes for AI agents, and one
+dashboard over all of it.
 
-| Part | What it is | Commands |
-|---|---|---|
-| The framework | [h5i-app](https://github.com/h5i-dev/h5i/tree/main/crates/h5i-app): a kernel crate holds the application logic, and Charon and Aeneas translate it to Lean 4 so its properties are proven. Axum serves it on a server, `h5i-app-embedded` serves it heap-free on a microcontroller, and `h5i-app-gpu` runs eligible batches on a GPU with a CPU fallback. | [`h5i app`](#h5i-app) |
-| The security workspace | A browser session whose traffic is captured by a proxy h5i runs, and the tools that read, replay, inventory and test that traffic. It works against any web application, including ones that never heard of h5i-app. | [`h5i browser`](#h5i-browser), [`h5i websec`](#h5i-websec), [`h5i recon`](#h5i-recon), [`h5i project`](#h5i-project), [`h5i test`](#h5i-test) |
-| Containment | Disposable boxes with a pinned base, an egress allowlist and a human-operated output gate, for agent-written or untrusted code and for a browser that should itself be confined. | [`h5i box`](#boxes), [`h5i ui`](#the-console) |
+The manual follows the life of an application through four parts:
 
-The security workspace has the most commands, so most of this manual is about
-it. In a session, Chromium runs through
-[agent-browser](https://github.com/vercel-labs/agent-browser) and points at a
-capture proxy h5i starts for that session. The proxy checks every request
-against the session's policy and writes it down before forwarding it. If the
-record cannot be written, the request is refused. An agent reads the page as an
-accessibility outline with `@ref` handles, acts on it, and then works on the
-traffic that page produced: inspect a message, change one field, send it again,
-compare the answers. A request that is absent from the log did not go through
-the session.
+| Part | You | h5i | Chapters |
+|---|---|---|---|
+| Build and verify | Write the application's logic as a kernel and say what it must guarantee | Extracts the kernel to Lean 4, gates the proofs, states the framework's obligations for it, and tries to break the spec with mutants | [`h5i app`](#h5i-app) |
+| Test the running application | Drive the deployed application, change what it sends, judge what comes back | Captures every request, replays it under your edits, records each decision, and replays the whole flow in CI | [The security workflow](#the-security-workflow), [`h5i browser`](#h5i-browser), [`h5i recon`](#h5i-recon), [`h5i websec`](#h5i-websec), [`h5i project`](#h5i-project), [`h5i test`](#h5i-test) |
+| Contain the agent | Let an agent write the code or run the attack | Runs it in a disposable box with a pinned base, an egress allowlist and a human-operated output gate | [Containment](#containment-optional), [Policy](#policy), [Receipts](#receipts) |
+| Watch | Read, decide, take over | One read-only dashboard over proofs, engagements, sessions and boxes | [`h5i ui`](#the-console) |
+
+The first part is where the guarantees come from. An application keeps the
+logic that decides what each command does in a kernel crate. Charon and Aeneas
+translate that crate to Lean 4, `h5i app` gates the proofs, and the same
+kernel is served by Axum on a server, by a heap-free HTTP/1.1 server on a
+microcontroller, or in batches on a GPU. The shell around the kernel is
+trusted infrastructure, and the kernel is what the proofs are about.
+
+The second part exists because the proofs stop at the kernel. Around it sit
+Axum, PostgreSQL, the embedded I/O, the GPU launch shell, your configuration,
+your deployment, and the spec itself, which may have left something out. That
+is where the remaining bugs live, and they are found by testing the running
+application: a browser session whose traffic goes through a capture proxy h5i
+starts for it, and the tools that read, replay, inventory and judge that
+traffic. A bug found this way becomes an `h5i test` that runs in CI beside
+`h5i app extract --check`, so the proof gate and the regression gate guard the
+same application from two sides. This part works against any web
+application, including ones built on another stack, and it has the most
+commands, so it takes up most of this manual.
+
+The third part exists because both halves are agent work. An agent writes
+kernels and proofs; an agent drives the browser and sends mutated requests. A
+box is where that agent runs when its code is untrusted, when its target may
+answer with something hostile, or when its network has to be decided outside
+it. The fourth part is the dashboard that reads the other three.
 
 ### The division of labour
 
-h5i does the deterministic work. The agent does the judging.
+The same split runs through every part. h5i does the deterministic work. You,
+or your agent, do the judging.
 
-| h5i owns | the agent owns |
+| h5i owns | you or the agent own |
 |---|---|
+| extraction to Lean, the proof gate, the framework's stated obligations | the kernel, and which theorems it should satisfy |
+| the mutants, and whether each one broke a proof | whether a surviving mutant is a gap in the spec |
 | exact capture, stable message ids | which request matters |
 | session, cookie and identity state | which parameter to change |
 | structured edit, resend, diff, timing | what a difference means |
@@ -49,7 +70,9 @@ h5i does the deterministic work. The agent does the judging.
 
 h5i ships no payloads, no wordlists and no verdicts. A finding is what the agent
 writes with `h5i websec finding create`; h5i stores it and checks that the ids
-it cites exist.
+it cites exist. The only theorems h5i writes for you are the framework's own:
+the obligations it states and the authorization proofs it generates. A
+property nobody stated is a property nothing proved.
 
 ### Two kinds of record
 
@@ -62,15 +85,25 @@ it. A session's lane is `proxy-observed`. Records from an older h5i that had
 its own engine may say `engine-claimed` or `host-observed`; they are still read,
 and a lane is never upgraded.
 
+The framework side has the same split. The Lean kernel's verdict on the current
+sources is the evidence. A `passed` run under `.h5i/app/runs` and the per-route
+report `h5i app report` derives from the sources are the account, and rerunning
+`h5i app check` is how a reader turns one into the other.
+
 ### What it is not
 
+- A proof of the whole application. The proofs are about the kernel. Axum,
+  PostgreSQL, the embedded I/O and the GPU launch shell are trusted
+  infrastructure, GPU execution is tested against the CPU path, and
+  [what the proofs assume](#what-the-proofs-cover-and-what-they-assume) is
+  written down.
 - A scanner. There is no crawl-and-flag mode, no payload generation and no
-  severity score.
-- A sandbox by default. A session's Chromium is an ordinary host process, and
-  `h5i browser status` says so. Containment is a box you ask for.
+  severity score. The verdict is yours.
 - A browser. The browser is Chromium. h5i owns the policy, the record and the
   messages that pass through its proxy.
-- A content filter. h5i bounds what a persuaded agent can reach. It does not
+- A sandbox by default. A session's Chromium is an ordinary host process, and
+  `h5i browser status` says so. Containment is a box you ask for.
+- A content filter. A box bounds what a persuaded agent can reach. It does not
   classify what a page says.
 - A defence against a targeted kernel exploit. See [Limits](#limits).
 
@@ -105,12 +138,12 @@ npx skills add h5i-dev/h5i  # the same bytes, without the binary
 |---|---|
 | [`h5i app`](#h5i-app) | Build verified applications with h5i-app: extract a kernel to Lean, gate its proofs, mutate it. |
 | [`h5i browser`](#h5i-browser) | Browser sessions: open one, drive it, capture what it fetched. |
-| [`h5i websec`](#h5i-websec) | Read, edit, resend and compare what a session sent. A plugin. |
 | [`h5i recon`](#h5i-recon) | What a target exposes, and how h5i knows. A plugin. |
-| [`h5i test`](#h5i-test) | Replay portable attack flows and check them with `expect` or your own oracle. A plugin. |
+| [`h5i websec`](#h5i-websec) | Read, edit, resend and compare what a session sent. A plugin. |
 | [`h5i project`](#h5i-project) | The durable engagement: notes, findings, evidence, checklists and reports. |
+| [`h5i test`](#h5i-test) | Replay portable attack flows and check them with `expect` or your own oracle. A plugin. |
 | [`h5i box`](#boxes) | Create, run, inspect and export boxes. |
-| [`h5i ui`](#the-console) | The read-only console over every session and box on this machine. |
+| [`h5i ui`](#the-console) | The dashboard: applications and their proofs, engagements, sessions and boxes on this machine, read-only. |
 | [`h5i skill`](#h5i-skill) | Write or print the agent skill this binary carries. |
 | [`h5i plugin`](#h5i-plugin) | Install the workbench, the ledger and the test runner. |
 | `h5i completion` | Shell completions for bash, zsh, fish and friends. |
@@ -254,16 +287,32 @@ old = "if s.count >= s.limit {"
 new = "if s.count > s.limit {"
 ```
 
-GPU execution is tested, not proven: `h5i-app-gpu` runs the same kernel
-source on both backends and checks that the outputs agree, and a GPU batch
-never commits application state on its own.
+### What the proofs cover, and what they assume
+
+The theorems are about the extracted kernel and the framework's extracted
+components. Everything else is an assumption, listed as A1 to A11 in
+[`docs/design/design-app-trust.md`](design/design-app-trust.md): the
+authenticator returns the principal that sent the request, PostgreSQL runs the
+rendered SQL as the model says, SERIALIZABLE commits equal some serial order,
+the engine meets its contract, Charon, Aeneas and Lean translate faithfully,
+and for an `[authz]` app the reviewed surface is what the author meant. `h5i
+app report` names the assumptions each route rests on. GPU execution is tested
+rather than proven: `h5i-app-gpu` runs the same kernel source on both backends
+and checks that the outputs agree, and a GPU batch never commits application
+state on its own.
+
+What stands behind those assumptions, and everything outside the kernel, is
+tested against the running application. That is the next part.
 
 ---
 
-## The engagement
+## The security workflow
 
-The security workspace runs in phases, and the sections below are in that
-order. The join between phases is the message id.
+The proofs say what the kernel does. This part tests the running application
+for everything else: the shell around the kernel, the deployment, the
+configuration, and the properties the spec never stated. It runs in phases,
+the chapters below are in that order, and the join between phases is the
+message id.
 
 | Phase | What you are doing | Section |
 |---|---|---|
@@ -287,8 +336,9 @@ h5i websec finding create --title '...' --evidence req_42,res_43
 ```
 
 Recon says what exists and websec tests it. Neither needs the other, so you can
-enter at any phase. None of it needs a box; see
-[Containment](#containment-optional) for when one helps.
+enter at any phase. The last phase is what makes the loop close: a finding
+becomes a test, and the test runs in CI beside the proof gate. None of it needs
+a box; see [Containment](#containment-optional) for when one helps.
 
 ---
 
@@ -336,49 +386,6 @@ The request gets an `allowed: false` row in `requests.jsonl`, a response record
 describing the refusal, and no bytes between them. The browser is answered
 `403` with the same reason. Change scope only with authorisation, and never from
 inside a box.
-
----
-
-## h5i recon
-
-Discovery, kept apart from testing. Recon records what a target exposes and how
-it knows. Calling a difference a vulnerability stays the agent's claim. Design:
-`docs/design/design-recon.md`.
-
-```bash
-h5i recon extract                             # read what the session already fetched
-h5i recon known                               # robots.txt, sitemap.xml, security.txt
-h5i recon crawl --max-requests 200 --rate 4   # walk it under this session's login
-h5i recon paths --wordlist ./words.txt        # ask for what was never disclosed
-h5i recon triage --calibrate                  # fold the noise, confirm what is real
-h5i recon endpoints --state confirmed --json  # the inventory, with evidence
-```
-
-Every endpoint carries a state:
-
-| State | What it means |
-|---|---|
-| `candidate` | Something disclosed it. No request was ever sent. |
-| `observed` | A request answered, and the row names the message. |
-| `confirmed` | The answer differs from what that directory says about a path that is absent. |
-| `refused` | Policy declined it. Kept, because it is a fact about the scope. |
-| `gone` | Confirmed once, and now answering like a missing path. |
-
-Only `triage --calibrate` confirms, by learning what a missing path looks like
-in each directory. Against an application that answers `200` for everything,
-nothing is confirmed without it.
-
-h5i ships no wordlist. `paths --wordlist` takes a list you bring,
-`--reuse-words` uses the words the session has already seen, and `recon import
---format urls|katana|subfinder|httpx|openapi` reads another tool's output as
-candidates, which stay candidates until an h5i request answers. `recon export`
-writes the inventory as JSONL, and `recon merge --from <session>` folds another
-session's ledger in, keeping each identity's observations apart.
-
-Runs that spend requests are jobs: `h5i recon jobs list`, `jobs show`, and
-`jobs resume`, which re-runs the same parameters and skips what the ledger has
-already answered. The ledger is written as a run goes, so a killed run keeps
-what it found.
 
 ---
 
@@ -640,6 +647,49 @@ only where the source recorded the link; nothing is inferred from timing.
 
 ---
 
+## h5i recon
+
+Discovery, kept apart from testing. Recon records what a target exposes and how
+it knows. Calling a difference a vulnerability stays the agent's claim. Design:
+`docs/design/design-recon.md`.
+
+```bash
+h5i recon extract                             # read what the session already fetched
+h5i recon known                               # robots.txt, sitemap.xml, security.txt
+h5i recon crawl --max-requests 200 --rate 4   # walk it under this session's login
+h5i recon paths --wordlist ./words.txt        # ask for what was never disclosed
+h5i recon triage --calibrate                  # fold the noise, confirm what is real
+h5i recon endpoints --state confirmed --json  # the inventory, with evidence
+```
+
+Every endpoint carries a state:
+
+| State | What it means |
+|---|---|
+| `candidate` | Something disclosed it. No request was ever sent. |
+| `observed` | A request answered, and the row names the message. |
+| `confirmed` | The answer differs from what that directory says about a path that is absent. |
+| `refused` | Policy declined it. Kept, because it is a fact about the scope. |
+| `gone` | Confirmed once, and now answering like a missing path. |
+
+Only `triage --calibrate` confirms, by learning what a missing path looks like
+in each directory. Against an application that answers `200` for everything,
+nothing is confirmed without it.
+
+h5i ships no wordlist. `paths --wordlist` takes a list you bring,
+`--reuse-words` uses the words the session has already seen, and `recon import
+--format urls|katana|subfinder|httpx|openapi` reads another tool's output as
+candidates, which stay candidates until an h5i request answers. `recon export`
+writes the inventory as JSONL, and `recon merge --from <session>` folds another
+session's ledger in, keeping each identity's observations apart.
+
+Runs that spend requests are jobs: `h5i recon jobs list`, `jobs show`, and
+`jobs resume`, which re-runs the same parameters and skips what the ledger has
+already answered. The ledger is written as a run goes, so a killed run keeps
+what it found.
+
+---
+
 ## h5i websec
 
 The HTTP workbench: read what a session sent, change part of it, send it again,
@@ -841,6 +891,9 @@ h5i plugin install test
 h5i test --target https://staging.example --openapi openapi.json
 ```
 
+Run it in CI beside `h5i app extract --check`. One gate says the proofs still
+describe the kernel; the other says the bug you found has not come back.
+
 A test needs a verdict, and there are two. A step may carry `expect`, data
 over that step's response: one of `status`, `body`, `header`, `headers`,
 `response` or `dsl`, combined with `all`, `any` and `not`. A text value is a
@@ -922,8 +975,10 @@ are never uploaded.
 
 ## Containment (optional)
 
-Nothing above this line needs a box. A session's Chromium runs on this machine
-as an ordinary process, and its status line says so:
+Nothing above this line needs a box. A box is for the agent that writes the
+kernel or drives the attack, and for what it produces, when you want that held
+at arm's length. Without one, a session's Chromium runs on this machine as an
+ordinary process, and its status line says so:
 
 ```
 placed : on this machine, unconfined — agent-browser and Chromium run as ordinary host processes
@@ -1178,129 +1233,10 @@ path, and refuses to run inside a box.
 
 ---
 
-## The console
-
-```bash
-h5i ui
-h5i ui --port 0
-h5i ui --open
-```
-
-The read-only web console is one screen over everything h5i is doing on this
-machine: an overview of what wants a person, the browser sessions, the boxes,
-and what this host can enforce. Every route it calls is a GET, and every next
-step it suggests is a command it copies to the clipboard.
-
-**Sessions** are listed loudest first and searched by name, id or target.
-Selecting one opens six tabs:
-
-| tab | shows |
-|---|---|
-| History | every fetch: the agent verb that spent it, method, host, path, status, size, time, initiator. A filter bar (`host:api status:4xx -path:/static verb:click refused`), sortable columns, and an inspector that draws why the fetch exists and the command that reads its bytes |
-| Sitemap | what the session reached as a tree of origins and paths, counts folded upward, refusals kept apart |
-| Actions | `h5i browser audit` as a timeline: each verb, whether it succeeded, and the receipts it spent |
-| Findings | what the agent concluded with `h5i websec finding`, each with the message ids it rests on |
-| Recon | the endpoint ledger by state, and the runs that spent requests |
-| About | the record: placement, confinement, engine, identity, policy digest, capture |
-
-**Boxes** show each box's tier, status and one signal, and for a selected box
-its findings, a flight recorder of one row per receipt across five lanes
-(files, egress, exit, limits, page), the policy that was enforced, and the diff
-against the pinned base. A browser box has a second tab with the live in-box
-browser terminal. **Apps** shows each h5i-app project's per-route guarantees,
-changed conditions and mutation evidence.
-
-The console never renders a stored message. Bodies, cookies and `Authorization`
-headers stay in the capture store on disk, owner-only, and each request row
-prints the `h5i websec show` that reads it. The console binds loopback and uses
-a random bearer token in the URL; any local process or page that obtains the
-URL can read the console, so keep it private. Untrusted box and page strings
-are rendered as text, never HTML. The console can stop a browser or take its
-control lock. It cannot edit a box or widen its policy.
-
-### Reclaiming space
-
-A session's record, logs and ledger are small. Its capture store is not.
-
-```bash
-h5i browser rm <session>...          # erase sessions entirely (--force for a live one)
-h5i browser rm --ended               # every session that has ended
-h5i browser rm --older-than 30 --dry-run
-h5i browser gc                       # reclaim stored messages older than a week
-h5i browser gc --older-than 0 --dry-run
-```
-
-`rm` takes the whole directory: record, logs, jar and store. `gc` takes only
-the stored messages of ended sessions and leaves a `capture-reclaimed.json`
-where they were, so "kept and later reclaimed" stays a different fact from
-"never kept". `close` keeps a session's record, so `rm` is the verb that
-shortens a long list. Without names it selects by shape: `--ended`, `--all` (a
-live one still needs `--force`), or `--older-than DAYS`. `--dry-run` says what
-would go and removes nothing.
-
-### Attention
-
-Every session gets one of five states, each carrying the evidence that produced
-it:
-
-| State | What it means |
-|---|---|
-| `waiting on you` | A human holds the control lock, or a run stopped for a reason a person has to answer. |
-| `finished, unread` | The session ended, or its last run finished, and this browser has not looked. |
-| `working` | Live, and something happened in the last minute. |
-| `idle` | Live and quiet. |
-| `unclassified` | The record says live and the session's control file is gone. |
-
-The bar at the top counts them and filters the list. `finished, unread` clears
-when you open that session, and the memory of what you have read is this
-browser's alone: the console never writes it back, which is what keeps a
-passive view passive. Boxes keep their own words in the same bar (`refused
-egress`, `with failures`), because a refusal is the boundary working.
-
----
-
-## h5i skill
-
-`skills/h5i/` is embedded in the binary at build time, so the skill cannot
-document flags the installed binary lacks.
-
-```bash
-h5i skill install [--target <dir>]   # write it out
-h5i skill show [<page>]              # print SKILL.md or one reference page
-h5i skill path                       # where an install would write
-```
-
-This is also how the in-box agent gets the skill: nothing is baked into an
-image, and nothing is copied from host to box.
-
----
-
-## h5i plugin
-
-A plugin is a separate executable h5i runs by name. Installing one is a
-deliberate act.
-
-```bash
-h5i plugin install websec --from ./h5i-websec   # from a release archive or a build
-h5i plugin install recon --from ./h5i-recon
-h5i plugin list                                 # what is installed, and what exists
-h5i plugin remove recon
-```
-
-Only names h5i knows can be installed, and they live in h5i's own state
-directory rather than on `$PATH`, so `h5i plugin list` is the whole truth about
-what `h5i <name>` can become. A plugin holds no privilege of its own: it reaches
-a session through the same verbs a person types, so its requests are the
-session's, checked by its policy and written into its receipts. A build without
-a plugin still knows the name, so `h5i recon` on a plain install says what the
-capability is and how to get it.
-
----
-
 ## Policy
 
-A box's policy is resolved at creation, serialized to `policy.resolved.toml`,
-and digested. Every receipt records the digest that was in force, so "what was
+A policy says what a box may read, write and reach. It is resolved at
+creation, serialized to `policy.resolved.toml`, and digested. Every receipt records the digest that was in force, so "what was
 enforced" never rests on trust.
 
 ### Profiles
@@ -1464,9 +1400,10 @@ allowed; `--project` is then only a label.
 
 ## Receipts
 
-One append-only JSONL log per box, plus the raw payload of each record. A
-record is generated from observation, never from the agent's account of
-itself.
+A receipt is the record of what ran in a box: one append-only JSONL log per
+box, plus the raw payload of each record. It is generated from observation,
+never from the agent's account of itself, and it is what the dashboard, `h5i
+box export` and `h5i box watch` read.
 
 The log is append-only and sealed. The box's write window under its own
 directory is exactly `<box>/spool`; the receipt log and the stored payloads are
@@ -1494,6 +1431,143 @@ claim from "nothing was wrong".
 An agent can stage extra records, or stop writing. Both are visible: a gap
 between host-observed exits and box-reported commands is itself a finding. h5i
 claims no more than that.
+
+---
+
+## The console
+
+```bash
+h5i ui
+h5i ui --port 0
+h5i ui --open
+```
+
+`h5i ui` opens the dashboard: one read-only web screen over the three parts
+above, from the proofs behind an application to the traffic of a browser
+session and the receipts of a box. Every route it calls is a GET, and every next
+step it suggests is a command it copies to the clipboard. The rail has six
+sections:
+
+| section | shows |
+|---|---|
+| Overview | what wants a person, and what is running |
+| Projects | every engagement, its findings by severity, checklists, notes and the report |
+| Apps | each h5i-app project: its guarantees, the conditions they rest on, and the mutants its proofs caught |
+| Sessions | the browser sessions on this machine |
+| Boxes | the boxes of the repository the dashboard was started in |
+| Host | what this machine can enforce |
+
+**Apps** is the review surface for the framework side. Select a project and
+follow a guarantee from its specification to the code, the conditions it relies
+on, and the bugs its proofs detect. The page lists promises and conditions per
+route, marks a condition that drifted since the last recorded `check`, draws
+the application flow as a map, and keeps a catalog of the recorded Lean
+declarations with their source. The mutation view shows each `h5i app mutate`
+experiment and which mutants survived. It reads `h5i-app.toml`, the sources and
+`.h5i/app/runs`, and runs no proof itself.
+
+**Sessions** are listed loudest first and searched by name, id or target.
+Selecting one opens six tabs:
+
+| tab | shows |
+|---|---|
+| History | every fetch: the agent verb that spent it, method, host, path, status, size, time, initiator. A filter bar (`host:api status:4xx -path:/static verb:click refused`), sortable columns, and an inspector that draws why the fetch exists and the command that reads its bytes |
+| Sitemap | what the session reached as a tree of origins and paths, counts folded upward, refusals kept apart |
+| Actions | `h5i browser audit` as a timeline: each verb, whether it succeeded, and the receipts it spent |
+| Findings | what the agent concluded with `h5i websec finding`, each with the message ids it rests on |
+| Recon | the endpoint ledger by state, and the runs that spent requests |
+| About | the record: placement, confinement, engine, identity, policy digest, capture |
+
+**Boxes** show each box's tier, status and one signal, and for a selected box
+its findings, a flight recorder of one row per receipt across five lanes
+(files, egress, exit, limits, page), the policy that was enforced, and the diff
+against the pinned base. A browser box has a second tab with the live in-box
+browser terminal.
+
+The dashboard never renders a stored message. Bodies, cookies and
+`Authorization` headers stay in the capture store on disk, owner-only, and each
+request row prints the `h5i websec show` that reads it. It binds loopback and
+uses a random bearer token in the URL; any local process or page that obtains
+the URL can read it, so keep it private. Untrusted box and page strings are
+rendered as text, never HTML. It can stop a browser or take its control lock.
+It cannot edit a box or widen its policy, and it never runs a proof.
+
+### Reclaiming space
+
+A session's record, logs and ledger are small. Its capture store is not.
+
+```bash
+h5i browser rm <session>...          # erase sessions entirely (--force for a live one)
+h5i browser rm --ended               # every session that has ended
+h5i browser rm --older-than 30 --dry-run
+h5i browser gc                       # reclaim stored messages older than a week
+h5i browser gc --older-than 0 --dry-run
+```
+
+`rm` takes the whole directory: record, logs, jar and store. `gc` takes only
+the stored messages of ended sessions and leaves a `capture-reclaimed.json`
+where they were, so "kept and later reclaimed" stays a different fact from
+"never kept". `close` keeps a session's record, so `rm` is the verb that
+shortens a long list. Without names it selects by shape: `--ended`, `--all` (a
+live one still needs `--force`), or `--older-than DAYS`. `--dry-run` says what
+would go and removes nothing.
+
+### Attention
+
+Every session gets one of five states, each carrying the evidence that produced
+it:
+
+| State | What it means |
+|---|---|
+| `waiting on you` | A human holds the control lock, or a run stopped for a reason a person has to answer. |
+| `finished, unread` | The session ended, or its last run finished, and this browser has not looked. |
+| `working` | Live, and something happened in the last minute. |
+| `idle` | Live and quiet. |
+| `unclassified` | The record says live and the session's control file is gone. |
+
+The bar at the top counts them and filters the list. `finished, unread` clears
+when you open that session, and the memory of what you have read is this
+browser's alone: the console never writes it back, which is what keeps a
+passive view passive. Boxes keep their own words in the same bar (`refused
+egress`, `with failures`), because a refusal is the boundary working.
+
+---
+
+## h5i skill
+
+`skills/h5i/` is embedded in the binary at build time, so the skill cannot
+document flags the installed binary lacks.
+
+```bash
+h5i skill install [--target <dir>]   # write it out
+h5i skill show [<page>]              # print SKILL.md or one reference page
+h5i skill path                       # where an install would write
+```
+
+This is also how the in-box agent gets the skill: nothing is baked into an
+image, and nothing is copied from host to box.
+
+---
+
+## h5i plugin
+
+A plugin is a separate executable h5i runs by name. Installing one is a
+deliberate act.
+
+```bash
+h5i plugin install websec --from ./h5i-websec   # from a release archive or a build
+h5i plugin install recon --from ./h5i-recon
+h5i plugin list                                 # what is installed, and what exists
+h5i plugin remove recon
+```
+
+Only names h5i knows can be installed, and they live in h5i's own state
+directory rather than on `$PATH`, so `h5i plugin list` is the whole truth about
+what `h5i <name>` can become. A plugin holds no privilege of its own: it reaches
+a session through the same verbs a person types, so its requests are the
+session's, checked by its policy and written into its receipts. A build without
+a plugin still knows the name, so `h5i recon` on a plain install says what the
+capability is and how to get it.
 
 ---
 
@@ -1541,6 +1615,8 @@ h5i states these limits because its claims are security-sensitive.
 - GPU execution of a kernel is checked by differential tests against the CPU
   path. Those tests are evidence for the executions they ran, and no proof
   about the GPU.
+
+---
 
 ## Files
 
