@@ -88,6 +88,6 @@ h5i ui                                       # Dashboard: Launch the local web i
 
 ---
 
-## 4. License
+## 5. License
 
 h5i is licensed under the Apache License 2.0. See [LICENSE](LICENSE).
