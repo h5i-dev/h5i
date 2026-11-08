@@ -203,9 +203,13 @@ figure { margin:0; }
 .kernel-note { border-top:1px solid var(--line); padding:11px 14px; font:11px var(--mono); color:var(--dim); }
 .fanout-arrow { display:flex; flex-direction:column; justify-content:center; align-items:center; gap:8px; font:9px/1.5 var(--mono); color:var(--dim); text-align:center; }
 .fanout-arrow b { font-size:28px; color:var(--spot); }
-.gpu-example { border:1px solid var(--line); background:var(--panel); min-width:0; }
-.gpu-result { display:flex; align-items:baseline; gap:12px; border-top:1px solid var(--line); padding:10px 14px; font:11px var(--mono); color:var(--dim); }
-.gpu-result strong { font:600 24px var(--mono); color:var(--spot); }
+.targets-example { display:flex; flex-direction:column; border:1px solid var(--line); background:var(--panel); min-width:0; }
+.targets { flex:1; display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); }
+.target { display:flex; flex-direction:column; gap:8px; padding:14px 12px 12px; border-left:1px solid var(--line); min-width:0; }
+.target:first-child { border-left:0; }
+.target-idx { font:9px var(--mono); letter-spacing:.14em; text-transform:uppercase; color:var(--spot); }
+.target b { font-size:16px; font-weight:560; letter-spacing:-.02em; line-height:1.15; color:var(--ink); }
+.target small { margin-top:auto; font:9.5px/1.5 var(--mono); color:var(--dim); }
 .test-note { display:flex; align-items:center; gap:22px; margin-top:15px; padding:11px 15px; border-left:2px solid var(--spot); background:var(--panel); }
 .test-note span { flex:none; color:var(--spot); font:11px var(--mono); letter-spacing:.1em; }
 .test-note code { font:12px var(--mono); color:var(--ink); overflow-wrap:anywhere; }
@@ -292,6 +296,9 @@ figure { margin:0; }
   .fanout-arrow { flex-direction:row; }
   .fanout-arrow b { transform:rotate(90deg); }
   .kernel-fanout pre { font-size:10px; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .targets { grid-template-columns:1fr; }
+  .target { border-left:0; border-top:1px solid var(--line); }
+  .target:first-child { border-top:0; }
   .test-note { align-items:flex-start; flex-direction:column; gap:8px; }
   .folio { height:auto; min-height:43px; font-size:9px; line-height:1.5; padding:12px 0; }
   .enhanced .controls { position:static; padding:0 14px; font-size:11px; gap:10px; }
