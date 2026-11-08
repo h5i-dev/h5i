@@ -6,7 +6,7 @@
   <a href="https://github.com/h5i-dev/h5i/releases"><img alt="release" src="https://img.shields.io/github/v/release/h5i-dev/h5i?label=release"></a>
 </p>
 
-**h5i** (pronounced *high-five*) is an Axum-based Rust web framework designed for formal verification with Lean 4 and optional GPU acceleration. It also provides integrated development infrastructure for browser automation, red-teaming, security regression testing, and sandboxed AI agents.
+**h5i** (pronounced *high-five*) is an Axum-based Rust web framework built around application kernels that can be formally verified with Lean 4 and executed on servers, bare-metal embedded devices, and GPUs. It also provides integrated development infrastructure for browser automation, red-teaming, security regression testing, and sandboxed AI agents.
 
 ---
 
