@@ -56,7 +56,7 @@
   <div class="eyebrow">03 / The product</div>
   <h2 id="title-3" class="product-title">h5i: The Verifiable Web Framework</h2>
   <div class="product-stack">
-    <article class="product-framework"><span class="index">CORE PRODUCT</span><h3>Verifiable Web Framework</h3><p>Build on Axum with composable Rust kernels. Extract application logic to Lean 4 to prove critical rules, with optional GPU acceleration for suitable workloads.</p><div class="product-tags"><span>RUST / AXUM</span><span>LEAN 4</span><span>OPTIONAL GPU</span></div></article>
+    <article class="product-framework"><span class="index">CORE PRODUCT</span><h3>Verifiable Web Framework</h3><p>Build on Axum with composable Rust kernels. Extract application logic to Lean 4 to prove critical rules, then run the same kernel on servers, embedded devices, and GPUs.</p><div class="product-tags"><span>RUST / AXUM</span><span>LEAN 4</span><span>EMBEDDED</span><span>OPTIONAL GPU</span></div></article>
     <article class="product-infrastructure"><div><span class="index">INTEGRATED TOOLING</span><h3>Development Infrastructure</h3><p>A unified CLI for agent-led red-teaming, browser and HTTP automation, security regression tests, and sandboxed workflows.</p></div><p class="product-scope">Works with existing web applications, too.</p></article>
   </div>
 </div>
@@ -68,7 +68,7 @@
 <div class="content">
   <div class="eyebrow">04 / The architecture</div>
   <h2 id="title-4">Write Once. Verify with Lean 4.</h2>
-  <p class="slide-intro">Axum and storage stay outside the pure Rust kernel, so application decisions can be extracted and proved. GPU execution is an optional optimization.</p>
+  <p class="slide-intro">Axum and storage stay outside the pure Rust kernel, so application decisions can be extracted and proved, and the same kernel runs on servers, embedded devices, and GPUs.</p>
   <div class="kernel-fanout">
     <div class="rust-example"><div class="editor-bar">Rust / parallel/kernel/src/lib.rs · pure kernel</div><pre><span class="syntax-keyword">pub fn</span> push_rule(event: &amp;[u8], pattern: &amp;[u8],
     display: &amp;[u8], members: u64,
@@ -90,15 +90,15 @@
       minimum maximum power required true
       requireDisplay = ok 0#u32 := <span class="syntax-keyword">by</span>
   simp [push_rule, h]</pre></div>
-    <span class="fanout-arrow" aria-hidden="true"><small>Rust-CUDA<br>PTX</small><b>→</b></span>
-    <div class="gpu-example"><div class="editor-bar">CUDA / device/src/lib.rs · optional</div><pre><span class="syntax-keyword">#[kernel]</span>
-<span class="syntax-keyword">pub unsafe fn</span> push_batch(...) {
-    <span class="syntax-keyword">let</span> i = thread::index_1d() <span class="syntax-keyword">as</span> usize;
-    ... shared::push_rule(&amp;events[row(i)], ...)
-}</pre><div class="gpu-result"><strong>15.6×</strong><span>1M push-rule rows vs one CPU thread · RTX 3090</span></div></div>
+    <span class="fanout-arrow" aria-hidden="true"><small>Deploy<br>build</small><b>→</b></span>
+    <div class="targets-example"><div class="editor-bar">Run / the same kernel, three targets</div><div class="targets">
+      <div class="target"><span class="target-idx">01 · server</span><b>Axum on CPUs</b><small>h5i-app-http<br>Postgres or in-memory</small></div>
+      <div class="target"><span class="target-idx">02 · embedded</span><b>no_std, heap-free</b><small>h5i-app-embedded<br>HTTP/1.1 on bare metal</small></div>
+      <div class="target"><span class="target-idx">03 · gpu, optional</span><b>Rust-CUDA</b><small>h5i-app-gpu, CPU fallback<br>15.6× vs one CPU thread</small></div>
+    </div></div>
   </div>
 </div>
-<footer class="folio"><span>Same kernel source on CPU, in Lean, and on GPU / GPU backend is experimental; Lean does not prove CPU/GPU equivalence</span><span>04</span></footer>
+<footer class="folio"><span>Same kernel source on servers, embedded devices, in Lean, and on GPU / GPU backend is experimental; Lean does not prove CPU/GPU equivalence</span><span>04</span></footer>
 </section>
 
 <section class="slide " id="slide-5" aria-labelledby="title-5">
