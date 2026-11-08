@@ -28,35 +28,33 @@ The manual follows the life of an application through four parts:
 | Contain the agent | Let an agent write the code or run the attack | Runs it in a disposable box with a pinned base, an egress allowlist and a human-operated output gate | [Containment](#containment-optional), [Policy](#policy), [Receipts](#receipts) |
 | Watch | Read, decide, take over | One read-only dashboard over proofs, engagements, sessions and boxes | [`h5i ui`](#the-console) |
 
-The first part is where the guarantees come from. An application keeps the
-logic that decides what each command does in a kernel crate. Charon and Aeneas
-translate that crate to Lean 4, `h5i app` gates the proofs, and the same
-kernel is served by Axum on a server, by a heap-free HTTP/1.1 server on a
-microcontroller, or in batches on a GPU. The shell around the kernel is
-trusted infrastructure, and the kernel is what the proofs are about.
+An h5i-app application keeps the logic that decides what each command does in
+a kernel crate. Charon and Aeneas translate that crate to Lean 4, `h5i app`
+gates the proofs, and the same kernel is served by Axum on a server, by a
+heap-free HTTP/1.1 server on a microcontroller, or in batches on a GPU. The
+shell around the kernel is trusted infrastructure, and the kernel is what the
+proofs are about.
 
-The second part exists because the proofs stop at the kernel. Around it sit
-Axum, PostgreSQL, the embedded I/O, the GPU launch shell, your configuration,
-your deployment, and the spec itself, which may have left something out. That
-is where the remaining bugs live, and they are found by testing the running
-application: a browser session whose traffic goes through a capture proxy h5i
-starts for it, and the tools that read, replay, inventory and judge that
-traffic. A bug found this way becomes an `h5i test` that runs in CI beside
-`h5i app extract --check`, so the proof gate and the regression gate guard the
-same application from two sides. This part works against any web
-application, including ones built on another stack, and it has the most
-commands, so it takes up most of this manual.
+The proofs stop at the kernel, and around it sit Axum, PostgreSQL, the embedded
+I/O, the GPU launch shell, your configuration, your deployment, and the spec
+itself, which may have left something out. The remaining bugs live there, and
+you find them by testing the running application: a browser session whose
+traffic goes through a capture proxy h5i starts for it, and the tools that
+read, replay, inventory and judge that traffic. A bug found this way becomes an
+`h5i test` that runs in CI beside `h5i app extract --check`, so the proof gate
+and the regression gate guard the same application from two sides. This part
+works against any web application, including ones built on another stack, and
+it has the most commands, so it takes up most of this manual.
 
-The third part exists because both halves are agent work. An agent writes
-kernels and proofs; an agent drives the browser and sends mutated requests. A
-box is where that agent runs when its code is untrusted, when its target may
-answer with something hostile, or when its network has to be decided outside
-it. The fourth part is the dashboard that reads the other three.
+Both halves are done by agents as much as by people: an agent writes kernels
+and proofs, and an agent drives the browser and sends mutated requests. A box
+is where that agent runs when its code is untrusted, when its target may answer
+with something hostile, or when its network has to be decided outside it. The
+dashboard is one read-only view over all three.
 
-### The division of labour
+### Who does what
 
-The same split runs through every part. h5i does the deterministic work. You,
-or your agent, do the judging.
+h5i does the deterministic work; you or your agent judge the result.
 
 | h5i owns | you or the agent own |
 |---|---|
@@ -70,25 +68,24 @@ or your agent, do the judging.
 
 h5i ships no payloads, no wordlists and no verdicts. A finding is what the agent
 writes with `h5i websec finding create`; h5i stores it and checks that the ids
-it cites exist. The only theorems h5i writes for you are the framework's own:
-the obligations it states and the authorization proofs it generates. A
-property nobody stated is a property nothing proved.
+it cites exist. h5i writes no theorems for you beyond the framework's own
+obligations and generated authorization proofs, so a property you never stated
+is not proved.
 
-### Two kinds of record
+### What is recorded, and what is safe to paste
 
-The **account** is what was asked for, decided and returned, in a shape safe to
-paste into a bug report: `requests.jsonl`, `actions.jsonl`, the receipts, the
-endpoint ledger. The **evidence** is the messages themselves, `Authorization`
-and cookies included. It is owner-only, kept for every session, and in no export
-unless named. The two are never merged, and every row says which lane observed
-it. A session's lane is `proxy-observed`. Records from an older h5i that had
-its own engine may say `engine-claimed` or `host-observed`; they are still read,
-and a lane is never upgraded.
+h5i keeps two things apart. The request log, the action log, the receipts and
+the endpoint ledger say what was asked for, decided and returned, and are safe
+to paste into a bug report. The stored messages themselves, `Authorization` and
+cookies included, are owner-only, kept for every session, and in no export
+unless named. Every row says which lane observed it. A session's lane is
+`proxy-observed`; records from an older h5i that had its own engine may say
+`engine-claimed` or `host-observed`, and a lane is never upgraded.
 
-The framework side has the same split. The Lean kernel's verdict on the current
-sources is the evidence. A `passed` run under `.h5i/app/runs` and the per-route
-report `h5i app report` derives from the sources are the account, and rerunning
-`h5i app check` is how a reader turns one into the other.
+The proofs have the same two layers. The Lean kernel's verdict on the current sources is
+the evidence. A `passed` run under `.h5i/app/runs` and the report `h5i app
+report` derives from the sources are records of an earlier verdict, and
+rerunning `h5i app check` refreshes them.
 
 ### What it is not
 
@@ -188,7 +185,7 @@ release tag; `--h5i-path <checkout>` uses a local checkout instead. For CI,
 `h5i app extract --check` changes nothing and fails if `proofs/generated/` is
 stale, and `--all` runs a verb on every project under a directory.
 
-### The gate
+### The proof gate
 
 `check` (and so `prove`) fails on `sorry` or `native_decide` in hand-written
 Lean, on any `axiom` declaration, and on any theorem of a hand-written module
@@ -301,18 +298,17 @@ rather than proven: `h5i-app-gpu` runs the same kernel source on both backends
 and checks that the outputs agree, and a GPU batch never commits application
 state on its own.
 
-What stands behind those assumptions, and everything outside the kernel, is
-tested against the running application. That is the next part.
+Those assumptions, and everything outside the kernel, are tested against the
+running application, which the next part covers.
 
 ---
 
 ## The security workflow
 
-The proofs say what the kernel does. This part tests the running application
+The proofs say what the kernel does; this part tests the running application
 for everything else: the shell around the kernel, the deployment, the
-configuration, and the properties the spec never stated. It runs in phases,
-the chapters below are in that order, and the join between phases is the
-message id.
+configuration, and the properties the spec never stated. It runs in phases, in
+the order of the chapters below, and each phase hands the next a message id.
 
 | Phase | What you are doing | Section |
 |---|---|---|
@@ -336,9 +332,9 @@ h5i websec finding create --title '...' --evidence req_42,res_43
 ```
 
 Recon says what exists and websec tests it. Neither needs the other, so you can
-enter at any phase. The last phase is what makes the loop close: a finding
-becomes a test, and the test runs in CI beside the proof gate. None of it needs
-a box; see [Containment](#containment-optional) for when one helps.
+enter at any phase. The last phase turns a finding into a test that runs in CI
+beside the proof gate. None of it needs a box; see
+[Containment](#containment-optional) for when one helps.
 
 ---
 
@@ -348,7 +344,7 @@ Before anything is sent, say what is in bounds. Scope is three separate things:
 
 | Layer | What it answers | Where |
 |---|---|---|
-| Engagement scope | What the target's owner authorised | `--project`, and [Scope](#scope-the-engagement-kind) |
+| Engagement scope | What the target's owner authorised | `--project`, and [Scope](#engagement-scope) |
 | Origin grant | What this session may reach at all | `--allow`, on `open` |
 | Identity | Who the session says it is | the account signed in to its browser |
 
@@ -374,7 +370,7 @@ reached under any identity) is a `jq` pass over the directories in
 the session's engagement scope, and the same name is the durable project that
 [`h5i project`](#h5i-project) keeps.
 
-### What a refusal looks like
+### Refusals
 
 ```
 $ h5i browser navigate https://blog.acme.com/ --session acme1
@@ -407,7 +403,7 @@ h5i browser close
 
 ### What a session is
 
-Two processes under one record. h5i's half is a capture proxy with the
+A session is two processes under one record. h5i's half is a capture proxy with the
 session's control channel beside it. The browser half is Chromium, run by
 agent-browser (0.25 or newer) and pointed at that proxy:
 
@@ -478,7 +474,7 @@ no proxy. `h5i browser proxy` prints the command line and the `env` to export
 so every launch from that shell is proxied, and `status` warns after five quiet
 minutes.
 
-### `proxy`: a session without opening a page
+### `proxy`: a session without a page
 
 ```bash
 h5i browser proxy https://app.example --session chrome
@@ -512,7 +508,7 @@ h5i browser list                       # the default is the row marked `*`
 A name can be reused once the session it named has ended. The id cannot, which
 is why the id is what gets written down.
 
-### `open` navigates a session that is already there
+### `open` on an existing session
 
 Opening a URL in a browser that is already up means go there. `open` navigates
 the session it finds, and `--new` asks for a second one. The flags that only
@@ -554,7 +550,7 @@ it must re-snapshot before its next page action. Workbench verbs carry no
 `@ref` and are never held up by the lock. On this machine the lock is advisory:
 it pauses `h5i browser` and nothing else.
 
-### Sessions end, and endings are recorded
+### Ending a session
 
 Closing a session stops its proxy and its Chromium and writes the ending into
 its record instead of deleting it.
@@ -583,7 +579,7 @@ click did not work". Records written by an older h5i, whose sessions ran its
 own engine, are still read by `status`, `audit` and the plugins; a verb that
 needs that engine refuses on them and says so.
 
-### Everything a session returns is untrusted
+### Page output is untrusted
 
 The page composed the title, the link text, the error message and the URL.
 Every answer h5i relays is scrubbed before it reaches a terminal or a model:
@@ -611,7 +607,7 @@ Give each its own `$H5I_BROWSER_HOME`, or give each session a `--session
 | `H5I_BROWSER_SESSION` | which session a verb acts on, when `--session` is absent |
 | `AGENT_BROWSER_ARGS` | extra Chromium launch flags, merged into every launch |
 
-### `audit`: the whole session, in one timeline
+### `audit`
 
 `requests` is the network layer on its own, and the verb to reach for in a
 loop. `h5i browser audit` is the one to read afterwards: what the agent asked
@@ -649,8 +645,8 @@ only where the source recorded the link; nothing is inferred from timing.
 
 ## h5i recon
 
-Discovery, kept apart from testing. Recon records what a target exposes and how
-it knows. Calling a difference a vulnerability stays the agent's claim. Design:
+Recon is discovery, kept apart from testing. It records what a target exposes
+and how it knows. Calling a difference a vulnerability stays the agent's claim. Design:
 `docs/design/design-recon.md`.
 
 ```bash
@@ -767,8 +763,6 @@ wire speed. Both are also on `h5i browser resend`, as `--walk` and `--rate`.
 
 ### Findings
 
-What the agent concluded, and the evidence it stands on.
-
 ```bash
 h5i websec finding create --title "cross-tenant invoice read" \
     --state "verified once" --evidence req_42,res_43 --repro ./exploit.json
@@ -786,7 +780,7 @@ A session finding lives beside that session and goes when the session does. To
 keep it, promote it into a [project](#h5i-project), which copies the finding
 and the messages it cites with credentials removed.
 
-### What is safe to paste, and what is not
+### The capture store
 
 The capture store holds `Authorization` headers and session cookies in full. It
 is the one artifact h5i keeps that is unsafe to paste: owner-only, in no export
@@ -798,7 +792,7 @@ can paste. See [Receipts](#receipts) for which lane observed what, and
 
 ## h5i project
 
-A browser session is disposable. A project is the durable side of an
+A browser session is disposable; a project is the durable side of an
 engagement: notes, findings, the evidence they rest on, the checklists you were
 asked to cover, and the reports issued from them. It lives under
 `~/.local/share/h5i/projects`, owner-only, and `h5i browser rm` never touches
@@ -957,7 +951,7 @@ The oracle runs with its working directory set to the test file's directory.
 | `H5I_TEST_ARTIFACTS` | Its owner-only artifact directory. |
 | `H5I_TEST_INPUTS` | The saved response names the test declared, comma separated. |
 
-### Coverage, and what it counts
+### Coverage
 
 A send may declare the OpenAPI operation and mutation class it exercises. It
 counts only when the flow completed and the verdict decided. Setup and cleanup
@@ -1095,8 +1089,8 @@ server inside the same `h5i box shell` as everything else.
 
 ### h5i box export
 
-The output gate. A box has no write access outside itself, and this is the only
-way out. It is a human step on purpose.
+`export` is the output gate. A box has no write access outside itself, and
+this is the only way out, taken by a human.
 
 ```bash
 h5i box export <name> --out ./review
@@ -1192,7 +1186,7 @@ so inspect the box-level network evidence. An older profile that pins
 `--engine h5i` is refused by name: h5i's own engine now lives in
 [h5i-browser](https://github.com/h5i-dev/h5i-browser).
 
-### Inspecting what happened
+### Inspecting a box
 
 ```bash
 h5i box probe                       # what this host can enforce at all
@@ -1371,11 +1365,11 @@ prints which variable is attached and where it goes. `ttl` is advisory and
 shown as `ttl=<value>(advisory)`: h5i resolves a grant once and never expires
 it.
 
-### Scope: the engagement kind
+### Engagement scope
 
-A profile says what this machine will permit. A scope says what the target's
-owner authorised. They are enforced together and digested apart. One TOML file
-per project, at `~/.config/h5i/projects/<name>.toml`:
+A profile says what this machine will permit, and a scope says what the
+target's owner authorised. Both are enforced, and each has its own digest. A
+scope is one TOML file per project, at `~/.config/h5i/projects/<name>.toml`:
 
 ```toml
 allow      = ["*.acme.com", "api-staging.acme.io"]
@@ -1388,7 +1382,7 @@ deny_paths = ["/admin/*", "/account/*/delete"]
 exemption and the instrument mode, and nothing can grant past them. An unknown
 key is an error.
 
-Where the file lives matters three ways. `~/.config/h5i` is in every profile's
+The file's location does three things. `~/.config/h5i` is in every profile's
 `fs.deny`, so a box cannot widen the scope confining it. The capture proxy never
 reads it: `h5i browser` resolves it and passes the rules as arguments. And it
 works outside a repository, because an engagement is not a checkout. The digest
@@ -1494,7 +1488,8 @@ It cannot edit a box or widen its policy, and it never runs a proof.
 
 ### Reclaiming space
 
-A session's record, logs and ledger are small. Its capture store is not.
+A session's record, logs and ledger are small; its capture store is the part
+worth reclaiming.
 
 ```bash
 h5i browser rm <session>...          # erase sessions entirely (--force for a live one)
@@ -1512,7 +1507,7 @@ shortens a long list. Without names it selects by shape: `--ended`, `--all` (a
 live one still needs `--force`), or `--older-than DAYS`. `--dry-run` says what
 would go and removes nothing.
 
-### Attention
+### Session states
 
 Every session gets one of five states, each carrying the evidence that produced
 it:
@@ -1551,8 +1546,7 @@ image, and nothing is copied from host to box.
 
 ## h5i plugin
 
-A plugin is a separate executable h5i runs by name. Installing one is a
-deliberate act.
+A plugin is a separate executable h5i runs by name, installed by hand.
 
 ```bash
 h5i plugin install websec --from ./h5i-websec   # from a release archive or a build
@@ -1644,7 +1638,7 @@ everything h5i knows about a session is a file here, in a shape `jq` can read.
 | `sessions/<id>/session.json` | The record: what `h5i browser status --json` prints. |
 | `sessions/<id>/requests.jsonl` | The request log, one JSON object per line, written before the wire. |
 | `sessions/<id>/actions.jsonl` | The verbs the agent asked for, page verbs and workbench verbs both. |
-| `sessions/<id>/messages/` | The capture store: headers and bodies both directions. `0700`, and evidence rather than account. |
+| `sessions/<id>/messages/` | The capture store: headers and bodies both directions. `0700`. |
 | `sessions/<id>/findings/findings.jsonl` | What `h5i websec finding` wrote. |
 | `sessions/<id>/recon/ledger.jsonl` | The endpoint ledger. |
 | `sessions/<id>/recon/jobs/` | One record per recon run that spent requests. |
@@ -1656,7 +1650,7 @@ everything h5i knows about a session is a file here, in a shape `jq` can read.
 | `sessions/<id>/proxy.log` | The proxy process's stdout and stderr. |
 | `default` | The id every verb acts on when nobody says which. |
 
-Two rules for anything reading these. The capture store holds `Authorization`
+Two rules for scripts that read these. The capture store holds `Authorization`
 and session cookies in full, so a script that copies out of `messages/` is
 copying credentials, and `proxy-ca-key.pem` signs the certificates the proxy
 presents. A session's name can be reused once that session has ended, so group
