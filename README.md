@@ -32,8 +32,10 @@ npx skills add h5i-dev/h5i
 - **Kernel-based architecture**: Separate application logic from infrastructure to verify and optimize core behavior.
 - **Formal verification**: Translate Rust application logic into Lean 4 using [Aeneas](https://github.com/AeneasVerif/aeneas) and prove their properties.
 - **Automatic specification generation**: Generate Lean 4 specifications and proofs for common patterns, including database schemas, authorization, and storage operations.
-- **Embedded systems support**: Run Lean 4-verified application kernels in bare-metal environments using a `no_std`, heap-free HTTP/1.1 server.
-- **Optional GPU acceleration**: Execute supported application kernels on GPUs while retaining CPU execution.
+- **Multi-target execution**: Run application kernels across different execution environments:
+  - **Servers**: Execute kernels on CPUs with Axum-based HTTP integration.
+  - **Embedded systems**: Run kernels on bare-metal devices using a `no_std`, heap-free HTTP/1.1 server.
+  - **GPUs**: Accelerate supported kernels with GPU execution while retaining CPU fallback.
 
 ```toml
 [dependencies]
@@ -72,7 +74,11 @@ h5i test --target https://staging.example.com --openapi openapi.yaml --min-cover
 
 h5i box --name lab --profile browser         # Sandbox: Create an isolated environment
 h5i box shell lab -- claude                  # Run Claude inside the sandbox
+```
 
+## 4. Dashboard
+
+```bash
 h5i ui                                       # Dashboard: Launch the local web interface
 ```
 
@@ -82,6 +88,6 @@ h5i ui                                       # Dashboard: Launch the local web i
 
 ---
 
-## 4. License
+## 5. License
 
 h5i is licensed under the Apache License 2.0. See [LICENSE](LICENSE).
