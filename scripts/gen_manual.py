@@ -78,12 +78,13 @@ body = link_out(body)
 # chapters on the left (grouped, numbered), the text in the middle, and on the
 # right the sections of whichever chapter is being read plus the page's facts.
 GROUPS = [
-    ("Start here", ["what-h5i-is", "the-engagement", "install", "command-groups",
-                    "scope-and-identity"]),
-    ("Red-teaming", ["h5i-recon", "h5i-browser", "h5i-websec", "h5i-project", "h5i-test"]),
-    ("Workspace", ["containment-optional", "the-console", "h5i-app", "h5i-skill",
-                   "h5i-plugin"]),
-    ("Reference", []),  # policy, receipts, limits, files, and anything new
+    ("Start here", ["what-h5i-is", "install", "command-groups"]),
+    ("Build and verify", ["h5i-app"]),
+    ("Test the running application", ["the-security-workflow", "scope-and-identity", "h5i-browser",
+                                      "h5i-recon", "h5i-websec", "h5i-project", "h5i-test"]),
+    ("Contain the agent", ["containment-optional", "policy", "receipts"]),
+    ("Watch", ["the-console"]),
+    ("Reference", []),  # skill, plugin, limits, files, env vars, and anything new
 ]
 
 chapters = []
