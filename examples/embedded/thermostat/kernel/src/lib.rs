@@ -73,6 +73,8 @@ pub enum Error {
 }
 
 /// Whether the heater runs, from the mode and the temperatures.
+#[inline(never)]
+#[unsafe(export_name = "thermostat_heater_on")]
 pub fn heater_on(mode: Mode, temp_dc: i16, setpoint_dc: i16) -> bool {
     if temp_dc >= MAX_TEMP_DC {
         return false;
@@ -96,6 +98,8 @@ fn settle(s: Snapshot) -> Snapshot {
 }
 
 /// The new state (`Some`) or nothing to write, and the reply.
+#[inline(never)]
+#[unsafe(export_name = "thermostat_transition")]
 pub fn transition(actor: &Device, s: &Snapshot, cmd: &Command) -> Result<(Option<Snapshot>, Reply), Error> {
     match cmd {
         Command::Read => Ok((None, Reply::State(*s))),
@@ -141,6 +145,8 @@ pub fn transition(actor: &Device, s: &Snapshot, cmd: &Command) -> Result<(Option
     }
 }
 
+#[inline(never)]
+#[unsafe(export_name = "thermostat_apply")]
 pub fn apply(s: &Snapshot, w: &Option<Snapshot>) -> Snapshot {
     match w {
         Some(n) => *n,
@@ -149,6 +155,8 @@ pub fn apply(s: &Snapshot, w: &Option<Snapshot>) -> Snapshot {
 }
 
 /// `Read` writes nothing (`ReadOnly.lean`).
+#[inline(never)]
+#[unsafe(export_name = "thermostat_read_only")]
 pub fn read_only(cmd: &Command) -> bool {
     match cmd {
         Command::Read => true,
