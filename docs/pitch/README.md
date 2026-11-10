@@ -10,10 +10,9 @@ The deck tells one story: h5i is a development platform for proving that
 the critical properties of web software are correct. Six slides: product,
 problem, solution, traction, business model, founder and ask. Do not frame
 formal verification as bug finding; it guarantees properties. The solution
-slide shows Rust code, Lean 4 proof and Guarantee as three boxes, each with
-its real example underneath: the board tutorial's delete handler, its
-`authorized` theorem statement (proof body omitted) and the property in one
-sentence. Rust-to-Lean translation itself is Aeneas,
+slide shows the framework's architecture, not a translation step: HTTP /
+Axum, then the Rust app kernel, then the database, with the Lean 4 proof
+under the kernel. A Rust-to-Lean picture reads as Aeneas. Rust-to-Lean translation itself is Aeneas,
 not h5i's invention, so never claim it as unique. Red-teaming, market sizing,
 architecture, property counts and vulnerability counts stay out. The YC guide
 is not a checklist. One idea per slide, **20 to 30 words at most** (title and

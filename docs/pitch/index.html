@@ -38,32 +38,16 @@
 </section>
 
 <section class="slide" id="slide-2" aria-labelledby="title-2">
-<div class="content"><div class="eyebrow">02 / The problem</div><h2 id="title-2" class="big">Are You Sure AI-Generated Code Is Correct?</h2><p class="lead">AI can generate code in seconds. But thousands of AI-generated test cases cannot guarantee its correctness.</p></div>
+<div class="content"><div class="eyebrow">02 / The problem</div><h2 id="title-2" class="big">Are You Sure AI-Generated Code Is Correct?</h2><ul class="founder-points"><li>AI can generate code in seconds.</li><li>But thousands of AI-generated test cases cannot guarantee its correctness.</li></ul></div>
 <footer class="folio"><span>h5i.dev</span><span>02</span></footer>
 </section>
 
 <section class="slide" id="slide-3" aria-labelledby="title-3">
-<div class="content"><div class="eyebrow">03 / Solution</div><h2 id="title-3">Write Rust and Prove It Directly in Lean 4.</h2>
-<div class="proof-row">
-<div class="step"><b>Rust code</b></div><i aria-hidden="true">→</i><div class="step"><b>Lean 4 proof</b></div><i aria-hidden="true">→</i><div class="step last"><b>Guarantee</b></div>
-<div class="rust-example"><div class="editor-bar">kernel/src/lib.rs</div><pre><span class="syntax-keyword">fn</span> delete(user: u64, s: &amp;Snapshot, id: u64) -&gt; Outcome {
-    <span class="syntax-keyword">match</span> find_post(&amp;s.posts, id) {
-        None =&gt; Err(Error::NotFound),
-        Some(p) =&gt; <span class="syntax-keyword">if</span> p.author == user
-            || is_moderator(&amp;s.moderators, user) {
-            Ok((one(Write::DelPost(id)), Reply::Done))
-        } <span class="syntax-keyword">else</span> { Err(Error::Forbidden) },
-    }
-}</pre></div>
-<span></span>
-<div class="lean-example"><div class="editor-bar">proofs/Theorems.lean</div><pre><span class="syntax-keyword">theorem</span> authorized (a : Principal) (s : Snapshot)
-    (c : Command) ws r (hinv : Inv (Snapshot.toSt s))
-    (h : transition a s c = .ok (.Ok (ws, r))) :
-    ∀ w ∈ ws.val,
-      allowed (Snapshot.toSt s) a.user.val w := <span class="syntax-keyword">by</span>
-  <span class="code-dim">-- proof body omitted</span></pre></div>
-<span></span>
-<div class="guarantee-card"><p>Only the author or a moderator can delete.</p></div>
+<div class="content"><div class="eyebrow">03 / Solution</div><h2 id="title-3">h5i Puts a Formally Verified Core Inside Your Web App.</h2>
+<div class="arch">
+<div class="node">HTTP / Axum</div><i aria-hidden="true">→</i><div class="node core">Rust app kernel</div><i aria-hidden="true">→</i><div class="node">Database</div>
+<span></span><span></span><i class="up" aria-hidden="true">↓</i><span></span><span></span>
+<span></span><span></span><div class="node proof">Lean 4 proof</div><span></span><span></span>
 </div></div>
 <footer class="folio"><span>Proofs cover stated properties for all modeled inputs, under explicit assumptions</span><span>03</span></footer>
 </section>
