@@ -348,7 +348,9 @@ figure { margin:0; }
 .traction-side .os-split i { width:11px; height:11px; }
 .model-row { display:grid; grid-template-columns:minmax(0,1fr) 700px; gap:28px; align-items:stretch; margin-top:36px; }
 .cards.model-stack { grid-template-columns:1fr; margin-top:0; align-content:stretch; }
-.cards.model-stack > div { justify-content:center; }
+.cards.model-stack > div { justify-content:center; padding:18px 24px; gap:10px; }
+.cards.model-stack ul { margin:0; padding-left:20px; font-size:20px; font-weight:500; line-height:1.4; }
+.cards.model-stack li::marker { color:var(--spot); }
 .session-ui-frame.model-ui { height:302px; }
 .session-ui-frame.model-ui iframe { transform:scale(.7); }
 .arch { display:grid; grid-template-columns:minmax(0,1fr) 64px minmax(0,1fr) 64px minmax(0,1fr); align-items:center; margin-top:48px; }

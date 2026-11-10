@@ -17,8 +17,7 @@ not h5i's invention, so never claim it as unique. Red-teaming, market sizing,
 architecture, property counts and vulnerability counts stay out. The YC guide
 is not a checklist. One idea per slide, **20 to 30 words at most** (title and
 body; eyebrow and folio excluded). Say "formally verify", not
-"mathematically verify". Every headline is one real sentence with a verb. No
-clipped "A. B." slogans and no noun phrases joined by a comma. The landing page does not link here on purpose.
+"mathematically verify". No clipped "A. B." slogans and no noun phrases joined by a comma. The landing page does not link here on purpose.
 
 The cover shows stars, forks (80) and downloads in a right-hand column.
 The traction slide embeds the live star-history.com chart (dark theme), so
@@ -27,7 +26,10 @@ the PDF render needs network access to include it. Beside it: 80 forks and
 only about ten committed in the last 90 days. The OS donut uses the same
 download run: Linux 2,323, macOS 885, Windows 689 of 3,897.
 Traction: 913 stars and 3,897 release downloads (Python wheels excluded, via
-`scripts/h5i-stat.sh`), both read from GitHub on November 9, 2026. The business model slide stacks the free and paid cards on the left and
+`scripts/h5i-stat.sh`), both read from GitHub on November 9, 2026. The business model slide sells verification infrastructure, not a
+dashboard: free is the web framework, Lean 4 proofs and local CLI; paid
+(planned) is continuous verification, proof monitoring in CI/CD, and team
+collaboration with audit reports. It stacks the free and paid cards on the left and
 embeds `assets/h5i-ui-session.html` (the static `h5i ui` capture) on the
 right. The paid
 tier is labeled "planned" because no paid product exists. The ask says
