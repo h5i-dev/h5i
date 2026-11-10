@@ -11,7 +11,7 @@
   function show(index, updateHash = true) {
     current = Math.max(0, Math.min(slides.length - 1, index));
     slides.forEach((slide, i) => { slide.hidden = i !== current; slide.inert = i !== current; });
-    position.textContent = `${String(current + 1).padStart(2, '0')} / ${slides.length}`;
+    position.textContent = `${String(current + 1).padStart(2, '0')} / ${String(slides.length).padStart(2, '0')}`;
     prev.disabled = current === 0;
     next.disabled = current === slides.length - 1;
     if (updateHash) history.replaceState(null, '', `#slide-${current + 1}`);

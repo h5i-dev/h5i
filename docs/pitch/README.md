@@ -1,54 +1,56 @@
 # h5i pitch deck
 
-The eight-slide deck follows the docs' visual system: Archivo display type,
+The six-slide deck follows the docs' visual system: Archivo display type,
 IBM Plex Mono labels, warm monochrome surfaces, square cells, hairline rules
 and red accents. `index.html` is the content source; `deck.css` and `deck.js`
 provide presentation, mobile reading, keyboard navigation and print layouts.
 Without JavaScript, every slide remains readable in order.
 
-Keep the opening question, then explain why finding bugs cannot establish that
-critical properties always hold. Present h5i as a verifiable Rust web framework, supported
-by development infrastructure that also works with existing web apps. Slides
-4 and 5 distinguish the kernel architecture from the properties proved with
-it; slide 6 demonstrates red-teaming tools. Customer development belongs
-briefly at the end; there are no customers to claim yet. Downloads and stars
-are interest signals, not active-user, retention or revenue metrics.
+The deck tells one story: h5i is a development platform for proving that
+the critical properties of web software are correct. Six slides: product,
+problem, solution, traction, business model, founder and ask. Do not frame
+formal verification as bug finding; it guarantees properties. The solution
+slide shows the framework's architecture, not a translation step: HTTP /
+Axum, then the Rust app kernel, then the database, with the Lean 4 proof
+under the kernel. A Rust-to-Lean picture reads as Aeneas. Rust-to-Lean translation itself is Aeneas,
+not h5i's invention, so never claim it as unique. Red-teaming, market sizing,
+architecture, property counts and vulnerability counts stay out. The YC guide
+is not a checklist. One idea per slide, **20 to 30 words at most** (title and
+body; eyebrow and folio excluded). Say "formally verify", not
+"mathematically verify". No clipped "A. B." slogans and no noun phrases joined by a comma. The landing page does not link here on purpose.
 
-Slide 2 makes the case for formal verification: testing and red-teaming can
-uncover vulnerabilities, while proofs establish stated properties for all
-modeled inputs under explicit assumptions. Neither slide nor speaker notes
-should imply universal product guarantees. Slide 6 shows how red-teaming
-complements proofs by testing HTTP adapters, external services and other
-behavior outside the proof boundary.
+The cover shows stars, forks (80) and downloads in a right-hand column.
+The traction slide embeds the live star-history.com chart (dark theme), so
+the PDF render needs network access to include it. Beside it: 80 forks and
+20+ contributors (23 on GitHub, November 10, 2026). Do not say "active":
+only about ten committed in the last 90 days. The OS donut uses the same
+download run: Linux 2,323, macOS 885, Windows 689 of 3,897.
+Traction: 913 stars and 3,897 release downloads (Python wheels excluded, via
+`scripts/h5i-stat.sh`), both read from GitHub on November 9, 2026. The business model slide sells verification infrastructure, not a
+dashboard: free is the web framework, Lean 4 proofs and local CLI; paid
+(planned) is continuous verification, proof monitoring in CI/CD, and team
+collaboration with audit reports. It stacks the free and paid cards on the left and
+embeds `assets/h5i-ui-session.html` (the static `h5i ui` capture) on the
+right. The paid
+tier is labeled "planned" because no paid product exists. The ask says
+"seeking design partners and seed investors"; say "raising" only once a round
+is formally open. Publications come from koukyosyumei.github.io. The "100+ zero-day
+vulnerabilities and CVEs" figure is the founder's own count; the homepage
+lists only five selected findings, so keep a source for it on hand.
 
-Slide 3 has two levels: the framework is the core product, and the CLI,
-dashboard and sandbox are development infrastructure. Kernel extraction to
-Lean 4 is the main architecture point. Keep GPU as an optional supporting
-kernel capability. Slide 4 shows Rust branching to Lean 4 verification and
-optional Rust-CUDA execution; Lean does not generate the GPU code or prove
-CPU/GPU equivalence.
+Neither slides nor speaker notes should imply universal product guarantees:
+proofs establish stated properties for all modeled inputs under explicit
+assumptions, and product boundaries follow `docs/design/design-app-trust.md`.
+Do not fill gaps with invented customer numbers, pricing or market statistics.
 
-Slide 5 keeps the Rust authorization branch, Lean theorem and actual h5i UI
-guarantee graph. Slide 6 keeps the shell and dashboard demonstration, with an
-explicit note that the tools work on applications outside h5i-app.
-
-For h5i websec, lead with the AI-friendly CLI and the dashboard that lets a
-human understand and manage the agent's work. Capture, editing and replay are
-supporting tools, not the differentiator. Show the real dashboard layout, not a simplified mockup. Use native HTML/CSS
-so its text and borders remain sharp in the PDF. Dashboard controls refer to browser control
-and stopping the browser, not arbitrary agent termination or policy editing.
-
-Slide 7 shows 3.5k+ release downloads (November 3, 2026, from
-`scripts/h5i-stat.sh`) with a Linux/macOS/Windows donut that excludes Python
-wheels, and 880+ GitHub stars (October 28, 2026). These are conservative interest signals, not
-customer numbers. The dashboard uses a static DOM/CSS snapshot of the real `h5i ui`, captured
-from a local demonstration session. It is not a screenshot or a UI mockup. Product boundaries follow `docs/design/design-app-trust.md` and
-the box policy guide. Design partners and paid pilots are future steps.
-
-For an investor-specific version, add founder credentials, the funding ask
-and use of funds when available. Add commercial validation and a defensible
-market estimate when evidence supports them; do not fill gaps with invented
-customer numbers, pricing or market statistics.
+The session capture on slide 5 used an isolated `H5I_BROWSER_HOME` and
+`H5I_PROJECT_HOME`, plus a local HTTP demo with orders 1041/Alice and
+1042/Bob. Actual browser navigation, a replay changing the ID, and a finding
+populated the UI. It represents a demonstration, not customer evidence.
+Runtime scripts and the UI access token are excluded from the artifact; the
+iframe is sandboxed and static. `assets/h5i-app-ui.html` (the board Apps
+guarantee graph) and `assets/rust-lean-proof.svg` are kept for reuse but no
+slide embeds them now.
 
 ## Refresh the PDF
 
@@ -71,27 +73,7 @@ size, phone widths, keyboard/deep-link navigation and print output.
 
 ## Visuals
 
-Keep slides readable at a glance. Use short labels and diagrams instead of
-paragraphs. Slide 4 shows the Rust `push_rule` kernel from the parallel example,
-with branches to its Lean proof and optional CUDA wrapper. Slide 5 shows the
-board tutorial's delete authorization branch and Lean `authorized` theorem statement.
-The proof body is explicitly
-omitted. Its Apps panel is a static capture of the actual `.app-map` guarantee graph
-component. No successful check or proof-run status has been fabricated.
-Slide 6 embeds `assets/h5i-ui-session.html`: the actual UI DOM and CSS captured from
-`target/release/h5i ui` (binary built October 8, capture October 11, 2026).
-
-The capture used an isolated `H5I_BROWSER_HOME` and `H5I_PROJECT_HOME`, plus a
-local HTTP demo with orders 1041/Alice and 1042/Bob. Actual browser navigation,
-a replay changing the ID, and a finding populated the UI. It represents a
-demonstration, not customer evidence. Runtime scripts and the UI access token
-are excluded from the artifact; the iframe is sandboxed and static.
-
-Slide 6 pairs an illustrative shell transcript with the actual session
-workspace (`assets/h5i-ui-session.html`). The same captured session populates
-the history. Slide 5 uses `assets/h5i-app-ui.html` from the real board Apps view.
-
-The Apps graph panel focuses the captured SVG on its guarantee, theorem and
-specification columns (viewBox 0 0 780 270), labeled as an excerpt. The node
-labels and connections come from the actual UI; they are not invented proof
-check results.
+Keep slides readable at a glance: short labels, cards and one code example at
+most. Content-heavy slides (4 and 5) carry the `top` class and start near the
+top; the others center vertically. Check every slide at 1280 × 720 for
+overflow past the folio, at phone widths, and in the PDF.
