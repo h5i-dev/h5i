@@ -7,17 +7,31 @@ Written in the Rust subset Charon and Aeneas translate to Lean 4; the proofs in
 CI re-extracts and diffs).
 
 ```rust
-use h5i_app_h1::{parse_head, HeadResult, Limits, Framing};
+use h5i_app_h1::{carry, fit_limits, recv_start, recv_step, Action, Limits};
 
-let lim = Limits { max_head: 1024, max_body: 1024 };
-match parse_head(&buf[..filled], &lim) {
-    HeadResult::Incomplete => { /* read more */ }
-    HeadResult::Reject(status) => { /* answer `status`, close */ }
-    HeadResult::Done(h) => { /* h.len, h.framing, h.headers[..h.count] */ }
+let lim = fit_limits(&Limits { max_head: 1024, max_body: 1024 }, rx.len());
+let (mut st, mut eof) = (recv_start(), false);
+loop {
+    let (s, a) = recv_step(st, &mut rx, filled, eof, &lim);
+    st = s;
+    match a {
+        Action::NeedRead => match read(&mut rx[filled..]) { 0 => eof = true, n => filled += n },
+        Action::Ready(head, start, end, used) => {
+            // the body is rx[start..end]; answer, then the next request:
+            filled = carry(&mut rx, used, filled);
+            (st, eof) = (recv_start(), false);
+        }
+        Action::Reject(status) => break, // answer `status`, close
+        Action::Eof => break,            // the peer closed between requests
+    }
 }
 ```
 
-`chunk_step` decodes a `chunked` body one byte at a time with a four-integer
+`recv_step` is the receive loop without its I/O: it parses the head with
+`parse_head`, then reads the body with `read_body`, and says when to read
+more; `carry` moves the bytes after a request to the start of the buffer;
+`fit_limits` cuts the limits so a whole request fits; `must_close` decides
+keep-alive. `chunk_step` decodes a `chunked` body one byte at a time with a four-integer
 state. `read_body` finds where the body and the message end in the receive
 buffer, decoding a chunked body in place; call it again with its state after
 appending bytes. `write_head` writes `HTTP/1.1 <status> <reason>`, `Content-Type`,
@@ -55,14 +69,20 @@ only), never both, and neither value may end in whitespace. Chunk sizes are
 | `read_body_chunked`, `dechunk_spec` | `H1Read.lean` | for a state satisfying `ChunkInv` (the fold so far, payload at `buf[start..w]`, `w ≤ r`, `buf[r..filled]` still the unread wire bytes): `read_body` returns `Spec.dechunk` of the body bytes received so far, with the payload at `buf[start..end]` and `used = start + consumed`; bytes below the first write and at or past `r` (so past `used`) are unchanged; on `More` the invariant holds at `filled` |
 | `inv_start`, `inv_extend` | `H1Read.lean` | `body_start`'s state satisfies `ChunkInv`, and appending bytes at `filled` keeps it |
 | `read_body_length`, `read_body_empty` | `H1Read.lean` | `Content-Length: n` is done at `start + n` once `filled` reaches it (413 if it cannot fit), no body is done at `start`; `buf` is not changed |
+| `recv_step_spec`, `RInv.extend` | `H1Recv.lean` | one `recv_step` call returns `recvS` of the bytes received for the request (`parseHead`, then the body by its framing, `Spec.dechunk` if chunked; 431 or 413 if the buffer fills first): on `Ready(head, start, end, used)` the payload is at `rx[start..end]`, `used` is the head length plus the body's length on the wire, and the head bytes and `rx[used..filled]` are as received; after `NeedRead` the state satisfies `RInv`, and appending a read at `filled` keeps it |
+| `drive_view`, `drive_split`, `drive_at_once` | `H1Recv.lean` | for every sequence of reads, the server's loop over the extracted `recv_step` (`Drive`: read only after `NeedRead`, `eof` after a read of 0) ends with `recvS` of all the bytes read; so two splits of the same bytes give the same action, payload and `filled`, and so does one call on all of them at once, whatever bytes follow |
+| `recvS_prefix`, `drive_room` | `H1Recv.lean` | once decided, more bytes or the peer closing change nothing; `NeedRead` only with room left in `rx` |
+| `drive_next`, `carry_spec` | `H1Recv.lean` | after `Ready`, `carry` leaves exactly the bytes received after `used` at the start of `rx`, as the next request's |
+| `fit_limits_spec`, `must_close_spec` | `H1Recv.lean` | `max_head + max_body` fits in the buffer; `must_close` is true for HTTP/1.0 and from the `max_requests`-th request |
 | `accept_wellformed`, `parse_head_wellformed` | `H1Props.lean` | every accepted head has token names, CR/LF/NUL-free values, the `Host`/`Content-Length`/`Transfer-Encoding` counts above, and a framing that matches its fields |
 | `no_smuggling` | `H1Smuggle.lean` | every parser in the lenient family `Interp` computes the same head length and framing on every head we accept |
 
-Not proven: the loops in `h5i-app-embedded` that call `parse_head` and
-`read_body` while appending reads at `filled`, and `write_field` for each
-extra field (I/O and iteration only; tested); that an accepted head matches
-the grammar above as a whole (its parts are in `accept_wellformed`); anything
-about time. Check with `cargo app check crates/h5i-app-h1` (no `sorry`,
+Not proven: the caller's `read` into `rx[filled..]` and `filled += n` (the
+theorems assume a read changes nothing below `filled`); the loop in
+`h5i-app-embedded` that calls `write_field` for each extra field; that
+`wants_close` finds exactly the `close` options (tested); that an accepted
+head matches the grammar above as a whole (its parts are in
+`accept_wellformed`); anything about time. Check with `cargo app check crates/h5i-app-h1` (no `sorry`,
 `native_decide` or axioms beyond Lean's three).
 
 Tests: unit tests in `src/tests.rs`; `tests/differential.rs` compares

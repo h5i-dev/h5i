@@ -167,7 +167,7 @@ with the payload at `buf'[start..w']` and `r' - start` wire bytes used, or
 theorem dechunk_loop_spec (buf : Slice U8) (filled : Usize) (mb : U32) (cs : ChunkState) (r w : Usize)
     (start : Nat) (wire : List Nat) (hI : ChunkInv mb.val start filled.val wire (B buf.val) (csView cs) r.val w.val) :
     dechunk_loop buf filled mb cs r w ⦃ cs' r' w' out buf' =>
-      buf'.length = buf.length ∧ start ≤ w'.val ∧ w'.val ≤ r'.val ∧ r'.val ≤ filled.val ∧
+      buf'.length = buf.length ∧ start ≤ w'.val ∧ w'.val ≤ r'.val ∧ r'.val ≤ filled.val ∧ r.val ≤ r'.val ∧
       (∀ i, i < w.val ∨ r'.val ≤ i → (B buf'.val).getD i 0 = (B buf.val).getD i 0) ∧
       match out with
       | .More => r'.val = filled.val ∧
@@ -178,11 +178,11 @@ theorem dechunk_loop_spec (buf : Slice U8) (filled : Usize) (mb : U32) (cs : Chu
   unfold dechunk_loop
   apply loop.spec_decr_nat
     (measure := fun (x : Slice U8 × ChunkState × Usize × Usize) => filled.val - x.2.2.1.val)
-    (inv := fun x => x.1.length = buf.length ∧ w.val ≤ x.2.2.2.val ∧
+    (inv := fun x => x.1.length = buf.length ∧ w.val ≤ x.2.2.2.val ∧ r.val ≤ x.2.2.1.val ∧
       (∀ i, i < w.val ∨ x.2.2.1.val ≤ i → (B x.1.val).getD i 0 = (B buf.val).getD i 0) ∧
       ChunkInv mb.val start filled.val wire (B x.1.val) (csView x.2.1) x.2.2.1.val x.2.2.2.val)
-  · rintro ⟨b1, c1, r1, w1⟩ ⟨hl, hw, hun, hI1⟩
-    simp only at hl hw hun hI1 ⊢
+  · rintro ⟨b1, c1, r1, w1⟩ ⟨hl, hw, hrr, hun, hI1⟩
+    simp only at hl hw hrr hun hI1 ⊢
     have hle := hI1.le
     have hblen : (B b1.val).length = b1.val.length := by simp [B]
     unfold dechunk_loop.body
@@ -231,8 +231,8 @@ theorem dechunk_loop_spec (buf : Slice U8) (filled : Usize) (mb : U32) (cs : Chu
     · rename_i hr
       simp only [WP.spec_ok]
       have hrf : r1.val = filled.val := by have := hle.2.2.1; scalar_tac
-      exact ⟨hl, hle.1, hle.2.1, hle.2.2.1, hun, hrf, hI1⟩
-  · exact ⟨rfl, le_refl _, fun _ _ => rfl, hI⟩
+      exact ⟨hl, hle.1, hle.2.1, hle.2.2.1, hrr, hun, hrf, hI1⟩
+  · exact ⟨rfl, le_refl _, le_refl _, fun _ _ => rfl, hI⟩
 
 /-! ## `dechunk` and `read_body` -/
 
@@ -246,7 +246,7 @@ for wire bytes `wire` and a state `st` satisfying `ChunkInv`. -/
 def ChunkPost (mb start filled : Nat) (wire : List Nat) (buf : Slice U8) (st : BodyState)
     (st' : BodyState) (out : BodyOut) (buf' : Slice U8) : Prop :=
   buf'.length = buf.length ∧ start ≤ st'.w.val ∧ st'.w.val ≤ st'.r.val ∧ st'.r.val ≤ filled ∧
-  (∀ i, i < st.w.val ∨ st'.r.val ≤ i → (B buf'.val).getD i 0 = (B buf.val).getD i 0) ∧
+  st.r.val ≤ st'.r.val ∧ (∀ i, i < st.w.val ∨ st'.r.val ≤ i → (B buf'.val).getD i 0 = (B buf.val).getD i 0) ∧
   match out with
   | .More => st'.r.val = filled ∧ ChunkInv mb start filled wire (B buf'.val) (csView st'.chunk) st'.r.val st'.w.val
   | .Done e u => e = st'.w ∧ u = st'.r ∧ feed cStart wire mb [] 0 = .done (payload buf' start e.val) (u.val - start)
@@ -261,11 +261,11 @@ theorem dechunk_spec (buf : Slice U8) (filled : Usize) (st : BodyState) (mb : U3
   rw [if_neg (by scalar_tac)]
   rw [if_neg (by scalar_tac)]
   step with dechunk_loop_spec buf filled mb st.chunk st.r st.w start wire hI
-  refine ⟨cs_post, start_post, cs_post1, cs_post2, cs_post3, ?_⟩
+  refine ⟨cs_post, start_post, cs_post1, cs_post2, cs_post3, cs_post4, ?_⟩
   cases bo with
-  | Done e u => obtain ⟨rfl, rfl, h⟩ := cs_post4; exact ⟨rfl, rfl, h⟩
-  | More => exact cs_post4
-  | Reject x => exact cs_post4
+  | Done e u => obtain ⟨rfl, rfl, h⟩ := cs_post5; exact ⟨rfl, rfl, h⟩
+  | More => exact cs_post5
+  | Reject x => exact cs_post5
 
 /-- `read_body` on a chunked body: the payload is `buf'[start..end]`, the
 message used `used - start` wire bytes, and the result is `Spec.dechunk` of
@@ -282,7 +282,7 @@ theorem read_body_chunked (buf : Slice U8) (filled start : Usize) (st : BodyStat
   apply WP.spec_mono (dechunk_spec buf filled st mb start.val wire hI)
   rintro ⟨⟨st', out⟩, buf'⟩ h
   refine ⟨h, ?_⟩
-  obtain ⟨-, -, -, -, -, h5⟩ := h
+  obtain ⟨-, -, -, -, -, -, h5⟩ := h
   rw [← feed_dechunk]
   cases out with
   | More =>

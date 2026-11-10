@@ -1419,8 +1419,339 @@ def read_body
         else ok ((st, BodyOut.More), buf)
   | Framing.Chunked => dechunk buf filled st max_body
 
+/-- [h5i_app_h1::RecvState]
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 768:0-773:1
+    Visibility: public -/
+@[discriminant isize]
+inductive RecvState where
+| Head : RecvState
+| Body : Head → BodyState → RecvState
+
+/-- [h5i_app_h1::Action]
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 777:0-790:1
+    Visibility: public -/
+@[discriminant isize]
+inductive Action where
+| NeedRead : Action
+| Ready : Head → Std.Usize → Std.Usize → Std.Usize → Action
+| Reject : Std.U16 → Action
+| Eof : Action
+
+/-- [h5i_app_h1::recv_start]:
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 793:0-795:1
+    Visibility: public -/
+def recv_start : Result RecvState := do
+  ok RecvState.Head
+
+/-- [h5i_app_h1::undecided]:
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 843:0-851:1 -/
+def undecided
+  (filled : Std.Usize) (cap : Std.Usize) (eof : Bool) (between : Bool)
+  (full : Std.U16) :
+  Result Action
+  := do
+  if filled >= cap
+  then ok (Action.Reject full)
+  else
+    if eof
+    then
+      if between
+      then
+        if filled = 0#usize
+        then ok Action.Eof
+        else ok (Action.Reject BAD_REQUEST)
+      else ok (Action.Reject BAD_REQUEST)
+    else ok Action.NeedRead
+
+/-- [h5i_app_h1::recv_body]:
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 820:0-837:1 -/
+def recv_body
+  (h : Head) (bs : BodyState) (rx : Slice Std.U8) (filled : Std.Usize)
+  (eof : Bool) (max_body : Std.U32) :
+  Result ((RecvState × Action) × (Slice Std.U8))
+  := do
+  let ((bs2, out), rx1) ← read_body rx filled h.len h.framing bs max_body
+  match out with
+  | BodyOut.More =>
+    let i := Slice.len rx1
+    let a ← undecided filled i eof false PAYLOAD_TOO_LARGE
+    ok ((RecvState.Body h bs2, a), rx1)
+  | BodyOut.Done «end» used =>
+    ok ((RecvState.Head, Action.Ready h h.len «end» used), rx1)
+  | BodyOut.Reject s => ok ((RecvState.Head, Action.Reject s), rx1)
+
+/-- [h5i_app_h1::recv_step]:
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 802:0-817:1
+    Visibility: public -/
+def recv_step
+  (st : RecvState) (rx : Slice Std.U8) (filled : Std.Usize) (eof : Bool)
+  (lim : Limits) :
+  Result ((RecvState × Action) × (Slice Std.U8))
+  := do
+  let i := Slice.len rx
+  if filled > i
+  then ok ((RecvState.Head, Action.Reject INTERNAL_ERROR), rx)
+  else
+    match st with
+    | RecvState.Head =>
+      let s ←
+        core.slice.index.Slice.index
+          (core.slice.index.SliceIndexRangeToUsizeSlice Std.U8) rx
+          { «end» := filled }
+      let hr ← parse_head s lim
+      match hr with
+      | HeadResult.Incomplete =>
+        let i1 := Slice.len rx
+        let a ← undecided filled i1 eof true HEADERS_TOO_LARGE
+        ok ((RecvState.Head, a), rx)
+      | HeadResult.Reject s1 => ok ((RecvState.Head, Action.Reject s1), rx)
+      | HeadResult.Done h =>
+        let bs ← body_start h.len
+        recv_body h bs rx filled eof lim.max_body
+    | RecvState.Body h bs => recv_body h bs rx filled eof lim.max_body
+
+/-- [h5i_app_h1::carry]: loop body 0:
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 863:4-866:5
+    Visibility: public -/
+@[rust_loop_body]
+def carry_loop.body
+  (used : Std.Usize) (n : Std.Usize) (rx : Slice Std.U8) (i : Std.Usize) :
+  Result (ControlFlow ((Slice Std.U8) × Std.Usize) (Slice Std.U8))
+  := do
+  if i < n
+  then
+    let i1 ← used + i
+    let i2 ← Slice.index_usize rx i1
+    let s ← Slice.update rx i i2
+    let i3 ← i + 1#usize
+    ok (cont (s, i3))
+  else ok (done rx)
+
+/-- [h5i_app_h1::carry]: loop 0:
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 863:4-866:5
+    Visibility: public -/
+@[rust_loop]
+def carry_loop
+  (rx : Slice Std.U8) (used : Std.Usize) (n : Std.Usize) (i : Std.Usize) :
+  Result (Slice Std.U8)
+  := do
+  loop
+    (fun (rx1, i1) => carry_loop.body used n rx1 i1)
+    (rx, i)
+
+/-- [h5i_app_h1::carry]:
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 857:0-868:1
+    Visibility: public -/
+def carry
+  (rx : Slice Std.U8) (used : Std.Usize) (filled : Std.Usize) :
+  Result (Std.Usize × (Slice Std.U8))
+  := do
+  if used > filled
+  then ok (0#usize, rx)
+  else
+    let i := Slice.len rx
+    if filled > i
+    then ok (0#usize, rx)
+    else
+      let n ← filled - used
+      let rx1 ← carry_loop rx used n 0#usize
+      ok (n, rx1)
+
+/-- [h5i_app_h1::fit_limits]:
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 872:0-878:1
+    Visibility: public -/
+def fit_limits (lim : Limits) (cap : Std.Usize) : Result Limits := do
+  let max_head ← if lim.max_head < cap
+                   then ok lim.max_head
+                   else ok cap
+  let rest ← cap - max_head
+  let rest32 ←
+    if rest < 4294967295#usize
+    then ok (UScalar.cast .U32 rest)
+    else ok 4294967295#u32
+  if lim.max_body < rest32
+  then ok { lim with max_head }
+  else ok { max_head, max_body := rest32 }
+
+/-- [h5i_app_h1::is_close]: loop body 0:
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 1:0-928:5 -/
+@[rust_loop_body]
+def is_close_loop0.body
+  (buf : Slice Std.U8) (e : Std.Usize) (a : Std.Usize) :
+  Result (ControlFlow Std.Usize Std.Usize)
+  := do
+  if a < e
+  then
+    let i ← Slice.index_usize buf a
+    let b ← is_ows i
+    if b
+    then let a1 ← a + 1#usize
+         ok (cont a1)
+    else ok (done a)
+  else ok (done a)
+
+/-- [h5i_app_h1::is_close]: loop 0:
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 1:0-928:5 -/
+@[rust_loop]
+def is_close_loop0
+  (buf : Slice Std.U8) (e : Std.Usize) (a : Std.Usize) : Result Std.Usize := do
+  loop
+    (fun a1 => is_close_loop0.body buf e a1)
+    a
+
+/-- [h5i_app_h1::is_close]: loop body 1:
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 1:0-932:5 -/
+@[rust_loop_body]
+def is_close_loop1.body
+  (buf : Slice Std.U8) (a : Std.Usize) (b : Std.Usize) :
+  Result (ControlFlow Std.Usize Std.Usize)
+  := do
+  if b > a
+  then
+    let i ← b - 1#usize
+    let i1 ← Slice.index_usize buf i
+    let b1 ← is_ows i1
+    if b1
+    then ok (cont i)
+    else ok (done b)
+  else ok (done b)
+
+/-- [h5i_app_h1::is_close]: loop 1:
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 1:0-932:5 -/
+@[rust_loop]
+def is_close_loop1
+  (buf : Slice Std.U8) (a : Std.Usize) (b : Std.Usize) : Result Std.Usize := do
+  loop
+    (fun b1 => is_close_loop1.body buf a b1)
+    b
+
+/-- [h5i_app_h1::is_close]:
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 924:0-934:1 -/
+def is_close
+  (buf : Slice Std.U8) (s : Std.Usize) (e : Std.Usize) : Result Bool := do
+  let a ← is_close_loop0 buf e s
+  let b ← is_close_loop1 buf a e
+  let s1 ←
+    lift (Array.to_slice
+      (Array.make 5#usize [ 99#u8, 108#u8, 111#u8, 115#u8, 101#u8 ]))
+  eq_ci buf a b s1
+
+/-- [h5i_app_h1::lists_close]: loop body 0:
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 911:4-921:1 -/
+@[rust_loop_body]
+def lists_close_loop.body
+  (buf : Slice Std.U8) (e : Std.Usize) (a : Std.Usize) (k : Std.Usize) :
+  Result (ControlFlow (Std.Usize × Std.Usize) Bool)
+  := do
+  if k < e
+  then
+    let i ← Slice.index_usize buf k
+    if i = 44#u8
+    then
+      let b ← is_close buf a k
+      if b
+      then ok (done true)
+      else let a1 ← k + 1#usize
+           ok (cont (a1, a1))
+    else let k1 ← k + 1#usize
+         ok (cont (a, k1))
+  else let b ← is_close buf a e
+       ok (done b)
+
+/-- [h5i_app_h1::lists_close]: loop 0:
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 911:4-921:1 -/
+@[rust_loop]
+def lists_close_loop
+  (buf : Slice Std.U8) (e : Std.Usize) (a : Std.Usize) (k : Std.Usize) :
+  Result Bool
+  := do
+  loop
+    (fun (a1, k1) => lists_close_loop.body buf e a1 k1)
+    (a, k)
+
+/-- [h5i_app_h1::lists_close]:
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 905:0-921:1 -/
+def lists_close
+  (buf : Slice Std.U8) (s : Std.Usize) (e : Std.Usize) : Result Bool := do
+  if s > e
+  then ok false
+  else
+    let i := Slice.len buf
+    if e > i
+    then ok false
+    else lists_close_loop buf e s s
+
+/-- [h5i_app_h1::wants_close]: loop body 0:
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 1:0-901:1
+    Visibility: public -/
+@[rust_loop_body]
+def wants_close_loop.body
+  (buf : Slice Std.U8) (head : Head) (i : Std.Usize) :
+  Result (ControlFlow Std.Usize Bool)
+  := do
+  if i < head.count
+  then
+    if i < MAX_HEADERS
+    then
+      let f ← Array.index_usize head.headers i
+      let i1 := Slice.len buf
+      let named ←
+        if f.name.end <= i1
+        then
+          do
+          let s ←
+            lift (Array.to_slice
+              (Array.make 10#usize [
+                99#u8, 111#u8, 110#u8, 110#u8, 101#u8, 99#u8, 116#u8, 105#u8,
+                111#u8, 110#u8
+                ]))
+          eq_ci buf f.name.start f.name.end s
+        else ok false
+      if named
+      then
+        let b ← lists_close buf f.value.start f.value.end
+        if b
+        then ok (done true)
+        else let i2 ← i + 1#usize
+             ok (cont i2)
+      else let i2 ← i + 1#usize
+           ok (cont i2)
+    else ok (done false)
+  else ok (done false)
+
+/-- [h5i_app_h1::wants_close]: loop 0:
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 1:0-901:1
+    Visibility: public -/
+@[rust_loop]
+def wants_close_loop
+  (buf : Slice Std.U8) (head : Head) (i : Std.Usize) : Result Bool := do
+  loop
+    (fun i1 => wants_close_loop.body buf head i1)
+    i
+
+/-- [h5i_app_h1::wants_close]:
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 890:0-901:1
+    Visibility: public -/
+@[reducible]
+def wants_close (buf : Slice Std.U8) (head : Head) : Result Bool := do
+  wants_close_loop buf head 0#usize
+
+/-- [h5i_app_h1::must_close]:
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 883:0-885:1
+    Visibility: public -/
+def must_close
+  (buf : Slice Std.U8) (head : Head) (served : Std.U32)
+  (max_requests : Std.U32) :
+  Result Bool
+  := do
+  if head.minor = 0#u8
+  then ok true
+  else if served >= max_requests
+       then ok true
+       else wants_close buf head
+
 /-- [h5i_app_h1::put_n]: loop body 0:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 837:4-840:5 -/
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 1010:4-1013:5 -/
 @[rust_loop_body]
 def put_n_loop.body
   (pos : Std.Usize) (src : Slice Std.U8) (n : Std.Usize) (out : Slice Std.U8)
@@ -1437,7 +1768,7 @@ def put_n_loop.body
   else ok (done out)
 
 /-- [h5i_app_h1::put_n]: loop 0:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 837:4-840:5 -/
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 1010:4-1013:5 -/
 @[rust_loop]
 def put_n_loop
   (out : Slice Std.U8) (pos : Std.Usize) (src : Slice Std.U8) (n : Std.Usize)
@@ -1449,7 +1780,7 @@ def put_n_loop
     (out, q)
 
 /-- [h5i_app_h1::put_n]:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 832:0-842:1 -/
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 1005:0-1015:1 -/
 def put_n
   (out : Slice Std.U8) (pos : Std.Usize) (src : Slice Std.U8) (n : Std.Usize) :
   Result ((Option Std.Usize) × (Slice Std.U8))
@@ -1472,7 +1803,7 @@ def put_n
         ok (some i4, out1)
 
 /-- [h5i_app_h1::put]:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 767:0-769:1 -/
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 940:0-942:1 -/
 def put
   (out : Slice Std.U8) (pos : Std.Usize) (src : Slice Std.U8) :
   Result ((Option Std.Usize) × (Slice Std.U8))
@@ -1481,7 +1812,7 @@ def put
   put_n out pos src i
 
 /-- [h5i_app_h1::put1]:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 772:0-778:1 -/
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 945:0-951:1 -/
 def put1
   (out : Slice Std.U8) (pos : Std.Usize) (b : Std.U8) :
   Result ((Option Std.Usize) × (Slice Std.U8))
@@ -1495,7 +1826,7 @@ def put1
     ok (some i1, out1)
 
 /-- [h5i_app_h1::POW10]
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 780:0-780:113 -/
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 953:0-953:113 -/
 @[global_simps, irreducible]
 def POW10 : Array Std.U32 10#usize :=
   Array.make 10#usize [
@@ -1504,7 +1835,7 @@ def POW10 : Array Std.U32 10#usize :=
     ]
 
 /-- [h5i_app_h1::dec_digits]: loop body 0:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 787:4-794:5 -/
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 960:4-967:5 -/
 @[rust_loop_body]
 def dec_digits_loop.body
   (n : Std.U32) (buf : Array Std.U8 10#usize) (c : Std.Usize) (k : Std.Usize) :
@@ -1549,7 +1880,7 @@ def dec_digits_loop.body
   else ok (done (k, buf))
 
 /-- [h5i_app_h1::dec_digits]: loop 0:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 787:4-794:5 -/
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 960:4-967:5 -/
 @[rust_loop]
 def dec_digits_loop
   (n : Std.U32) (buf : Array Std.U8 10#usize) (c : Std.Usize) (k : Std.Usize) :
@@ -1560,7 +1891,7 @@ def dec_digits_loop
     (buf, c, k)
 
 /-- [h5i_app_h1::dec_digits]:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 784:0-796:1 -/
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 957:0-969:1 -/
 @[reducible]
 def dec_digits
   (n : Std.U32) (buf : Array Std.U8 10#usize) :
@@ -1569,7 +1900,7 @@ def dec_digits
   dec_digits_loop n buf 0#usize 0#usize
 
 /-- [h5i_app_h1::put_reason]:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 800:0-822:1 -/
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 973:0-995:1 -/
 def put_reason
   (out : Slice Std.U8) (pos : Std.Usize) (status : Std.U16) :
   Result ((Option Std.Usize) × (Slice Std.U8))
@@ -1719,7 +2050,7 @@ def put_reason
   | _ => ok (some pos, out)
 
 /-- [h5i_app_h1::put_dec]:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 825:0-829:1 -/
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 998:0-1002:1 -/
 def put_dec
   (out : Slice Std.U8) (pos : Std.Usize) (n : Std.U32) :
   Result ((Option Std.Usize) × (Slice Std.U8))
@@ -1730,7 +2061,7 @@ def put_dec
   put_n out pos s nd
 
 /-- [h5i_app_h1::has_body]:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 846:0-848:1
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 1019:0-1021:1
     Visibility: public -/
 def has_body (status : Std.U16) : Result Bool := do
   if status < 200#u16
@@ -1740,7 +2071,7 @@ def has_body (status : Std.U16) : Result Bool := do
        else ok false
 
 /-- [h5i_app_h1::end_head]:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 1021:0-1023:1
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 1194:0-1196:1
     Visibility: public -/
 def end_head
   (out : Slice Std.U8) (pos : Std.Usize) :
@@ -1750,7 +2081,7 @@ def end_head
   put out pos s
 
 /-- [h5i_app_h1::put_dec_if]:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 947:0-949:1 -/
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 1120:0-1122:1 -/
 def put_dec_if
   (out : Slice Std.U8) (pos : Std.Usize) (cond : Bool) (n : Std.U32) :
   Result ((Option Std.Usize) × (Slice Std.U8))
@@ -1760,7 +2091,7 @@ def put_dec_if
   else ok (some pos, out)
 
 /-- [h5i_app_h1::put_if]:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 942:0-944:1 -/
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 1115:0-1117:1 -/
 def put_if
   (out : Slice Std.U8) (pos : Std.Usize) (cond : Bool) (src : Slice Std.U8) :
   Result ((Option Std.Usize) × (Slice Std.U8))
@@ -1770,7 +2101,7 @@ def put_if
   else ok (some pos, out)
 
 /-- [h5i_app_h1::write_head_open]:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 876:0-938:1
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 1049:0-1111:1
     Visibility: public -/
 def write_head_open
   (out : Slice Std.U8) (status : Std.U16) (content_type : Slice Std.U8)
@@ -1892,7 +2223,7 @@ def write_head_open
       else ok (none, out)
 
 /-- [h5i_app_h1::write_head]:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 866:0-872:1
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 1039:0-1045:1
     Visibility: public -/
 def write_head
   (out : Slice Std.U8) (status : Std.U16) (content_type : Slice Std.U8)
@@ -1905,7 +2236,7 @@ def write_head
   | some a => end_head out1 a
 
 /-- [h5i_app_h1::reserved_name]:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 956:0-974:1
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 1129:0-1147:1
     Visibility: public -/
 def reserved_name («name» : Slice Std.U8) : Result Bool := do
   let n := Slice.len «name»
@@ -1966,7 +2297,7 @@ def reserved_name («name» : Slice Std.U8) : Result Bool := do
             eq_ci «name» 0#usize n s5
 
 /-- [h5i_app_h1::is_token]:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 977:0-979:1 -/
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 1150:0-1152:1 -/
 def is_token (buf : Slice Std.U8) : Result Bool := do
   let i := Slice.len buf
   if i > 0#usize
@@ -1978,7 +2309,7 @@ def is_token (buf : Slice Std.U8) : Result Bool := do
   else ok false
 
 /-- [h5i_app_h1::write_field]:
-    Source: 'crates/h5i-app-h1/src/lib.rs', lines 987:0-1018:1
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 1160:0-1191:1
     Visibility: public -/
 def write_field
   (out : Slice Std.U8) (pos : Std.Usize) («name» : Slice Std.U8)

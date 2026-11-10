@@ -2,10 +2,11 @@
 
 An async, `no_std`, heap-free HTTP/1.1 server for h5i-app kernels on
 microcontrollers. It is the trusted shell around the verified
-[`h5i-app-h1`](../h5i-app-h1) parser: it reads into a caller-provided buffer,
-parses with `parse_head`, finds where the body and message end with
-`read_body` (chunked bodies are decoded in place), routes, and writes
-response heads with `write_head_open`, `write_field` and `end_head`.
+[`h5i-app-h1`](../h5i-app-h1) core. The receive loop is h1's `recv_step`
+(head, body framing, chunked bodies decoded in place, 400/413/431) and
+`carry` (where the next pipelined request starts); the shell only reads into
+`rx[filled..]` when asked and adds the count to `filled`. It routes, and
+writes response heads with `write_head_open`, `write_field` and `end_head`.
 
 ```rust
 let k = Calls::<Thermostat, Wire, App>::new();
@@ -68,7 +69,8 @@ Memory per connection is `rx + tx` plus the handler's future: fixed at
 compile time. The receive buffer bounds the parser's limits, so a whole
 request fits.
 
-Trusted, tested (`src/tests.rs`: pipelining, a smuggling corpus, oversized
+Trusted, tested (`src/tests.rs`: pipelining, the same streams split into
+random reads, a smuggling corpus, oversized
 heads, truncation, slow clients, header refusals, route binding, signed and
 replayed requests, proptest fuzzing; `store`: power cuts at every byte;
 `json`: agreement with serde_json; `tcp`: two embassy-net stacks over an

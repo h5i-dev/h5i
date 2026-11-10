@@ -183,12 +183,14 @@ verified core, and between the core and a kernel.
 - I/O: generic over `embedded_io_async::{Read, Write}`, so the same code
   runs over tokio on the host (`embedded-io-adapters`), embassy-net TCP, or a
   UART on the device. No runtime dependency in the crate.
-- `Server::serve(&app, &mut rx: [u8; N], &mut tx: [u8; M], io)` loop: read
-  into `rx`, call `parse_head`; on `Incomplete` read more (a full buffer is
-  431 then close); on `Reject(s)` write the status with `Connection: close`
-  and close; on `Done` read the body by `Framing` (via `read_body`, which
-  decodes chunked bodies in place), dispatch, write the response with `write_head`, then keep-alive
-  or close. Read timeout and max requests per connection come from `Config`.
+- `serve(cfg, router, state, rx, tx, io, bound)` loop: call h1's
+  `recv_step`; on `NeedRead` read into `rx[filled..]` and add the count to
+  `filled` (a read of 0 sets `eof`); on `Reject(s)` write the status with
+  `Connection: close` and close; on `Ready` dispatch, write the response,
+  close if `must_close` says so, else `carry` the bytes after the request
+  and go on. The receive decisions (parsing, framing, in-place chunked
+  decoding, 400/413/431, the next request's start) are all in h1. Read
+  timeout and max requests per connection come from `Config`.
 - Routing and handlers, axum-shaped: `Router::new().route("/relay/{id}",
   post(handler))`, handlers are `async fn` taking extractors (`Path<u32>`,
   `Body<'r>`, `Actor<K>`, `State<&S>`) and returning `IntoResponse`. Router
@@ -266,7 +268,7 @@ verified core, and between the core and a kernel.
 
 | Item | Status |
 |---|---|
-| `h5i-app-h1` parsing, chunked decoding, response head | proven (panic freedom, spec, smuggling relative to `Interp`, read bound) |
+| `h5i-app-h1` parsing, chunked decoding, receive loop, response head | proven (panic freedom, spec, smuggling relative to `Interp`, read bound) |
 | thermostat `transition`/`apply` | proven (panic freedom, interlock invariant, read-only) |
 | memory per connection, no heap | structural (`no_std`, no alloc, fixed buffers, size check) |
 | `h5i-app-embedded` shell, router, extractors, command decoding | trusted, tested |
@@ -279,7 +281,7 @@ verified core, and between the core and a kernel.
 
 | Piece | Where |
 |---|---|
-| verified core | `crates/h5i-app-h1` (`src/lib.rs`, `proofs/H1Spec.lean`, `H1Proofs.lean`, `H1Props.lean`, `H1Smuggle.lean`, `H1Body.lean`, `H1Read.lean`, `H1Prefix.lean`) |
+| verified core | `crates/h5i-app-h1` (`src/lib.rs`, `proofs/H1Spec.lean`, `H1Proofs.lean`, `H1Props.lean`, `H1Smuggle.lean`, `H1Body.lean`, `H1Read.lean`, `H1Prefix.lean`, `H1Recv.lean`) |
 | async shell | `crates/h5i-app-embedded` (`serve`, `Router`, `kernel::{DeviceEngine, Calls, Store}`, `hmac`, `store`, `json`, `form`, `tcp`, `link`) |
 | `no_std` core | `crates/h5i-app-core` features `std` (default) / `alloc` |
 | thermostat | `examples/embedded/thermostat/{kernel,proofs,app,host,firmware}` |
@@ -322,6 +324,12 @@ verified core, and between the core and a kernel.
 - `parseHead_prefix` / `parseHead_split_invariant` (`H1Prefix.lean`): a
   `Done` or `Reject` stays the same on longer input, so the split of the
   stream into reads does not matter.
+- `drive_view` / `drive_split` / `drive_at_once` / `drive_next`
+  (`H1Recv.lean`): for every sequence of reads, the loop over the extracted
+  `recv_step` ends with the same action, payload and `filled` as one call on
+  all the bytes at once; `used` is the head plus the body's wire length;
+  `rx[used..filled]` is as received and `carry` makes it the next request's
+  start; `NeedRead` only with room left (431/413 otherwise).
 - `accept_wellformed` / `parse_head_wellformed` (`H1Props.lean`).
 - `no_smuggling` (`H1Smuggle.lean`) relative to `Interp`: line ends CRLF or LF;
   first or last duplicate `Content-Length`; TE-wins or CL-wins; whitespace
@@ -366,12 +374,14 @@ verified core, and between the core and a kernel.
 - I/O: generic over `embedded_io_async::{Read, Write}`, so the same code
   runs over tokio on the host (`embedded-io-adapters`), embassy-net TCP, or a
   UART on the device. No runtime dependency in the crate.
-- `Server::serve(&app, &mut rx: [u8; N], &mut tx: [u8; M], io)` loop: read
-  into `rx`, call `parse_head`; on `Incomplete` read more (a full buffer is
-  431 then close); on `Reject(s)` write the status with `Connection: close`
-  and close; on `Done` read the body by `Framing` (via `read_body`, which
-  decodes chunked bodies in place), dispatch, write the response with `write_head`, then keep-alive
-  or close. Read timeout and max requests per connection come from `Config`.
+- `serve(cfg, router, state, rx, tx, io, bound)` loop: call h1's
+  `recv_step`; on `NeedRead` read into `rx[filled..]` and add the count to
+  `filled` (a read of 0 sets `eof`); on `Reject(s)` write the status with
+  `Connection: close` and close; on `Ready` dispatch, write the response,
+  close if `must_close` says so, else `carry` the bytes after the request
+  and go on. The receive decisions (parsing, framing, in-place chunked
+  decoding, 400/413/431, the next request's start) are all in h1. Read
+  timeout and max requests per connection come from `Config`.
 - Routing and handlers, axum-shaped: `Router::new().route("/relay/{id}",
   post(handler))`, handlers are `async fn` taking extractors (`Path<u32>`,
   `Body<'r>`, `Actor<K>`, `State<&S>`) and returning `IntoResponse`. Router
@@ -449,7 +459,7 @@ verified core, and between the core and a kernel.
 
 | Item | Status |
 |---|---|
-| `h5i-app-h1` parsing, chunked decoding, response head | proven (panic freedom, spec, smuggling relative to `Interp`, read bound) |
+| `h5i-app-h1` parsing, chunked decoding, receive loop, response head | proven (panic freedom, spec, smuggling relative to `Interp`, read bound) |
 | thermostat `transition`/`apply` | proven (panic freedom, interlock invariant, read-only) |
 | memory per connection, no heap | structural (`no_std`, no alloc, fixed buffers, size check) |
 | `h5i-app-embedded` shell, router, extractors, command decoding | trusted, tested |
@@ -462,7 +472,7 @@ verified core, and between the core and a kernel.
 
 | Piece | Where |
 |---|---|
-| verified core | `crates/h5i-app-h1` (`src/lib.rs`, `proofs/H1Spec.lean`, `H1Proofs.lean`, `H1Props.lean`, `H1Smuggle.lean`, `H1Body.lean`, `H1Read.lean`, `H1Prefix.lean`) |
+| verified core | `crates/h5i-app-h1` (`src/lib.rs`, `proofs/H1Spec.lean`, `H1Proofs.lean`, `H1Props.lean`, `H1Smuggle.lean`, `H1Body.lean`, `H1Read.lean`, `H1Prefix.lean`, `H1Recv.lean`) |
 | async shell | `crates/h5i-app-embedded` (`serve`, `Router`, `kernel::{DeviceEngine, Calls, Store}`, `hmac`, `store`, `json`, `form`, `tcp`, `link`) |
 | `no_std` core | `crates/h5i-app-core` features `std` (default) / `alloc` |
 | thermostat | `examples/embedded/thermostat/{kernel,proofs,app,host,firmware}` |
@@ -505,6 +515,12 @@ verified core, and between the core and a kernel.
 - `parseHead_prefix` / `parseHead_split_invariant` (`H1Prefix.lean`): a
   `Done` or `Reject` stays the same on longer input, so the split of the
   stream into reads does not matter.
+- `drive_view` / `drive_split` / `drive_at_once` / `drive_next`
+  (`H1Recv.lean`): for every sequence of reads, the loop over the extracted
+  `recv_step` ends with the same action, payload and `filled` as one call on
+  all the bytes at once; `used` is the head plus the body's wire length;
+  `rx[used..filled]` is as received and `carry` makes it the next request's
+  start; `NeedRead` only with room left (431/413 otherwise).
 - `accept_wellformed` / `parse_head_wellformed` (`H1Props.lean`).
 - `no_smuggling` (`H1Smuggle.lean`) relative to `Interp`: line ends CRLF or LF;
   first or last duplicate `Content-Length`; TE-wins or CL-wins; whitespace
@@ -545,12 +561,14 @@ verified core, and between the core and a kernel.
 - I/O: generic over `embedded_io_async::{Read, Write}`, so the same code
   runs over tokio on the host (`embedded-io-adapters`), embassy-net TCP, or a
   UART on the device. No runtime dependency in the crate.
-- `Server::serve(&app, &mut rx: [u8; N], &mut tx: [u8; M], io)` loop: read
-  into `rx`, call `parse_head`; on `Incomplete` read more (a full buffer is
-  431 then close); on `Reject(s)` write the status with `Connection: close`
-  and close; on `Done` read the body by `Framing` (via `read_body`, which
-  decodes chunked bodies in place), dispatch, write the response with `write_head`, then keep-alive
-  or close. Read timeout and max requests per connection come from `Config`.
+- `serve(cfg, router, state, rx, tx, io, bound)` loop: call h1's
+  `recv_step`; on `NeedRead` read into `rx[filled..]` and add the count to
+  `filled` (a read of 0 sets `eof`); on `Reject(s)` write the status with
+  `Connection: close` and close; on `Ready` dispatch, write the response,
+  close if `must_close` says so, else `carry` the bytes after the request
+  and go on. The receive decisions (parsing, framing, in-place chunked
+  decoding, 400/413/431, the next request's start) are all in h1. Read
+  timeout and max requests per connection come from `Config`.
 - Routing and handlers, axum-shaped: `Router::new().route("/relay/{id}",
   post(handler))`, handlers are `async fn` taking extractors (`Path<u32>`,
   `Body<'r>`, `Actor<K>`, `State<&S>`) and returning `IntoResponse`. Router
@@ -628,7 +646,7 @@ verified core, and between the core and a kernel.
 
 | Item | Status |
 |---|---|
-| `h5i-app-h1` parsing, chunked decoding, response head | proven (panic freedom, spec, smuggling relative to `Interp`, read bound) |
+| `h5i-app-h1` parsing, chunked decoding, receive loop, response head | proven (panic freedom, spec, smuggling relative to `Interp`, read bound) |
 | thermostat `transition`/`apply` | proven (panic freedom, interlock invariant, read-only) |
 | memory per connection, no heap | structural (`no_std`, no alloc, fixed buffers, size check) |
 | `h5i-app-embedded` shell, router, extractors, command decoding | trusted, tested |
@@ -641,7 +659,7 @@ verified core, and between the core and a kernel.
 
 | Piece | Where |
 |---|---|
-| verified core | `crates/h5i-app-h1` (`src/lib.rs`, `proofs/H1Spec.lean`, `H1Proofs.lean`, `H1Props.lean`, `H1Smuggle.lean`, `H1Body.lean`, `H1Read.lean`, `H1Prefix.lean`) |
+| verified core | `crates/h5i-app-h1` (`src/lib.rs`, `proofs/H1Spec.lean`, `H1Proofs.lean`, `H1Props.lean`, `H1Smuggle.lean`, `H1Body.lean`, `H1Read.lean`, `H1Prefix.lean`, `H1Recv.lean`) |
 | async shell | `crates/h5i-app-embedded` (`serve`, `Router`, `kernel::{DeviceEngine, Calls, Store}`, `hmac`, `store`, `json`, `form`, `tcp`, `link`) |
 | `no_std` core | `crates/h5i-app-core` features `std` (default) / `alloc` |
 | thermostat | `examples/embedded/thermostat/{kernel,proofs,app,host,firmware}` |
@@ -684,6 +702,12 @@ verified core, and between the core and a kernel.
 - `parseHead_prefix` / `parseHead_split_invariant` (`H1Prefix.lean`): a
   `Done` or `Reject` stays the same on longer input, so the split of the
   stream into reads does not matter.
+- `drive_view` / `drive_split` / `drive_at_once` / `drive_next`
+  (`H1Recv.lean`): for every sequence of reads, the loop over the extracted
+  `recv_step` ends with the same action, payload and `filled` as one call on
+  all the bytes at once; `used` is the head plus the body's wire length;
+  `rx[used..filled]` is as received and `carry` makes it the next request's
+  start; `NeedRead` only with room left (431/413 otherwise).
 - `accept_wellformed` / `parse_head_wellformed` (`H1Props.lean`).
 - `no_smuggling` (`H1Smuggle.lean`) relative to `Interp`: line ends CRLF or LF;
   first or last duplicate `Content-Length`; TE-wins or CL-wins; whitespace
@@ -728,12 +752,14 @@ verified core, and between the core and a kernel.
 - I/O: generic over `embedded_io_async::{Read, Write}`, so the same code
   runs over tokio on the host (`embedded-io-adapters`), embassy-net TCP, or a
   UART on the device. No runtime dependency in the crate.
-- `Server::serve(&app, &mut rx: [u8; N], &mut tx: [u8; M], io)` loop: read
-  into `rx`, call `parse_head`; on `Incomplete` read more (a full buffer is
-  431 then close); on `Reject(s)` write the status with `Connection: close`
-  and close; on `Done` read the body by `Framing` (via `read_body`, which
-  decodes chunked bodies in place), dispatch, write the response with `write_head`, then keep-alive
-  or close. Read timeout and max requests per connection come from `Config`.
+- `serve(cfg, router, state, rx, tx, io, bound)` loop: call h1's
+  `recv_step`; on `NeedRead` read into `rx[filled..]` and add the count to
+  `filled` (a read of 0 sets `eof`); on `Reject(s)` write the status with
+  `Connection: close` and close; on `Ready` dispatch, write the response,
+  close if `must_close` says so, else `carry` the bytes after the request
+  and go on. The receive decisions (parsing, framing, in-place chunked
+  decoding, 400/413/431, the next request's start) are all in h1. Read
+  timeout and max requests per connection come from `Config`.
 - Routing and handlers, axum-shaped: `Router::new().route("/relay/{id}",
   post(handler))`, handlers are `async fn` taking extractors (`Path<u32>`,
   `Body<'r>`, `Actor<K>`, `State<&S>`) and returning `IntoResponse`. Router
@@ -811,7 +837,7 @@ verified core, and between the core and a kernel.
 
 | Item | Status |
 |---|---|
-| `h5i-app-h1` parsing, chunked decoding, response head | proven (panic freedom, spec, smuggling relative to `Interp`, read bound) |
+| `h5i-app-h1` parsing, chunked decoding, receive loop, response head | proven (panic freedom, spec, smuggling relative to `Interp`, read bound) |
 | thermostat `transition`/`apply` | proven (panic freedom, interlock invariant, read-only) |
 | memory per connection, no heap | structural (`no_std`, no alloc, fixed buffers, size check) |
 | `h5i-app-embedded` shell, router, extractors, command decoding | trusted, tested |
@@ -824,7 +850,7 @@ verified core, and between the core and a kernel.
 
 | Piece | Where |
 |---|---|
-| verified core | `crates/h5i-app-h1` (`src/lib.rs`, `proofs/H1Spec.lean`, `H1Proofs.lean`, `H1Props.lean`, `H1Smuggle.lean`, `H1Body.lean`, `H1Read.lean`, `H1Prefix.lean`) |
+| verified core | `crates/h5i-app-h1` (`src/lib.rs`, `proofs/H1Spec.lean`, `H1Proofs.lean`, `H1Props.lean`, `H1Smuggle.lean`, `H1Body.lean`, `H1Read.lean`, `H1Prefix.lean`, `H1Recv.lean`) |
 | async shell | `crates/h5i-app-embedded` (`serve`, `Router`, `kernel::{DeviceEngine, Calls, Store}`, `hmac`, `store`, `json`, `form`, `tcp`, `link`) |
 | `no_std` core | `crates/h5i-app-core` features `std` (default) / `alloc` |
 | thermostat | `examples/embedded/thermostat/{kernel,proofs,app,host,firmware}` |
@@ -867,6 +893,12 @@ verified core, and between the core and a kernel.
 - `parseHead_prefix` / `parseHead_split_invariant` (`H1Prefix.lean`): a
   `Done` or `Reject` stays the same on longer input, so the split of the
   stream into reads does not matter.
+- `drive_view` / `drive_split` / `drive_at_once` / `drive_next`
+  (`H1Recv.lean`): for every sequence of reads, the loop over the extracted
+  `recv_step` ends with the same action, payload and `filled` as one call on
+  all the bytes at once; `used` is the head plus the body's wire length;
+  `rx[used..filled]` is as received and `carry` makes it the next request's
+  start; `NeedRead` only with room left (431/413 otherwise).
 - `accept_wellformed` / `parse_head_wellformed` (`H1Props.lean`).
 - `no_smuggling` (`H1Smuggle.lean`) relative to `Interp`: line ends CRLF or LF;
   first or last duplicate `Content-Length`; TE-wins or CL-wins; whitespace

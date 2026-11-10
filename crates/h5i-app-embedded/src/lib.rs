@@ -53,7 +53,7 @@ pub mod tcp;
 mod tests;
 
 use embedded_io_async::{Read, Write};
-use h5i_app_h1::{self as h1, BodyOut, HeadResult};
+use h5i_app_h1::{self as h1, Action};
 pub use h5i_app_h1::{Head, Limits};
 
 /// Server limits.
@@ -452,16 +452,6 @@ pub enum Closed<E> {
     WriteTimeout,
 }
 
-/// What a connection's read loop decided about the next request.
-enum Next {
-    /// A request is ready: its head, the body span and the bytes it used.
-    Ready(Head, usize, usize, usize),
-    /// Answer with this status and close.
-    Reject(u16),
-    /// The peer closed the connection between requests.
-    Eof,
-}
-
 /// Serve one connection until it closes. Returns how many requests it
 /// answered.
 ///
@@ -489,9 +479,7 @@ where
         return Err(Closed::TxTooSmall);
     }
     // The receive buffer bounds the limits: a whole request must fit.
-    let max_head = cfg.limits.max_head.min(rx.len());
-    let rest = (rx.len() - max_head).min(u32::MAX as usize) as u32;
-    let lim = Limits { max_head, max_body: cfg.limits.max_body.min(rest) };
+    let lim = h1::fit_limits(&cfg.limits, rx.len());
     let mut filled = 0usize;
     let mut served = 0u32;
     loop {
@@ -500,15 +488,16 @@ where
             Some(Err(e)) => return Err(Closed::Io(e)),
             // Idle: close quietly. Part of a request: 408.
             None if filled == 0 => return Ok(served),
-            None => Next::Reject(408),
+            None => Action::Reject(408),
         };
         let (head, body_start, body_end, used) = match next {
-            Next::Eof => return Ok(served),
-            Next::Reject(status) => {
+            Action::Ready(h, s, e, u) => (h, s, e, u),
+            Action::Reject(status) => {
                 send(io, tx, room, Response::status(status).closing(), false, bound).await?;
                 return Ok(served);
             }
-            Next::Ready(h, s, e, u) => (h, s, e, u),
+            // `read_request` returns `NeedRead` never.
+            Action::Eof | Action::NeedRead => return Ok(served),
         };
         served += 1;
         let resp = {
@@ -528,7 +517,7 @@ where
                 params: [(0, 0); MAX_PARAMS],
                 nparams: 0,
             };
-            let close = head.minor == 0 || served >= cfg.max_requests || wants_close(&req);
+            let close = h1::must_close(raw, &head, served, cfg.max_requests);
             let (_, body_out) = tx.split_at_mut(room);
             let mut resp = match router.0.dispatch(&mut req, state, body_out).await {
                 Dispatch::Done(r) => r,
@@ -545,55 +534,34 @@ where
         if send(io, tx, room, resp, head_only, bound).await? {
             return Ok(served);
         }
-        // Pipelining: keep the bytes after this request.
-        rx.copy_within(used..filled, 0);
-        filled -= used;
+        // Pipelining: the bytes after this request start the next one.
+        filled = h1::carry(rx, used, filled);
     }
 }
 
-/// Read until `rx[..filled]` starts with a complete request, decoding a
-/// chunked body in place.
+/// Drive the verified [`h1::recv_step`]: read when it asks, until it
+/// decides. Never returns `NeedRead`.
 async fn read_request<IO: Read>(
     lim: &Limits,
     rx: &mut [u8],
     filled: &mut usize,
     io: &mut IO,
-) -> Result<Next, IO::Error> {
-    let head = loop {
-        match h1::parse_head(&rx[..*filled], lim) {
-            HeadResult::Done(h) => break h,
-            HeadResult::Reject(s) => return Ok(Next::Reject(s)),
-            HeadResult::Incomplete => {
-                // `parse_head` answers 431/414 itself once max_head bytes are in.
+) -> Result<Action, IO::Error> {
+    let mut st = h1::recv_start();
+    let mut eof = false;
+    loop {
+        let (s, a) = h1::recv_step(st, rx, *filled, eof, lim);
+        st = s;
+        match a {
+            Action::NeedRead => {
                 let n = io.read(&mut rx[*filled..]).await?;
                 if n == 0 {
-                    return Ok(if *filled == 0 { Next::Eof } else { Next::Reject(400) });
+                    eof = true;
+                } else {
+                    *filled += n;
                 }
-                *filled += n;
             }
-        }
-    };
-    // The verified `read_body` decides where the body and the message end;
-    // this loop only appends bytes at `filled`.
-    let start = head.len;
-    let mut st = h1::body_start(start);
-    loop {
-        let (s, out) = h1::read_body(rx, *filled, start, head.framing, st, lim.max_body);
-        st = s;
-        match out {
-            BodyOut::Done(end, used) => return Ok(Next::Ready(head, start, end, used)),
-            BodyOut::Reject(s) => return Ok(Next::Reject(s)),
-            BodyOut::More => {
-                if *filled == rx.len() {
-                    // Framing bytes filled the buffer.
-                    return Ok(Next::Reject(413));
-                }
-                let k = io.read(&mut rx[*filled..]).await?;
-                if k == 0 {
-                    return Ok(Next::Reject(400));
-                }
-                *filled += k;
-            }
+            a => return Ok(a),
         }
     }
 }
@@ -602,9 +570,7 @@ async fn read_request<IO: Read>(
 /// a comma-separated list, names case-insensitive, possibly over several
 /// fields).
 pub fn wants_close(req: &Request<'_>) -> bool {
-    req.headers()
-        .filter(|(n, _)| n.eq_ignore_ascii_case(b"connection"))
-        .any(|(_, v)| v.split(|&c| c == b',').any(|t| t.trim_ascii().eq_ignore_ascii_case(b"close")))
+    h1::wants_close(req.raw, &req.head)
 }
 
 /// The head of `resp` in `head`: the verified writer's status line and

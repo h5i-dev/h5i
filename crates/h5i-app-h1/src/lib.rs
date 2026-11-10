@@ -761,6 +761,179 @@ pub fn dechunk(buf: &mut [u8], filled: usize, st: BodyState, max_body: u32) -> (
 }
 
 // ---------------------------------------------------------------------------
+// Receiving requests, without I/O
+
+/// Where [`recv_step`] is in the current request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RecvState {
+    /// No complete head yet.
+    Head,
+    /// The head is parsed and its body is being read.
+    Body(Head, BodyState),
+}
+
+/// What the caller does next.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Action {
+    /// Read more bytes into `rx[filled..]` (never empty), add their number to
+    /// `filled` (or call again with `eof` if the read returned 0), and call
+    /// again with the returned state.
+    NeedRead,
+    /// A request: its head, its payload at `rx[start..end]` and its message
+    /// at `rx[..used]`: `Ready(head, start, end, used)`. `rx[used..filled]`
+    /// is unchanged, the start of the next request ([`carry`]).
+    Ready(Head, usize, usize, usize),
+    /// Answer with this status and close the connection.
+    Reject(u16),
+    /// The peer closed the connection between requests.
+    Eof,
+}
+
+/// The state before a request.
+pub fn recv_start() -> RecvState {
+    RecvState::Head
+}
+
+/// Decide what to do with the bytes `rx[..filled]` received so far for the
+/// current request. `eof`: the peer closed the connection and no more
+/// bytes will come. A head or body that cannot be decided before `rx` is
+/// full is 431 or 413, so `NeedRead` always leaves room in `rx`. Reads and
+/// writes only `rx[..filled]`; a chunked body is decoded in place.
+pub fn recv_step(st: RecvState, rx: &mut [u8], filled: usize, eof: bool, lim: &Limits) -> (RecvState, Action) {
+    if filled > rx.len() {
+        return (RecvState::Head, Action::Reject(INTERNAL_ERROR));
+    }
+    match st {
+        RecvState::Head => match parse_head(&rx[..filled], lim) {
+            HeadResult::Done(h) => recv_body(h, body_start(h.len), rx, filled, eof, lim.max_body),
+            HeadResult::Reject(s) => (RecvState::Head, Action::Reject(s)),
+            HeadResult::Incomplete => {
+                let a = undecided(filled, rx.len(), eof, true, HEADERS_TOO_LARGE);
+                (RecvState::Head, a)
+            }
+        },
+        RecvState::Body(h, bs) => recv_body(h, bs, rx, filled, eof, lim.max_body),
+    }
+}
+
+/// The body step of [`recv_step`].
+fn recv_body(
+    h: Head,
+    bs: BodyState,
+    rx: &mut [u8],
+    filled: usize,
+    eof: bool,
+    max_body: u32,
+) -> (RecvState, Action) {
+    let (bs2, out) = read_body(rx, filled, h.len, h.framing, bs, max_body);
+    match out {
+        BodyOut::Done(end, used) => (RecvState::Head, Action::Ready(h, h.len, end, used)),
+        BodyOut::Reject(s) => (RecvState::Head, Action::Reject(s)),
+        BodyOut::More => {
+            let a = undecided(filled, rx.len(), eof, false, PAYLOAD_TOO_LARGE);
+            (RecvState::Body(h, bs2), a)
+        }
+    }
+}
+
+/// Nothing decided on `filled` bytes of a buffer of `cap`: `full` if the
+/// buffer is full; else `Eof` if the peer closed between requests, 400 if
+/// it closed in one; else read. (Full first: the answer to a full buffer
+/// does not depend on whether a close follows.)
+fn undecided(filled: usize, cap: usize, eof: bool, between: bool, full: u16) -> Action {
+    if filled >= cap {
+        Action::Reject(full)
+    } else if eof {
+        if between && filled == 0 { Action::Eof } else { Action::Reject(BAD_REQUEST) }
+    } else {
+        Action::NeedRead
+    }
+}
+
+/// After a request that used `rx[..used]`: move `rx[used..filled]` to the
+/// start of `rx` for the next request, and return its length (the next
+/// `filled`). 0 if `used > filled` or `filled > rx.len()`, which no `Ready`
+/// gives.
+pub fn carry(rx: &mut [u8], used: usize, filled: usize) -> usize {
+    if used > filled || filled > rx.len() {
+        return 0;
+    }
+    let n = filled - used;
+    let mut i = 0;
+    while i < n {
+        rx[i] = rx[used + i];
+        i += 1;
+    }
+    n
+}
+
+/// `lim` cut down so that a whole request fits in a receive buffer of
+/// `cap` bytes: `max_head <= cap` and `max_head + max_body <= cap`.
+pub fn fit_limits(lim: &Limits, cap: usize) -> Limits {
+    let max_head = if lim.max_head < cap { lim.max_head } else { cap };
+    let rest = cap - max_head;
+    let rest32 = if rest < 4294967295 { rest as u32 } else { 4294967295 };
+    let max_body = if lim.max_body < rest32 { lim.max_body } else { rest32 };
+    Limits { max_head, max_body }
+}
+
+/// Whether the connection closes after this request: HTTP/1.0, the
+/// `max_requests`-th request (`served` counts it), or a `Connection` field
+/// that lists `close`.
+pub fn must_close(buf: &[u8], head: &Head, served: u32, max_requests: u32) -> bool {
+    head.minor == 0 || served >= max_requests || wants_close(buf, head)
+}
+
+/// Whether any `Connection` field of `head` lists the `close` option
+/// (RFC 9110 §7.6.1: comma-separated, case-insensitive, OWS around each).
+/// Spans outside `buf` count as no match.
+pub fn wants_close(buf: &[u8], head: &Head) -> bool {
+    let mut i = 0;
+    while i < head.count && i < MAX_HEADERS {
+        let f = head.headers[i];
+        let named = f.name.end <= buf.len() && eq_ci(buf, f.name.start, f.name.end, b"connection");
+        if named && lists_close(buf, f.value.start, f.value.end) {
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
+
+/// `buf[s..e]`, split at commas, has an element that is `close` once
+/// trimmed of OWS. False if the span is not inside `buf`.
+fn lists_close(buf: &[u8], s: usize, e: usize) -> bool {
+    if s > e || e > buf.len() {
+        return false;
+    }
+    let mut a = s;
+    let mut k = s;
+    while k < e {
+        if buf[k] == 44 {
+            if is_close(buf, a, k) {
+                return true;
+            }
+            a = k + 1;
+        }
+        k += 1;
+    }
+    is_close(buf, a, e)
+}
+
+/// `buf[s..e]` is `close` once trimmed of OWS (`s <= e <= buf.len()`).
+fn is_close(buf: &[u8], s: usize, e: usize) -> bool {
+    let mut a = s;
+    while a < e && is_ows(buf[a]) {
+        a += 1;
+    }
+    let mut b = e;
+    while b > a && is_ows(buf[b - 1]) {
+        b -= 1;
+    }
+    eq_ci(buf, a, b, b"close")
+}
+
+// ---------------------------------------------------------------------------
 // Response heads
 
 /// Copy `src` into `out` at `pos`, or `None` if it does not fit.

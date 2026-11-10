@@ -332,3 +332,85 @@ fn read_body_length_and_errors() {
     assert_eq!(crate::dechunk(&mut buf, 4, bad, 8).1, BodyOut::Reject(500));
     assert_eq!(crate::dechunk(&mut buf, 5, body_start(0), 8).1, BodyOut::Reject(500));
 }
+
+/// Drive `recv_step` over `msg` arriving `step` bytes at a time into an
+/// `N`-byte buffer, closing after it if `close`.
+fn recv_bytewise<const N: usize>(msg: &[u8], step: usize, close: bool, lim: &Limits) -> ([u8; N], usize, Action) {
+    let mut rx = [0u8; N];
+    let mut filled = 0;
+    let mut at = 0;
+    let mut st = recv_start();
+    let mut eof = false;
+    loop {
+        let (s, a) = recv_step(st, &mut rx, filled, eof, lim);
+        st = s;
+        if a != Action::NeedRead {
+            return (rx, filled, a);
+        }
+        let n = step.min(msg.len() - at).min(rx.len() - filled);
+        if n == 0 {
+            if !close {
+                return (rx, filled, a);
+            }
+            eof = true;
+        }
+        rx[filled..filled + n].copy_from_slice(&msg[at..at + n]);
+        filled += n;
+        at += n;
+    }
+}
+
+#[test]
+fn recv_step_any_split() {
+    let msg = b"POST / HTTP/1.1\r\nHost: d\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nab\r\n0\r\n\r\nGET";
+    let mut first = None;
+    for step in 1..msg.len() + 1 {
+        let (rx, filled, a) = recv_bytewise::<128>(msg, step, false, &Limits { max_head: 64, max_body: 16 });
+        let Action::Ready(h, s, e, u) = a else { panic!("{step}: {a:?}") };
+        assert_eq!(&rx[s..e], b"ab");
+        assert_eq!(h.framing, Framing::Chunked);
+        // Everything after `used` is as received.
+        assert_eq!(&rx[u..filled], &msg[u..filled]);
+        let got = (s, e, u);
+        assert_eq!(*first.get_or_insert(got), got, "step {step}");
+    }
+    // Full before the head ends: 431; before the body ends: 413.
+    let big = b"GET / HTTP/1.1\r\nHost: d\r\nX: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\r\n\r\n";
+    assert_eq!(recv_bytewise::<64>(big, 7, true, &Limits { max_head: 1024, max_body: 16 }).2, Action::Reject(431));
+    let body = b"POST / HTTP/1.1\r\nHost: d\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n1\r\nb\r\n1\r\nc\r\n";
+    assert_eq!(recv_bytewise::<64>(body, 5, true, &Limits { max_head: 64, max_body: 1024 }).2, Action::Reject(413));
+    // Closed between requests, inside one, and a 400 on a partial head.
+    assert_eq!(recv_bytewise::<64>(b"", 1, true, &LIM).2, Action::Eof);
+    assert_eq!(recv_bytewise::<64>(b"GET / HT", 3, true, &LIM).2, Action::Reject(400));
+    assert_eq!(recv_bytewise::<64>(b"GET / HT", 3, false, &LIM).2, Action::NeedRead);
+}
+
+#[test]
+fn carry_and_limits() {
+    let mut rx = *b"0123456789";
+    assert_eq!(carry(&mut rx, 3, 7), 4);
+    assert_eq!(&rx[..4], b"3456");
+    assert_eq!(carry(&mut rx, 5, 4), 0);
+    assert_eq!(carry(&mut rx, 0, 11), 0);
+    let l = fit_limits(&Limits { max_head: 1024, max_body: 4096 }, 2048);
+    assert_eq!((l.max_head, l.max_body), (1024, 1024));
+    let l = fit_limits(&Limits { max_head: 4096, max_body: 4096 }, 2048);
+    assert_eq!((l.max_head, l.max_body), (2048, 0));
+}
+
+#[test]
+fn close_decision() {
+    let req = b"GET / HTTP/1.1\r\nHost: d\r\nConnection: keep-alive, Close \r\n\r\n";
+    let h = head(req);
+    assert!(wants_close(req, &h));
+    assert!(must_close(req, &h, 1, 100));
+    let req2 = b"GET / HTTP/1.1\r\nHost: d\r\nConnection: closed, x\r\n\r\n";
+    let h2 = head(req2);
+    assert!(!wants_close(req2, &h2));
+    assert!(!must_close(req2, &h2, 1, 100));
+    assert!(must_close(req2, &h2, 100, 100));
+    // Spans outside the buffer are no match, not a panic.
+    assert!(!wants_close(b"", &h));
+    let h10 = head(b"GET / HTTP/1.0\r\n\r\n");
+    assert!(must_close(b"", &h10, 1, 100));
+}
