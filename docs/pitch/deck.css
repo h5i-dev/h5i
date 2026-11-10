@@ -362,6 +362,7 @@ figure { margin:0; }
 .proof-row .guarantee-card { justify-content:flex-start; padding:42px 16px 12px; }
 .proof-row .guarantee-card p { font-size:16px; line-height:1.45; color:var(--text); }
 .sparse h2.big { font-size:88px; }
+.sparse h2.big.one-line { font-size:76px; white-space:nowrap; }
 @media screen and (max-width:700px) {
   .enhanced body { overflow:auto; }
   .dense .content { padding:30px 0; }
@@ -474,6 +475,7 @@ figure { margin:0; }
   .proof-row > i { transform:rotate(90deg); }
   .proof-row pre { font-size:10px; white-space:pre-wrap; overflow-wrap:anywhere; }
   .sparse h2.big { font-size:47px; }
+  .sparse h2.big.one-line { white-space:normal; }
   .folio { height:auto; min-height:43px; font-size:9px; line-height:1.5; padding:12px 0; }
   .enhanced .controls { position:static; padding:0 14px; font-size:11px; gap:10px; }
   .controls>a,.exports button,.exports>a:first-child { display:none; }
