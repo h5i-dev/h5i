@@ -1,17 +1,19 @@
 /-!
-# What a valid request head is, independently of the parser
+# What a valid request is, independently of the parser
 
-A declarative description of the request heads `h5i-app-h1` may accept: the
+A declarative description of the requests `h5i-app-h1` may accept: the
 RFC 9112 / RFC 9110 / RFC 3986 grammar for the parts it supports, plus the
 h5i policy (one `Host` on HTTP/1.1, at most one `Content-Length` and one
-`Transfer-Encoding`, never both, and so on), and the framing RFC 9112 §6.3
-gives a request.
+`Transfer-Encoding`, never both, and so on), the framing RFC 9112 §6.3
+gives a request, and chunked bodies (RFC 9112 §7.1, with h5i's limits).
 
 This file imports nothing: its byte classes, its ASCII lowercasing
-(`Char.toLower`), its literals (from string literals) and its decimal
-reading are its own, so a misreading the parser shares with `H1Spec` does not
-carry over. `H1Sound.lean` proves that every head `parse_head` accepts is a
-`ValidHead`, with the framing `framing` computes.
+(`Char.toLower`), its literals (from string literals) and its decimal and
+hex reading are its own, so a misreading the parser shares with `H1Spec`
+does not carry over. `H1Sound.lean` proves that every head `parse_head`
+accepts is a `ValidHead`, with the framing `framing` computes;
+`H1Chunked.lean` that every chunked body the decoder accepts is a
+`ValidChunked`, with its payload.
 -/
 
 namespace H1Valid
@@ -162,6 +164,38 @@ def ValidHead (mh mb : Nat) (H : List Nat) (r : RequestLine) (fs : List FieldLin
   (∀ f ∈ fs, isTransferEncoding f = true → named f.value "chunked" = true ∧ r.minor = 1 ∧ f.ows2 = []) ∧
   -- never both
   ¬ (fs.any isContentLength = true ∧ fs.any isTransferEncoding = true)
+
+/-! ## Chunked bodies (RFC 9112 §7.1) -/
+
+/-- A hex digit's value: its place in `0123456789abcdef`, case ignored. -/
+def hexDigitValue (b : Nat) : Nat := (ascii "0123456789abcdef").idxOf (lc b)
+
+/-- A hex numeral's value. -/
+def hexNumber (ds : List Nat) : Nat := ds.foldl (fun a d => 16 * a + hexDigitValue d) 0
+
+/-- `chunk-size = 1*HEXDIG`, at most 8 digits (h5i). -/
+def chunkSize (ds : List Nat) : Prop := ds ≠ [] ∧ ds.length ≤ 8 ∧ ds.all isHexDig = true
+
+structure Chunk where
+  size : List Nat
+  data : List Nat
+
+/-- `chunk = chunk-size CRLF chunk-data CRLF`, without `chunk-ext` (h5i). -/
+def Chunk.bytes (c : Chunk) : List Nat := c.size ++ crlf ++ c.data ++ crlf
+
+/-- `chunk-data = 1*OCTET`, as many as the size says. -/
+def Chunk.ok (c : Chunk) : Prop := chunkSize c.size ∧ c.data ≠ [] ∧ c.data.length = hexNumber c.size
+
+/-- `chunked-body = *chunk last-chunk trailer-section CRLF`, with
+`last-chunk = 1*("0") CRLF` (`z` the zeros) and no trailer fields (h5i). -/
+def chunkedBytes (cs : List Chunk) (z : List Nat) : List Nat :=
+  (cs.map Chunk.bytes).flatten ++ z ++ crlf ++ crlf
+
+/-- `W` is a chunked body h5i accepts with at most `mb` payload bytes, and
+`P` is its payload: the chunk data in order. Its wire length is `W.length`. -/
+def ValidChunked (mb : Nat) (W P : List Nat) : Prop :=
+  ∃ cs z, W = chunkedBytes cs z ∧ (∀ c ∈ cs, c.ok) ∧ chunkSize z ∧ z.all (· == 48) = true ∧
+    P = (cs.map Chunk.data).flatten ∧ P.length ≤ mb
 
 /-! ## `origin-form` as one run -/
 

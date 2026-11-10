@@ -84,10 +84,10 @@ only), never both, and neither value may end in whitespace. Chunk sizes are
 | `accept_wellformed`, `parse_head_wellformed` | `H1Props.lean` | every accepted head has token names, CR/LF/NUL-free values, the `Host`/`Content-Length`/`Transfer-Encoding` counts above, and a framing that matches its fields |
 | `parse_head_sound`, `parseHead_valid` | `H1Sound.lean` | every head `parse_head` accepts is an `H1Valid.ValidHead`: request line, field lines, origin-form target, `Host` value and the policy above, defined in `H1Valid.lean` with its own byte classes, lowercasing and literals and no import from the parser's spec; `h.framing` is `H1Valid.framing` of the field lines (RFC 9112 §6.3), and the method, target and field spans hold exactly those parts |
 | `no_smuggling`, `no_smuggling_valid` | `H1Smuggle.lean` | every parser in the lenient family `Interp` (which reads names with `H1Valid`, not the parser's `classify`) computes the same head length and framing on every head we accept, and that framing is `H1Valid.framing` |
+| `dechunk_valid`, `read_body_chunked_valid`, `recv_step_chunked_valid` | `H1Chunked.lean` | every chunked body `Spec.dechunk`, `read_body` or `recv_step` accepts is an `H1Valid.ValidChunked` (RFC 9112 §7.1 with 1 to 8 hex digits, no extensions or trailers, payload at most `max_body`, its own hex values): the received bytes `[start, used)` are that body and `rx[start..end]` its payload |
 
 Not proven: that every valid head within the limits is accepted
-(completeness); the chunked decoder against an independent spec
-(`Spec.dechunk` and `chunk_step` share the hex digit table); the caller's
+or every valid chunked body decoded (completeness); the caller's
 `read` into `rx[filled..]` and `filled += n` (the theorems assume a read
 changes nothing below `filled`); the loop in `h5i-app-embedded` that calls
 `write_field` for each extra field; that `wants_close` finds exactly the
