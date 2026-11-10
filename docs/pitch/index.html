@@ -32,67 +32,65 @@
 <body>
 <main class="deck sparse" id="deck" aria-label="h5i pitch presentation">
 <section class="slide cover" id="slide-1" aria-labelledby="title-1">
-<div class="content"><div class="eyebrow">01 / h5i</div><h1 id="title-1">Build Web Apps You Can<br><em>Formally Verify.</em></h1><p class="lead">A Rust web framework that proves security-critical logic with Lean 4.</p></div>
-<footer class="folio"><span>h5i.dev</span><span>01</span></footer>
+<div class="content cover-split"><div><div class="eyebrow">01 / Product</div><h1 id="title-1">Build Web Apps You Can<br><em>Formally Verify.</em></h1><p class="lead">A Rust web framework with Lean 4 verification.</p></div>
+<dl class="cover-stats"><div><dt>900<span>+</span></dt><dd>GitHub stars</dd></div><div><dt>80</dt><dd>Forks</dd></div><div><dt>3.8k<span>+</span></dt><dd>Downloads</dd></div></dl></div>
+<footer class="folio"><span>h5i.dev · GitHub, November 9, 2026</span><span>01</span></footer>
 </section>
 
 <section class="slide" id="slide-2" aria-labelledby="title-2">
-<div class="content"><div class="eyebrow">02 / Problem</div><h2 id="title-2">AI Writes Code Faster Than Anyone Can Verify It.</h2>
-<div class="security-pair"><article><h3 class="quantified-heading">Tests <span class="quantifier" role="img" aria-label="Exists">∃</span></h3><p>Find some bugs.</p></article><article><h3 class="quantified-heading">Proofs <span class="quantifier" role="img" aria-label="For all">∀</span></h3><p>Rule out a whole class.</p></article></div>
-<p class="takeaway">One missed edge case leaks another customer's data.</p></div>
+<div class="content"><div class="eyebrow">02 / The problem</div><h2 id="title-2" class="big">Are You Sure AI-Generated Code Is Correct?</h2><p class="lead">AI can generate code in seconds. But thousands of AI-generated test cases cannot guarantee its correctness.</p></div>
 <footer class="folio"><span>h5i.dev</span><span>02</span></footer>
 </section>
 
 <section class="slide" id="slide-3" aria-labelledby="title-3">
-<div class="content"><div class="eyebrow">03 / Customers</div><h2 id="title-3">Security-Critical Backend Teams.</h2>
-<div class="cards three-up"><div>Multi-tenant SaaS</div><div>Fintech and payments</div><div>AI-written backends</div></div>
-<p class="takeaway">Where one authorization bug is a breach.</p></div>
-<footer class="folio"><span>h5i.dev</span><span>03</span></footer>
+<div class="content"><div class="eyebrow">03 / Solution</div><h2 id="title-3">Write Rust and Prove It Directly in Lean 4.</h2>
+<div class="proof-row">
+<div class="step"><b>Rust code</b></div><i aria-hidden="true">→</i><div class="step"><b>Lean 4 proof</b></div><i aria-hidden="true">→</i><div class="step last"><b>Guarantee</b></div>
+<div class="rust-example"><div class="editor-bar">kernel/src/lib.rs</div><pre><span class="syntax-keyword">fn</span> delete(user: u64, s: &amp;Snapshot, id: u64) -&gt; Outcome {
+    <span class="syntax-keyword">match</span> find_post(&amp;s.posts, id) {
+        None =&gt; Err(Error::NotFound),
+        Some(p) =&gt; <span class="syntax-keyword">if</span> p.author == user
+            || is_moderator(&amp;s.moderators, user) {
+            Ok((one(Write::DelPost(id)), Reply::Done))
+        } <span class="syntax-keyword">else</span> { Err(Error::Forbidden) },
+    }
+}</pre></div>
+<span></span>
+<div class="lean-example"><div class="editor-bar">proofs/Theorems.lean</div><pre><span class="syntax-keyword">theorem</span> authorized (a : Principal) (s : Snapshot)
+    (c : Command) ws r (hinv : Inv (Snapshot.toSt s))
+    (h : transition a s c = .ok (.Ok (ws, r))) :
+    ∀ w ∈ ws.val,
+      allowed (Snapshot.toSt s) a.user.val w := <span class="syntax-keyword">by</span>
+  <span class="code-dim">-- proof body omitted</span></pre></div>
+<span></span>
+<div class="guarantee-card"><p>Only the author or a moderator can delete.</p></div>
+</div></div>
+<footer class="folio"><span>Proofs cover stated properties for all modeled inputs, under explicit assumptions</span><span>03</span></footer>
 </section>
 
+
 <section class="slide" id="slide-4" aria-labelledby="title-4">
-<div class="content"><div class="eyebrow">04 / Solution</div><h2 id="title-4">Write Rust. Prove It in Lean 4.</h2>
-<div class="flow"><div><span class="index">01 · Rust</span><b>Application logic</b></div><i aria-hidden="true">→</i><div><span class="index">02 · Lean 4</span><b>Machine-checked proof</b></div><i aria-hidden="true">→</i><div><span class="index">03 · Guarantee</span><b>Authorization always holds</b></div></div></div>
-<footer class="folio"><span>Proofs cover stated properties under explicit assumptions</span><span>04</span></footer>
+<div class="content"><div class="eyebrow">04 / Traction</div><h2 id="title-4"><em>900+</em> GitHub Stars and <em>3.8K+</em> CLI Downloads</h2>
+<div class="traction-row"><a class="star-chart" href="https://www.star-history.com/?repos=h5i-dev%2Fh5i&amp;type=date&amp;legend=top-left"><img src="https://api.star-history.com/chart?repos=h5i-dev/h5i&amp;type=date&amp;theme=dark&amp;legend=top-left" alt="Star history chart for h5i-dev/h5i" width="800" height="533"></a><div class="traction-side"><ul class="founder-points traction-points"><li>80 forks</li><li>20+ contributors</li></ul>
+<div><span class="index">CLI downloads by OS</span><figure class="os-split" aria-label="CLI downloads by OS: Linux 60%, macOS 23%, Windows 18%"><svg viewBox="0 0 42 42" aria-hidden="true"><g transform="rotate(-90 21 21)" fill="none" stroke-width="7"><circle class="os-linux" cx="21" cy="21" r="15.9155" stroke-dasharray="59.6 40.4" stroke-dashoffset="0"/><circle class="os-mac" cx="21" cy="21" r="15.9155" stroke-dasharray="22.7 77.3" stroke-dashoffset="-59.6"/><circle class="os-win" cx="21" cy="21" r="15.9155" stroke-dasharray="17.7 82.3" stroke-dashoffset="-82.3"/></g></svg><figcaption><span><i class="os-linux"></i>Linux<b>60%</b></span><span><i class="os-mac"></i>macOS<b>23%</b></span><span><i class="os-win"></i>Windows<b>18%</b></span></figcaption></figure></div></div></div></div>
+<footer class="folio"><span>GitHub, November 9, 2026 · release downloads, Python wheels excluded</span><span>04</span></footer>
 </section>
 
 <section class="slide" id="slide-5" aria-labelledby="title-5">
-<div class="content"><div class="eyebrow">05 / Insight</div><h2 id="title-5">Prove the Code. Test the System.</h2><p class="lead">Red-teaming covers what proofs can't. Every finding becomes a CI test.</p>
-<div class="session-ui-frame solo"><iframe src="assets/h5i-ui-session.html" title="Actual h5i ui session workspace, static local demonstration" sandbox tabindex="-1"></iframe></div></div>
-<footer class="folio"><span>Actual h5i ui, local demo</span><span>05</span></footer>
+<div class="content"><div class="eyebrow">05 / Business model</div><h2 id="title-5">The Framework Stays Free, and We Plan to Charge Companies for Verification Workflows.</h2>
+<div class="model-row"><div class="cards model-stack"><div><span class="index">Free · today</span>Framework, proofs, CLI</div><div class="paid"><span class="index">Paid · planned</span>CI/CD and team dashboard</div></div>
+<div class="session-ui-frame model-ui"><iframe src="assets/h5i-ui-session.html" title="Actual h5i ui session workspace, static local demonstration" sandbox tabindex="-1"></iframe></div></div></div>
+<footer class="folio"><span>Actual h5i ui dashboard, static capture of a local demo</span><span>05</span></footer>
 </section>
 
-<section class="slide" id="slide-6" aria-labelledby="title-6">
-<div class="content"><div class="eyebrow">06 / Traction</div><h2 id="title-6">Early Open-Source Traction.</h2>
-<div class="metrics"><div><strong>900<span>+</span></strong><span>GITHUB STARS</span></div><div><strong>3.8k<span>+</span></strong><span>DOWNLOADS</span></div></div></div>
-<footer class="folio"><span>GitHub, November 9, 2026</span><span>06</span></footer>
-</section>
-
-<section class="slide" id="slide-7" aria-labelledby="title-7">
-<div class="content"><div class="eyebrow">07 / Market</div><h2 id="title-7">Start With Rust. Expand to Every Web App.</h2>
-<div class="cards three-up labeled"><div><span class="index">Wedge</span>Rust backend teams</div><div><span class="index">Expansion</span>Any web app, via red-teaming</div><div><span class="index">Long term</span>Verifying all AI-written code</div></div></div>
-<footer class="folio"><span>h5i.dev</span><span>07</span></footer>
-</section>
-
-<section class="slide" id="slide-8" aria-labelledby="title-8">
-<div class="content"><div class="eyebrow">08 / Business model</div><h2 id="title-8">Open-Source Core. Paid Verification.</h2>
-<div class="cards two-up labeled"><div><span class="index">Free</span>Framework, proofs, CLI</div><div class="paid"><span class="index">Paid · planned</span>CI guarantee reports, audit trails, support</div></div></div>
-<footer class="folio"><span>h5i.dev</span><span>08</span></footer>
-</section>
-
-<section class="slide" id="slide-9" aria-labelledby="title-9">
-<div class="content"><div class="eyebrow">09 / Founder</div><h2 id="title-9">Hideaki Takahashi</h2><p class="lead">Columbia CS PhD. Software security and formal methods.</p>
-<div class="cards three-up"><div>IEEE S&amp;P 2026</div><div>ACM CCS 2026</div><div>Creator of h5i</div></div></div>
-<footer class="folio"><span>h5i.dev</span><span>09</span></footer>
-</section>
-
-<section class="slide close" id="slide-10" aria-labelledby="title-10">
-<div class="content"><div class="eyebrow">10 / The ask</div><h2 id="title-10">Building Verifiable Software.</h2><p class="lead">Raising a seed round to bring formal verification into production.</p>
+<section class="slide close" id="slide-6" aria-labelledby="title-6">
+<div class="content"><div class="eyebrow">06 / Founder</div><h2 id="title-6">Hideaki Takahashi</h2><ul class="founder-points"><li>Columbia CS PhD in software security, formal methods and AI</li><li>IEEE S&amp;P '26, ACM CCS '26, ICLR '24, AAMAS '24, CVPR '23</li><li>Found 100+ zero-day vulnerabilities and CVEs</li></ul>
+<p class="takeaway">Seeking design partners and seed investors.</p>
 <div class="closing-links row"><a class="button primary" href="https://github.com/h5i-dev/h5i/issues">Start a conversation ↗</a><a class="button" href="https://h5i.dev">Explore h5i ↗</a></div></div>
-<footer class="folio"><span>h5i.dev / github.com/h5i-dev/h5i</span><span>10</span></footer>
+<footer class="folio"><span>h5i.dev / github.com/h5i-dev/h5i</span><span>06</span></footer>
 </section>
 </main>
-<nav class="controls" aria-label="Presentation controls"><a href="/">h5i.dev</a><div class="pager"><button id="prev" aria-label="Previous slide">←</button><span id="position" aria-live="polite" aria-atomic="true">01 / 10</span><button id="next" aria-label="Next slide">→</button></div><div class="exports"><a href="pdf/">PDF</a><a href="h5i-pitch-deck.pdf" download>Download ↓</a><button id="print">Print</button></div></nav>
+<nav class="controls" aria-label="Presentation controls"><a href="/">h5i.dev</a><div class="pager"><button id="prev" aria-label="Previous slide">←</button><span id="position" aria-live="polite" aria-atomic="true">01 / 06</span><button id="next" aria-label="Next slide">→</button></div><div class="exports"><a href="pdf/">PDF</a><a href="h5i-pitch-deck.pdf" download>Download ↓</a><button id="print">Print</button></div></nav>
 <script src="deck.js"></script>
 </body>
 </html>

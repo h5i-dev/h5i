@@ -1,26 +1,41 @@
 # h5i pitch deck
 
-The ten-slide deck follows the docs' visual system: Archivo display type,
+The six-slide deck follows the docs' visual system: Archivo display type,
 IBM Plex Mono labels, warm monochrome surfaces, square cells, hairline rules
 and red accents. `index.html` is the content source; `deck.css` and `deck.js`
 provide presentation, mobile reading, keyboard navigation and print layouts.
 Without JavaScript, every slide remains readable in order.
 
-The deck is written for investors, in the seed-deck order YC recommends:
-what h5i is, problem, customers, solution, insight, traction, market,
-business model, founder, the ask. One idea per slide, **20 to 30 words at
-most** (title and body; eyebrow and folio excluded). Detail belongs in the
-speaker's mouth and the docs, not on the slide. Say "formally verify", not
-"mathematically verify". The landing page does not link here on purpose.
+The deck tells one story: h5i is a development platform for proving that
+the critical properties of web software are correct. Six slides: product,
+problem, solution, traction, business model, founder and ask. Do not frame
+formal verification as bug finding; it guarantees properties. The solution
+slide shows Rust code, Lean 4 proof and Guarantee as three boxes, each with
+its real example underneath: the board tutorial's delete handler, its
+`authorized` theorem statement (proof body omitted) and the property in one
+sentence. Rust-to-Lean translation itself is Aeneas,
+not h5i's invention, so never claim it as unique. Red-teaming, market sizing,
+architecture, property counts and vulnerability counts stay out. The YC guide
+is not a checklist. One idea per slide, **20 to 30 words at most** (title and
+body; eyebrow and folio excluded). Say "formally verify", not
+"mathematically verify". Every headline is one real sentence with a verb. No
+clipped "A. B." slogans and no noun phrases joined by a comma. The landing page does not link here on purpose.
 
-Traction shows only GitHub stars and release downloads (both read from
-GitHub on November 9, 2026: 913 stars; 3,897 downloads via
-`scripts/h5i-stat.sh`, Python wheels excluded). They are interest signals,
-not active-user, retention or revenue metrics. The paid tier on the business
-model slide is labeled "planned" because no paid product exists yet. The
-founder's publications come from koukyosyumei.github.io. Slide 5 embeds
-`assets/h5i-ui-session.html`, a static DOM/CSS capture of the real `h5i ui`
-from a local demo (orders 1041/Alice and 1042/Bob), not customer evidence.
+The cover shows stars, forks (80) and downloads in a right-hand column.
+The traction slide embeds the live star-history.com chart (dark theme), so
+the PDF render needs network access to include it. Beside it: 80 forks and
+20+ contributors (23 on GitHub, November 10, 2026). Do not say "active":
+only about ten committed in the last 90 days. The OS donut uses the same
+download run: Linux 2,323, macOS 885, Windows 689 of 3,897.
+Traction: 913 stars and 3,897 release downloads (Python wheels excluded, via
+`scripts/h5i-stat.sh`), both read from GitHub on November 9, 2026. The business model slide stacks the free and paid cards on the left and
+embeds `assets/h5i-ui-session.html` (the static `h5i ui` capture) on the
+right. The paid
+tier is labeled "planned" because no paid product exists. The ask says
+"seeking design partners and seed investors"; say "raising" only once a round
+is formally open. Publications come from koukyosyumei.github.io. The "100+ zero-day
+vulnerabilities and CVEs" figure is the founder's own count; the homepage
+lists only five selected findings, so keep a source for it on hand.
 
 Neither slides nor speaker notes should imply universal product guarantees:
 proofs establish stated properties for all modeled inputs under explicit
