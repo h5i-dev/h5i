@@ -119,6 +119,47 @@ theorem contentLength_congr {g g' : Nat → Nat} {e : Nat} (h : Agree g g' e) (s
     contentLength g s e max = contentLength g' s e max := by
   unfold contentLength; rw [clLoop_congr h]
 
+theorem spanEnd_congr {g g' : Nat → Nat} {e : Nat} (h : Agree g g' e) (c i : Nat) :
+    spanEnd c g i e = spanEnd c g' i e := by
+  conv => lhs; rw [spanEnd]
+  conv => rhs; rw [spanEnd]
+  split
+  · rename_i hi
+    rw [h i hi]
+    split
+    · by_cases h3 : i + 2 < e
+      · rw [h (i + 1) (by omega), h (i + 2) (by omega)]
+        by_cases hc : i + 2 < e ∧ hexv (g' (i + 1)) < 16 ∧ hexv (g' (i + 2)) < 16
+        · rw [if_pos hc, if_pos hc]; exact spanEnd_congr h c (i + 3)
+        · rw [if_neg hc, if_neg hc]
+      · rw [if_neg (by omega), if_neg (by omega)]
+    · split
+      · exact spanEnd_congr h c (i + 1)
+      · rfl
+  · rfl
+termination_by e - i
+
+theorem portOk_congr {g g' : Nat → Nat} {e : Nat} (h : Agree g g' e) (p : Nat) :
+    portOk g p e = portOk g' p e := by
+  unfold portOk
+  split
+  · rfl
+  · rw [h p (by omega), spanEnd_congr h]
+
+theorem hostOk_congr {g g' : Nat → Nat} {e : Nat} (h : Agree g g' e) (s : Nat) :
+    hostOk g s e = hostOk g' s e := by
+  unfold hostOk
+  simp only [spanEnd_congr h, portOk_congr h]
+  by_cases hs : s < e
+  · rw [h s hs]
+    by_cases hc : s < e ∧ g' s = 91
+    · rw [if_pos hc, if_pos hc]
+      by_cases hk : spanEnd 2 g' (s + 1) e = s + 1 ∨ e ≤ spanEnd 2 g' (s + 1) e
+      · rcases hk with hk | hk <;> simp [hk]
+      · rw [h _ (by omega)]
+    · rw [if_neg hc, if_neg hc]
+  · simp [hs]
+
 theorem classify_congr {g g' : Nat → Nat} {e : Nat} (h : Agree g g' e) (s : Nat) :
     classify g s e = classify g' s e := by
   unfold classify; simp only [eqCi_congr h]
@@ -131,8 +172,9 @@ theorem requestLine_congr {g g' : Nat → Nat} {j : Nat} (h : Agree g g' j) (i :
   by_cases c1 : m = i ∨ j ≤ m
   · simp [c1]
   · rw [if_neg c1, if_neg c1, h m (by omega)]
-    have hte1 := scan_ge isTargetByte g' (m + 1) j
-    generalize hte : scan isTargetByte g' (m + 1) j = te at hte1
+    rw [spanEnd_congr h]
+    have hte1 := spanEnd_ge 1 g' (m + 1) j
+    generalize hte : spanEnd 1 g' (m + 1) j = te at hte1
     by_cases c2 : te = m + 1 ∨ j ≤ te
     · simp [c2]
     · rw [h (m + 1) (by omega), h te (by omega), version_congr h]
@@ -152,7 +194,8 @@ theorem addHeader_congr {g g' : Nat → Nat} {b : Nat} (h : Agree g g' b) (f : F
     (hne : ne ≤ b) (hve : ve ≤ b) :
     addHeader g f ns ne vs ve le minor mb = addHeader g' f ns ne vs ve le minor mb := by
   unfold addHeader
-  simp only [classify_congr (h.mono hne), contentLength_congr (h.mono hve), eqCi_congr (h.mono hve)]
+  simp only [classify_congr (h.mono hne), contentLength_congr (h.mono hve), eqCi_congr (h.mono hve),
+    hostOk_congr (h.mono hve)]
 
 /-! ## Decided lines and fields stay decided -/
 

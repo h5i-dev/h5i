@@ -1,4 +1,4 @@
-import H1Props
+import H1Sound
 /-!
 # No request smuggling, relative to a family of lenient parsers
 
@@ -19,12 +19,16 @@ have shipped:
 
 Every member compares names ASCII case-insensitively, skips the whitespace
 after the colon, skips the request line, ends the head at the first empty
-line, and takes the body as chunked when the last coding is `chunked`.
+line, and takes the body as chunked when the last coding is `chunked`. Names
+and `chunked` are recognized with `H1Valid.named` (its own lowercasing and
+literals) and whitespace with `H1Valid.isWs`, not with the parser's
+`classify`, `eqCi` or `isOws`.
 
-`no_smuggling`: whenever `parseHead` accepts, every member, having received
-any prefix of the input that holds the head, accepts too and computes the
-same head length and the same framing. So no member of the family sees a
-message boundary anywhere else.
+`no_smuggling`: whenever `parseHead` accepts bytes (values below 256), every
+member, having received any prefix of the input that holds the head, accepts
+too and computes the same head length and the same framing. So no member of
+the family sees a message boundary anywhere else. `no_smuggling_valid` adds
+that this framing is `H1Valid.framing` of the head's field lines.
 
 The theorem is relative to the family. Outside it, for example: a parser
 that compares names case-sensitively (RFC 9110 §5.1 says they are
@@ -85,9 +89,16 @@ structure LSt where
   tes : List Bool
   last : Nat
 
-/-- One non-empty header line `[i, le)`. -/
+/-- `p` less the SP and HTAB bytes before it, down to `s`. -/
+def trimWs (g : Nat → Nat) (s p : Nat) : Nat :=
+  if s < p then (if H1Valid.isWs (g (p - 1)) then trimWs g s (p - 1) else p) else p
+termination_by p
+
+/-- One non-empty header line `[i, le)`. Names and `chunked` are recognized
+with `H1Valid.named` (its own lowercasing and literals), not the parser's
+`classify`/`eqCi`. -/
 def lfield (o : Opts) (g : Nat → Nat) (st : LSt) (i le : Nat) : LSt :=
-  if isOws (g i) then
+  if H1Valid.isWs (g i) then
     if o.unfold then
       if st.last = 2 then { st with cls := st.cls.dropLast ++ [none] }
       else if st.last = 3 then { st with tes := st.tes.dropLast ++ [false] }
@@ -97,12 +108,13 @@ def lfield (o : Opts) (g : Nat → Nat) (st : LSt) (i le : Nat) : LSt :=
     let c := scan (fun b => b != 58) g i le
     if le ≤ c then { st with last := 0 }
     else
-      let ne := if o.stripColonWs then trimEnd g i c else c
-      let vs := scan isOws g (c + 1) le
-      let ve := if o.trimValue then trimEnd g vs le else le
-      let kind := classify g i ne
-      if kind = 2 then { st with cls := st.cls ++ [decAll g vs ve], last := 2 }
-      else if kind = 3 then { st with tes := st.tes ++ [eqCi g vs ve litChunked], last := 3 }
+      let ne := if o.stripColonWs then trimWs g i c else c
+      let vs := scan H1Valid.isWs g (c + 1) le
+      let ve := if o.trimValue then trimWs g vs le else le
+      let nm := H1Sound.seg g i ne
+      if H1Valid.named nm "content-length" then { st with cls := st.cls ++ [decAll g vs ve], last := 2 }
+      else if H1Valid.named nm "transfer-encoding" then
+        { st with tes := st.tes ++ [H1Valid.named (H1Sound.seg g vs ve) "chunked"], last := 3 }
       else { st with last := 0 }
 
 /-- The header lines from `i` to the empty line: the head's length and the fields. -/
@@ -330,6 +342,19 @@ theorem addHeader_cases {g : Nat → Nat} {f f' : Fields} {ns ne vs ve le minor 
     | (right; left; simp_all; done)
     | (right; right; simp_all; done))
 
+theorem isWs_fun : H1Valid.isWs = isOws := by funext b; rfl
+
+theorem trimWs_eq (g : Nat → Nat) (s p : Nat) : trimWs g s p = trimEnd g s p := by
+  rw [trimWs, trimEnd, isWs_fun]
+  split
+  · split
+    · exact trimWs_eq g s (p - 1)
+    · rfl
+  · rfl
+termination_by p
+
+theorem trimWs_fun : trimWs = trimEnd := by funext g s p; exact trimWs_eq g s p
+
 /-- How the lenient state follows ours. -/
 def R (f : Fields) (st : LSt) : Prop :=
   st.cls = (if f.hasCl then [some f.cl] else []) ∧ st.tes = (if f.te then [true] else [])
@@ -355,8 +380,8 @@ decreasing_by
   have := scan_ge notEol g i n
   unfold lineEnd at *; omega
 
-theorem fields_sim (o : Opts) (g g' : Nat → Nat) (n n' minor mb i : Nat) (f f' : Fields) (len : Nat)
-    (st : LSt) (hf : fields g n minor mb i f = .done f' len) (hR : R f st)
+theorem fields_sim (o : Opts) (g g' : Nat → Nat) (hg' : ∀ k, g' k < 256) (n n' minor mb i : Nat) (f f' : Fields)
+    (len : Nat) (st : LSt) (hf : fields g n minor mb i f = .done f' len) (hR : R f st)
     (hag : ∀ k, k < len → g k = g' k) (hlen : len ≤ n') :
     ∃ st', lfields o g' n' i st = some (len, st') ∧ R f' st' := by
   have hge := fields_len_ge g n minor mb i f f' len hf
@@ -420,15 +445,18 @@ theorem fields_sim (o : Opts) (g g' : Nat → Nat) (n n' minor mb i : Nat) (f f'
           -- the lenient state after this line follows ours
           have hRl : R f2 (lfield o g' st i j) := by
             obtain ⟨hcls, htes⟩ := hR
+            obtain ⟨-, n2, n3⟩ := H1Sound.classify_iff hg' i k
             unfold lfield
+            simp only [isWs_fun, trimWs_fun]
             rw [if_neg (by simp [hgi]), hc]
-            simp only
-            rw [if_neg (by omega), hne, hvs', hcl]
+            try simp only
+            rw [if_neg (by omega), hne, hvs']
+            rw [hcl] at n2 n3
             rcases addHeader_cases ha with ⟨k2, k3, e1, e2, e3⟩ | ⟨k2, c1, c2, c3, c4, c5, c6⟩ |
               ⟨k3, c1, c2, c3, c4, c5, c6⟩
-            · rw [if_neg k2, if_neg k3]
+            · rw [if_neg (fun h => k2 (n2.2 h)), if_neg (fun h => k3 (n3.2 h))]
               exact ⟨by simp [hcls, e1, e2], by simp [htes, e3]⟩
-            · rw [if_pos k2]
+            · rw [if_pos (n2.1 k2)]
               have hve' : (if o.trimValue then trimEnd g' vs j else j) = j := by
                 split
                 · rw [← trimEnd_congr _ _ _ _ (fun m hm => hagj m (by omega)), ← hve, c3]
@@ -439,16 +467,18 @@ theorem fields_sim (o : Opts) (g g' : Nat → Nat) (n n' minor mb i : Nat) (f f'
               refine ⟨?_, ?_⟩
               · simp [hcls, c1, c5, hd]
               · simp [htes, c2, c6]
-            · rw [if_neg (by omega), if_pos k3]
+            · rw [if_neg (fun h => by have := n2.2 h; omega), if_pos (n3.1 k3)]
               have hve' : (if o.trimValue then trimEnd g' vs j else j) = j := by
                 split
                 · rw [← trimEnd_congr _ _ _ _ (fun m hm => hagj m (by omega)), ← hve, c3]
                 · rfl
-              rw [hve', ← eqCi_congr g g' vs j _ (fun m hm => hagj m (by omega)), ← c3, c4]
+              rw [hve', ← H1Sound.eqCi_named hg' H1Sound.lit_chunked (by decide),
+                ← eqCi_congr g g' vs j _ (fun m hm => hagj m (by omega)), ← c3, c4]
               refine ⟨?_, ?_⟩
               · simp [hcls, c1, c5]
               · simp [htes, c2, c6]
-          obtain ⟨st2, hst2, hR2⟩ := fields_sim o g g' n n' minor mb (j + 2) f2 f' len (lfield o g' st i j) hf hRl hag hlen
+          obtain ⟨st2, hst2, hR2⟩ :=
+            fields_sim o g g' hg' n n' minor mb (j + 2) f2 f' len (lfield o g' st i j) hf hRl hag hlen
           exact ⟨st2, by rw [hlf]; exact hst2, hR2⟩
   · simp at hf
 termination_by n - i
@@ -466,8 +496,8 @@ theorem frame_sim (o : Opts) (f : Fields) (st : LSt) (hR : R f st) (hex : ¬ (f.
 /-- **No smuggling.** Whenever `parseHead` accepts `L`, every member of
 `Interp`, having received any prefix of `L` that holds the head (`L` itself
 included), accepts it with the same head length and the same framing. -/
-theorem no_smuggling (L : List Nat) (mh mb : Nat) (h : Head) (hd : parseHead L mh mb = .done h)
-    (o : Opts) (n' : Nat) (h1 : h.len ≤ n') (h2 : n' ≤ L.length) :
+theorem no_smuggling (L : List Nat) (mh mb : Nat) (h : Head) (hb : ∀ x ∈ L, x < 256)
+    (hd : parseHead L mh mb = .done h) (o : Opts) (n' : Nat) (h1 : h.len ≤ n') (h2 : n' ≤ L.length) :
     interp o L n' = some (h.len, h.framing) := by
   have hw := H1Props.accept_wellformed L mh mb h hd
   dsimp only at hw
@@ -502,11 +532,21 @@ theorem no_smuggling (L : List Nat) (mh mb : Nat) (h : Head) (hd : parseHead L m
     nextLine_eq o.lines _ 0 j0 n' (by omega) (by omega)
       (fun k a b => by rw [← hag k (by omega)]; exact hno k a b)
       (by rw [← hag j0 (by omega)]; exact h13) (by rw [← hag (j0 + 1) (by omega)]; exact h10)
-  obtain ⟨st, hst, hR⟩ := fields_sim o g (window L n') n n' minor mb (j0 + 2) Fields.empty f len ⟨[], [], 0⟩ hf
+  obtain ⟨st, hst, hR⟩ := fields_sim o g (window L n') (H1Sound.window_lt L n' hb) n n' minor mb (j0 + 2)
+    Fields.empty f len ⟨[], [], 0⟩ hf
     (by simp [R, Fields.empty]) hag (by omega)
   obtain ⟨hI, -, -⟩ := H1Props.fields_inv g n minor mb _ _ f len (H1Props.FInv.empty g n mb minor)
     (by simp [Fields.empty]) hf
   unfold interp
   simp only [hnl, hst, frame_sim o f st hR hI.excl, Option.map_some]
+
+/-- With `H1Sound.parseHead_valid`: the framing every member computes is
+`H1Valid.framing` of the head's field lines, the independent one. -/
+theorem no_smuggling_valid (L : List Nat) (mh mb : Nat) (h : Head) (hb : ∀ x ∈ L, x < 256)
+    (hd : parseHead L mh mb = .done h) (o : Opts) (n' : Nat) (h1 : h.len ≤ n') (h2 : n' ≤ L.length) :
+    ∃ r fs fr, H1Valid.ValidHead mh mb (L.take h.len) r fs ∧ interp o L n' = some (h.len, fr) ∧
+      H1Sound.fview fr = H1Valid.framing fs := by
+  obtain ⟨r, fs, hv, -, hf, -⟩ := H1Sound.parseHead_valid L mh mb h hb hd
+  exact ⟨r, fs, h.framing, hv, no_smuggling L mh mb h hb hd o n' h1 h2, hf⟩
 
 end H1Smuggle

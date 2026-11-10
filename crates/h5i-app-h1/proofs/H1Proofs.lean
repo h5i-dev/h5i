@@ -65,10 +65,30 @@ theorem is_field_byte_eq (b : U8) : is_field_byte b = ok (Spec.isFieldByte b.val
 theorem is_field_byte_spec (b : U8) : is_field_byte b ⦃ r => r = Spec.isFieldByte b.val ⦄ := by
   rw [is_field_byte_eq]; simp
 
+theorem is_reg_byte_eq (b : U8) : is_reg_byte b = ok (Spec.isRegByte b.val) := by
+  simp only [is_reg_byte, Spec.isRegByte, UScalar.lt_equiv, bne_iff_ne, ne_eq, u8_eq_iff',
+    UScalar.ofNatCore_val_eq]
+  split_ifs <;> simp_all <;> (try bool_tac) <;> (try (rw [Bool.eq_iff_iff]; simp))
+
+@[simp] theorem class_digit_val : CLASS_DIGIT.val = 3 := by unfold CLASS_DIGIT; rfl
+@[simp] theorem class_target_val : CLASS_TARGET.val = 1 := by unfold CLASS_TARGET; rfl
+@[simp] theorem class_literal_val : CLASS_LITERAL.val = 2 := by unfold CLASS_LITERAL; rfl
+@[simp] theorem class_reg_val : CLASS_REG.val = 0 := by unfold CLASS_REG; rfl
+
 @[step]
-theorem is_target_byte_spec (b : U8) : is_target_byte b ⦃ r => r = Spec.isTargetByte b.val ⦄ := by
-  simp only [is_target_byte, Spec.isTargetByte, UScalar.le_equiv, UScalar.ofNatCore_val_eq]
-  split_ifs <;> simp_all <;> bool_tac
+theorem byte_in_spec (b c : U8) : byte_in b c ⦃ r => r = Spec.byteIn b.val c.val ⦄ := by
+  unfold byte_in Spec.byteIn
+  rw [is_reg_byte_eq]
+  simp only [bind_tc_ok, u8_eq_iff', class_digit_val, class_target_val, class_literal_val, colon_val,
+    ge_iff_le, UScalar.le_equiv, UScalar.ofNatCore_val_eq]
+  split_ifs <;> simp_all <;> (try bool_tac) <;> (try (rw [Bool.eq_iff_iff]; simp))
+
+@[step]
+theorem hex_value_spec (c : U8) : hex_value c ⦃ v => v.val = Spec.hexv c.val ⦄ := by
+  unfold hex_value Spec.hexv
+  step*
+  all_goals (simp only [UScalar.le_equiv, ge_iff_le] at *)
+  all_goals (split_ifs <;> scalar_tac)
 
 @[step]
 theorem is_ows_spec (b : U8) : is_ows b ⦃ r => r = Spec.isOws b.val ⦄ := by
@@ -116,31 +136,66 @@ theorem token_end_loop_spec (buf : Slice U8) (e k : Usize) (g : Nat → Nat) (n 
   WP.spec_mono (token_end_loop_eq buf e k g n hR he)
     (fun r hr => by rw [hr]; exact ⟨rfl, Spec.scan_ge _ _ _ _, Spec.scan_le _ _ _ _⟩)
 
-theorem target_end_loop_eq (buf : Slice U8) (e k : Usize) (g : Nat → Nat) (n : Nat)
+theorem spanEnd_pct {c : Nat} {g : Nat → Nat} {i e : Nat} (h : i < e) (h37 : g i = 37) (hc : c ≤ 1)
+    (hh : i + 2 < e ∧ Spec.hexv (g (i + 1)) < 16 ∧ Spec.hexv (g (i + 2)) < 16) :
+    Spec.spanEnd c g i e = Spec.spanEnd c g (i + 3) e := by
+  rw [Spec.spanEnd, if_pos h, if_pos ⟨h37, hc⟩, if_pos hh]
+
+theorem spanEnd_pct_stop {c : Nat} {g : Nat → Nat} {i e : Nat} (h : i < e) (h37 : g i = 37) (hc : c ≤ 1)
+    (hh : ¬ (i + 2 < e ∧ Spec.hexv (g (i + 1)) < 16 ∧ Spec.hexv (g (i + 2)) < 16)) :
+    Spec.spanEnd c g i e = i := by
+  rw [Spec.spanEnd, if_pos h, if_pos ⟨h37, hc⟩, if_neg hh]
+
+theorem spanEnd_byte {c : Nat} {g : Nat → Nat} {i e : Nat} (h : i < e) (hn : ¬ (g i = 37 ∧ c ≤ 1))
+    (hb : Spec.byteIn (g i) c = true) : Spec.spanEnd c g i e = Spec.spanEnd c g (i + 1) e := by
+  rw [Spec.spanEnd, if_pos h, if_neg hn, if_pos hb]
+
+theorem spanEnd_byte_stop {c : Nat} {g : Nat → Nat} {i e : Nat} (h : i < e) (hn : ¬ (g i = 37 ∧ c ≤ 1))
+    (hb : Spec.byteIn (g i) c = false) : Spec.spanEnd c g i e = i := by
+  rw [Spec.spanEnd, if_pos h, if_neg hn, if_neg (by simp [hb])]
+
+theorem spanEnd_end {c : Nat} {g : Nat → Nat} {i e : Nat} (h : e ≤ i) : Spec.spanEnd c g i e = i := by
+  rw [Spec.spanEnd, if_neg (by omega)]
+
+theorem span_end_loop_eq (buf : Slice U8) (e : Usize) (c : U8) (k : Usize) (g : Nat → Nat) (n : Nat)
     (hR : Reads buf g n) (he : e.val ≤ n) :
-    target_end_loop buf e k ⦃ r => r.val = Spec.scan Spec.isTargetByte g k.val e.val ⦄ := by
-  unfold target_end_loop
+    span_end_loop buf e c k ⦃ r => r.val = Spec.spanEnd c.val g k.val e.val ⦄ := by
+  unfold span_end_loop
   have hl := hR.1
   apply loop.spec_decr_nat (measure := fun (j : Usize) => e.val - j.val)
-    (inv := fun j => Spec.scan Spec.isTargetByte g k.val e.val = Spec.scan Spec.isTargetByte g j.val e.val)
+    (inv := fun j => Spec.spanEnd c.val g k.val e.val = Spec.spanEnd c.val g j.val e.val)
   · intro j hj
-    unfold target_end_loop.body
+    unfold span_end_loop.body
     step*
-    · have hb := byte_eq hR (k := j) (by scalar_tac) i_post
-      refine ⟨?_, by scalar_tac⟩
-      rw [hj, Spec.scan_cont (by scalar_tac) (by rw [hb, ← b_post]; simp_all), k1_post]
-    · have hb := byte_eq hR (k := j) (by scalar_tac) i_post
-      rw [hj, Spec.scan_stop (by scalar_tac) (by rw [hb, ← b_post]; simp_all)]
-    · rw [hj, Spec.scan_end (by scalar_tac)]
+    all_goals (try have hb := byte_eq hR (k := j) (by scalar_tac) b_post)
+    all_goals (try have hb1 := byte_eq hR (k := i1) (by scalar_tac) i2_post)
+    all_goals (try have hb2 := byte_eq hR (k := i4) (by scalar_tac) i5_post)
+    all_goals (simp only [u8_eq_iff', UScalar.le_equiv, UScalar.lt_equiv, class_target_val, gt_iff_lt,
+      UScalar.ofNatCore_val_eq, not_lt, not_le] at *)
+    · refine ⟨?_, by scalar_tac⟩
+      rw [hj, k1_post, spanEnd_pct (by scalar_tac) (by omega) (by omega)
+        ⟨by scalar_tac, by rw [← i1_post, hb1, ← i3_post]; scalar_tac, by rw [← i4_post, hb2, ← i6_post]; scalar_tac⟩]
+    · rw [hj, spanEnd_pct_stop (by scalar_tac) (by omega) (by omega)
+        (by rw [← i4_post, hb2, ← i6_post]; omega)]
+    · rw [hj, spanEnd_pct_stop (by scalar_tac) (by omega) (by omega)
+        (by rw [← i1_post, hb1, ← i3_post]; omega)]
+    · rw [hj, spanEnd_pct_stop (by scalar_tac) (by omega) (by omega) (by scalar_tac)]
+    · refine ⟨?_, by scalar_tac⟩
+      rw [hj, k1_post, spanEnd_byte (by scalar_tac) (by omega) (by rw [hb]; simp_all)]
+    · rw [hj, spanEnd_byte_stop (by scalar_tac) (by omega) (by rw [hb]; simp_all)]
+    · refine ⟨?_, by scalar_tac⟩
+      rw [hj, k1_post, spanEnd_byte (by scalar_tac) (by omega) (by rw [hb]; simp_all)]
+    · rw [hj, spanEnd_byte_stop (by scalar_tac) (by omega) (by rw [hb]; simp_all)]
+    · rw [hj, spanEnd_end (by scalar_tac)]
   · rfl
 
 @[step]
-theorem target_end_loop_spec (buf : Slice U8) (e k : Usize) (g : Nat → Nat) (n : Nat)
+theorem span_end_spec (buf : Slice U8) (i e : Usize) (c : U8) (g : Nat → Nat) (n : Nat)
     (hR : Reads buf g n) (he : e.val ≤ n) :
-    target_end_loop buf e k ⦃ r => r.val = Spec.scan Spec.isTargetByte g k.val e.val ∧ k.val ≤ r.val ∧
-      (k.val ≤ e.val → r.val ≤ e.val) ⦄ :=
-  WP.spec_mono (target_end_loop_eq buf e k g n hR he)
-    (fun r hr => by rw [hr]; exact ⟨rfl, Spec.scan_ge _ _ _ _, Spec.scan_le _ _ _ _⟩)
+    span_end buf i e c ⦃ r => r.val = Spec.spanEnd c.val g i.val e.val ∧ i.val ≤ r.val ∧
+      (i.val ≤ e.val → r.val ≤ e.val) ⦄ :=
+  WP.spec_mono (span_end_loop_eq buf e c i g n hR he)
+    (fun r hr => by rw [hr]; exact ⟨rfl, Spec.spanEnd_ge _ _ _ _, Spec.spanEnd_le _ _ _ _⟩)
 
 theorem skip_ows_loop_eq (buf : Slice U8) (e k : Usize) (g : Nat → Nat) (n : Nat)
     (hR : Reads buf g n) (he : e.val ≤ n) :
@@ -486,7 +541,8 @@ theorem request_line_spec (buf : Slice U8) (i j : Usize) (g : Nat → Nat) (n : 
   step*
   all_goals (try have hmj : m.val < j.val := (lt_of_not_ge' ‹¬m ≥ j›))
   all_goals (try have htj : te.val < j.val := (lt_of_not_ge' ‹¬te ≥ j›))
-  all_goals (try have hts : ts.val ≤ te.val := (by have := Spec.scan_ge Spec.isTargetByte g ts.val j.val; omega))
+  all_goals (try simp only [class_target_val] at te_post)
+  all_goals (try have hts : ts.val ≤ te.val := (by have := Spec.spanEnd_ge 1 g ts.val j.val; omega))
   all_goals (try have h1 := byte_eq hR (k := m) (by omega) i1_post)
   all_goals (try have h2 := byte_eq hR (k := ts) (by omega) i2_post)
   all_goals (try have h3 := byte_eq hR (k := te) (by omega) i3_post)
@@ -548,6 +604,43 @@ theorem lit_te : B (Array.to_slice (Array.make 17#usize [116#u8, 114#u8, 97#u8, 
 
 theorem lit_chunked : B (Array.to_slice (Array.make 7#usize [99#u8, 104#u8, 117#u8, 110#u8, 107#u8, 101#u8,
     100#u8])).val = Spec.litChunked := by rfl
+
+@[step]
+theorem port_ok_spec (buf : Slice U8) (p e : Usize) (g : Nat → Nat) (n : Nat)
+    (hR : Reads buf g n) (he : e.val ≤ n) :
+    port_ok buf p e ⦃ r => r = Spec.portOk g p.val e.val ⦄ := by
+  unfold port_ok Spec.portOk
+  have hl := hR.1
+  step*
+  all_goals (simp only [class_digit_val, colon_val, bne_iff_ne, ne_eq, UScalar.eq_equiv,
+    ge_iff_le, UScalar.le_equiv, UScalar.ofNatCore_val_eq, not_le] at *)
+  all_goals (have hp : p.val < e.val := by scalar_tac)
+  all_goals (have h1 : g p.val = i.val := by rw [hR.get (by omega), i_post])
+  · simp_all
+  · rw [i2_post, i1_post]; simp_all
+
+@[step]
+theorem host_ok_spec (buf : Slice U8) (s e : Usize) (g : Nat → Nat) (n : Nat)
+    (hR : Reads buf g n) (he : e.val ≤ n) :
+    host_ok buf s e ⦃ r => r = Spec.hostOk g s.val e.val ⦄ := by
+  unfold host_ok Spec.hostOk
+  have hl := hR.1
+  step*
+  all_goals (try (have h1 : g s.val = i.val := byte_eq hR (k := s) (by have := usize_lt_val ‹s < e›; omega) i_post))
+  all_goals (try (have h2 : g k.val = i2.val := byte_eq hR (k := k) (by have := lt_of_not_ge' ‹¬k ≥ e›; omega) i2_post))
+  all_goals (try clear i_post)
+  all_goals (try clear i2_post)
+  all_goals (try simp only [class_literal_val] at k_post)
+  all_goals (try simp only [class_reg_val] at i3_post)
+  all_goals (try simp only [class_reg_val] at i1_post)
+  all_goals (try rw [i1_post] at k_post)
+  all_goals (try rw [← k_post])
+  all_goals (try rw [← i3_post])
+  all_goals (try rw [← i1_post])
+  all_goals (try rw [r_post])
+  all_goals (simp only [u8_eq_iff', bne_iff_ne, ne_eq, UScalar.ofNatCore_val_eq, UScalar.lt_equiv,
+    ge_iff_le, UScalar.le_equiv, not_le, not_lt, UScalar.eq_equiv] at *)
+  all_goals (split_ifs <;> first | rfl | (exfalso; omega) | (simp_all; done) | (exfalso; simp_all; done))
 
 @[simp] theorem kind_host_val : KIND_HOST.val = 1 := by unfold KIND_HOST; rfl
 @[simp] theorem kind_cl_val : KIND_CONTENT_LENGTH.val = 2 := by unfold KIND_CONTENT_LENGTH; rfl
@@ -784,13 +877,6 @@ def coView : ChunkOut → Spec.COut
   | .Data => .data
   | .Done => .done
   | .Reject s => .reject s.val
-
-@[step]
-theorem hex_value_spec (c : U8) : hex_value c ⦃ v => v.val = Spec.hexv c.val ⦄ := by
-  unfold hex_value Spec.hexv
-  step*
-  all_goals (simp only [UScalar.le_equiv, ge_iff_le] at *)
-  all_goals (split_ifs <;> scalar_tac)
 
 theorem ch_vals : CH_SIZE.val = 0 ∧ CH_SIZE_LF.val = 1 ∧ CH_DATA.val = 2 ∧ CH_DATA_CR.val = 3 ∧
     CH_DATA_LF.val = 4 ∧ CH_LAST_CR.val = 5 ∧ CH_LAST_LF.val = 6 ∧ CH_END.val = 7 ∧

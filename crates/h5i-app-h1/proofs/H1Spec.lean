@@ -29,8 +29,31 @@ def isTchar (b : Nat) : Bool :=
 /-- VCHAR, obs-text, SP or HTAB: a byte that may appear in a field value. -/
 def isFieldByte (b : Nat) : Bool := b == 9 || (32 ≤ b && b != 127)
 
-/-- Visible ASCII: a byte of an origin-form target. -/
-def isTargetByte (b : Nat) : Bool := 33 ≤ b && b ≤ 126
+/-- `unreserved` or `sub-delims`, by range as in the Rust. -/
+def isRegByte (b : Nat) : Bool :=
+  if b < 33 then false
+  else if b < 48 then b != 34 && b != 35 && b != 37 && b != 47
+  else if b < 58 then true
+  else if b < 65 then b == 59 || b == 61
+  else if b < 91 then true
+  else if b < 97 then b == 95
+  else if b < 123 then true
+  else b == 126
+
+/-- Byte class `c` other than `%`: 0 `reg-name`, 1 target, 2 IP-literal, 3 digit. -/
+def byteIn (b c : Nat) : Bool :=
+  if c = 3 then 48 ≤ b && b ≤ 57
+  else if isRegByte b then true
+  else if c = 1 then b == 58 || b == 64 || b == 47 || b == 63
+  else if c = 2 then b == 58
+  else false
+
+/-- A hex digit's value, either case, or 16. -/
+def hexv (c : Nat) : Nat :=
+  if 48 ≤ c ∧ c ≤ 57 then c - 48
+  else if 97 ≤ c ∧ c ≤ 102 then c - 87
+  else if 65 ≤ c ∧ c ≤ 70 then c - 55
+  else 16
 
 def isOws (b : Nat) : Bool := b == 32 || b == 9
 
@@ -63,6 +86,42 @@ theorem scan_le (p : Nat → Bool) (g : Nat → Nat) (i e : Nat) (h : i ≤ e) :
   · split
     · exact scan_le p g (i + 1) e (by omega)
     · omega
+  · omega
+termination_by e - i
+
+/-- The run from `i` within `[i, e)` of class-`c` bytes and, for classes 0
+and 1, `%` HEXDIG HEXDIG; it ends at a `%` not followed by two hex digits. -/
+def spanEnd (c : Nat) (g : Nat → Nat) (i e : Nat) : Nat :=
+  if i < e then
+    if g i = 37 ∧ c ≤ 1 then
+      if i + 2 < e ∧ hexv (g (i + 1)) < 16 ∧ hexv (g (i + 2)) < 16 then spanEnd c g (i + 3) e else i
+    else if byteIn (g i) c then spanEnd c g (i + 1) e else i
+  else i
+termination_by e - i
+
+theorem spanEnd_ge (c : Nat) (g : Nat → Nat) (i e : Nat) : i ≤ spanEnd c g i e := by
+  rw [spanEnd]
+  split
+  · split
+    · split
+      · have := spanEnd_ge c g (i + 3) e; omega
+      · omega
+    · split
+      · have := spanEnd_ge c g (i + 1) e; omega
+      · omega
+  · omega
+termination_by e - i
+
+theorem spanEnd_le (c : Nat) (g : Nat → Nat) (i e : Nat) (h : i ≤ e) : spanEnd c g i e ≤ e := by
+  rw [spanEnd]
+  split
+  · split
+    · split
+      · exact spanEnd_le c g (i + 3) e (by omega)
+      · omega
+    · split
+      · exact spanEnd_le c g (i + 1) e (by omega)
+      · omega
   · omega
 termination_by e - i
 
@@ -171,13 +230,14 @@ inductive ReqLine where
   | ok (ms me ts te minor : Nat)
   deriving DecidableEq, Repr
 
-/-- `method SP origin-form SP HTTP-version` in `[i, j)`. -/
+/-- `method SP origin-form SP HTTP-version` in `[i, j)`; the target is `/`
+then a class-1 run (`absolute-path [ "?" query ]`). -/
 def requestLine (g : Nat → Nat) (i j : Nat) : ReqLine :=
   let m := scan isTchar g i j
   if m = i ∨ j ≤ m then .bad 400
   else if g m ≠ 32 then .bad 400
   else
-    let te := scan isTargetByte g (m + 1) j
+    let te := spanEnd 1 g (m + 1) j
     if te = m + 1 ∨ j ≤ te then .bad 400
     else if g (m + 1) ≠ 47 ∨ g te ≠ 32 then .bad 400
     else
@@ -209,6 +269,17 @@ def litContentLength : List Nat := [99, 111, 110, 116, 101, 110, 116, 45, 108, 1
 def litTransferEncoding : List Nat :=
   [116, 114, 97, 110, 115, 102, 101, 114, 45, 101, 110, 99, 111, 100, 105, 110, 103]
 def litChunked : List Nat := [99, 104, 117, 110, 107, 101, 100]
+
+/-- `[p, e)` is empty or `":" *DIGIT`. -/
+def portOk (g : Nat → Nat) (p e : Nat) : Bool :=
+  if e ≤ p then true else if g p ≠ 58 then false else spanEnd 3 g (p + 1) e = e
+
+/-- `[s, e)` is `uri-host [ ":" port ]`: a `reg-name`, or `[` IP-literal bytes `]`. -/
+def hostOk (g : Nat → Nat) (s e : Nat) : Bool :=
+  if s < e ∧ g s = 91 then
+    let k := spanEnd 2 g (s + 1) e
+    if k = s + 1 ∨ e ≤ k ∨ g k ≠ 93 then false else portOk g (k + 1) e
+  else portOk g (spanEnd 0 g s e) e
 
 /-- 1 `Host`, 2 `Content-Length`, 3 `Transfer-Encoding`, 0 any other name. -/
 def classify (g : Nat → Nat) (s e : Nat) : Nat :=
@@ -268,7 +339,7 @@ def addHeader (g : Nat → Nat) (f : Fields) (ns ne vs ve le minor maxBody : Nat
   let h := f.headers ++ [⟨ns, ne, vs, ve⟩]
   let kind := classify g ns ne
   if kind = 1 then
-    if f.host then .bad 400 else .ok { f with headers := h, host := true }
+    if f.host || !hostOk g vs ve then .bad 400 else .ok { f with headers := h, host := true }
   else if kind = 2 then
     if f.hasCl ∨ f.te ∨ ve ≠ le then .bad 400 else
     match contentLength g vs ve maxBody with
@@ -373,13 +444,6 @@ inductive COut where
   | done
   | reject (status : Nat)
   deriving DecidableEq, Repr
-
-/-- A hex digit's value, either case, or 16. -/
-def hexv (c : Nat) : Nat :=
-  if 48 ≤ c ∧ c ≤ 57 then c - 48
-  else if 97 ≤ c ∧ c ≤ 102 then c - 87
-  else if 65 ≤ c ∧ c ≤ 70 then c - 55
-  else 16
 
 /-- Phase 0: a size digit, or the CR after at least one. -/
 def sizeStep (st : CState) (b maxBody : Nat) : CState × COut :=

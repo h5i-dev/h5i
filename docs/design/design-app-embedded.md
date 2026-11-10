@@ -13,8 +13,8 @@ properties that matter on a device with a few hundred KB of RAM:
 
 1. **Panic freedom.** No input bytes make the HTTP code panic. On a
    microcontroller a panic halts or resets the device.
-2. **Protocol correctness.** The bytes we accept are exactly the RFC 9112
-   subset we specify; everything else is rejected with a definite status.
+2. **Protocol correctness.** We accept the subset of HTTP/1.1 below and
+   reject some valid requests; everything refused gets a definite status.
    In particular no request smuggling: `Content-Length`/`Transfer-Encoding`
    handling leaves no room for two parsers to disagree on where a message ends.
 3. **Resource bounds.** Memory is fixed at compile time and the work per
@@ -90,7 +90,8 @@ API (names indicative):
 Accepted grammar (strict on purpose; a device has no reason to be lenient):
 
 - Request line `method SP origin-form SP HTTP/1.1 CRLF` (also `HTTP/1.0`).
-  Method is a token. Target starts with `/` and contains only visible ASCII.
+  Method is a token. Target is `absolute-path [ "?" query ]`: `/`, then
+  `pchar`, `/`, `?` and `%` HEXDIG HEXDIG; `#` and other bytes are 400.
   Absolute-form, authority-form and `*` are rejected.
 - Lines end in CRLF. Bare CR and bare LF anywhere in the head are rejected.
 - Header field `token ":" OWS value OWS CRLF`. Whitespace before the colon is
@@ -99,6 +100,8 @@ Accepted grammar (strict on purpose; a device has no reason to be lenient):
   CR, LF and other controls are rejected.
 - Names compare case-insensitively.
 - HTTP/1.1 needs exactly one `Host` (RFC 9112 §3.2); zero or several is 400.
+  Its value is empty or `uri-host [ ":" *DIGIT ]` (a `reg-name` with
+  `%` HEXDIG HEXDIG, or `[` IP-literal bytes `]`); anything else is 400.
 - `Content-Length`: at most one field, value `1*DIGIT` with no list form, no
   sign, no overflow (checked against `max_body` before it can overflow).
 - `Transfer-Encoding`: at most one field, value exactly `chunked`

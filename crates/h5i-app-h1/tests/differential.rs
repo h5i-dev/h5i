@@ -18,11 +18,58 @@ fn lower(s: &[u8]) -> Vec<u8> {
     s.to_ascii_lowercase()
 }
 
+const SUB_DELIMS: &[u8] = b"!$&'()*+,;=";
+
+fn unreserved_or_sub(c: u8) -> bool {
+    c.is_ascii_alphanumeric() || b"-._~".contains(&c) || SUB_DELIMS.contains(&c)
+}
+
+/// `s` is a run of `ok` bytes and `%` HEXDIG HEXDIG.
+fn pct_run(s: &[u8], ok: impl Fn(u8) -> bool) -> bool {
+    let mut i = 0;
+    while i < s.len() {
+        if s[i] == b'%' {
+            if i + 2 >= s.len() || !s[i + 1].is_ascii_hexdigit() || !s[i + 2].is_ascii_hexdigit() {
+                return false;
+            }
+            i += 3;
+        } else if ok(s[i]) {
+            i += 1;
+        } else {
+            return false;
+        }
+    }
+    true
+}
+
+/// `absolute-path [ "?" query ]` (RFC 9112 §3.2.1, RFC 3986 §3.3-3.4).
+fn origin_form(t: &[u8]) -> bool {
+    t.first() == Some(&b'/') && pct_run(t, |c| unreserved_or_sub(c) || b":@/?".contains(&c))
+}
+
+/// `uri-host [ ":" port ]` (RFC 9110 §7.2), the empty value included.
+fn host_value(v: &[u8]) -> bool {
+    let rest = if v.first() == Some(&b'[') {
+        match v.iter().position(|&c| c == b']') {
+            Some(k) if k > 1 && v[1..k].iter().all(|&c| unreserved_or_sub(c) || c == b':') => &v[k + 1..],
+            _ => return false,
+        }
+    } else {
+        let k = v.iter().position(|&c| c == b':').unwrap_or(v.len());
+        if !pct_run(&v[..k], unreserved_or_sub) {
+            return false;
+        }
+        &v[k..]
+    };
+    rest.is_empty() || (rest[0] == b':' && rest[1..].iter().all(u8::is_ascii_digit))
+}
+
 /// The properties `accept_wellformed` proves, checked on one accepted input.
 fn check_wellformed(buf: &[u8], h: &h5i_app_h1::Head) {
     assert!(h.len <= LIM.max_head && h.len <= buf.len());
     assert_eq!(&buf[h.len - 4..h.len], b"\r\n\r\n");
     assert!(h.count <= MAX_HEADERS);
+    assert!(origin_form(&buf[h.target.start..h.target.end]));
     let mut host = 0;
     let mut cl = 0;
     let mut te = 0;
@@ -33,7 +80,10 @@ fn check_wellformed(buf: &[u8], h: &h5i_app_h1::Head) {
         assert!(name.iter().all(|&c| c.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&c)));
         assert!(value.iter().all(|&c| c == b'\t' || (c >= 0x20 && c != 0x7f)));
         match lower(name).as_slice() {
-            b"host" => host += 1,
+            b"host" => {
+                host += 1;
+                assert!(host_value(value));
+            }
             b"content-length" => cl += 1,
             b"transfer-encoding" => {
                 te += 1;
@@ -70,7 +120,12 @@ fn stricter_by_design(buf: &[u8], req: &httparse::Request) -> bool {
             return true;
         }
         match n.as_str() {
-            "host" => host += 1,
+            "host" => {
+                host += 1;
+                if !host_value(v.trim_ascii()) {
+                    return true;
+                }
+            }
             "content-length" => {
                 cl += 1;
                 if v.is_empty() || !v.iter().all(u8::is_ascii_digit) {
@@ -91,8 +146,7 @@ fn stricter_by_design(buf: &[u8], req: &httparse::Request) -> bool {
             _ => {}
         }
     }
-    !path.starts_with('/')
-        || path.bytes().any(|c| !(33..=126).contains(&c))
+    !origin_form(path.as_bytes())
         || (minor == 1 && host != 1)
         || host > 1
         || cl > 1
@@ -156,7 +210,7 @@ fn token() -> impl Strategy<Value = String> {
 fn header() -> impl Strategy<Value = (String, String)> {
     prop_oneof![
         (token(), "[ -~]{0,20}"),
-        (Just("Host".to_string()), "[a-z.]{1,10}"),
+        (Just("Host".to_string()), prop_oneof!["[a-z.]{1,10}", "[a-z0-9.%-]{0,10}(:[0-9]{0,5})?", "\\[[0-9a-f:.]{0,8}\\](:[0-9]{1,4})?", "[!-~]{0,8}"]),
         (Just("Content-Length".to_string()), "[0-9]{1,5}"),
         (Just("Transfer-Encoding".to_string()), prop_oneof![Just("chunked".to_string()), Just("gzip".to_string()), Just("chunked ".to_string())]),
         (Just("Content-Length".to_string()), "[0-9]{1,3}[ \t]"),
@@ -166,7 +220,10 @@ fn header() -> impl Strategy<Value = (String, String)> {
 fn request() -> impl Strategy<Value = Vec<u8>> {
     (
         prop_oneof![Just("GET"), Just("POST"), Just("PUT"), Just("X-1")],
-        "/[!-~]{0,30}",
+        prop_oneof![
+            "/([A-Za-z0-9._~!$&'()*+,;=:@/?-]|%[0-9A-Fa-f]{2}){0,20}",
+            "/[!-~]{0,30}",
+        ],
         prop_oneof![Just("HTTP/1.1"), Just("HTTP/1.0")],
         proptest::collection::vec(header(), 0..20),
     )

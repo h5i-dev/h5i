@@ -42,12 +42,19 @@ extra fields between the framing fields and the blank line.
 
 ## Accepted grammar
 
-Origin-form targets, `HTTP/1.0` or `HTTP/1.1`, CRLF line ends only, no obs-fold,
+A subset of HTTP/1.1. Some valid requests are rejected: absolute-form,
+authority-form and asterisk-form targets, empty lines before the request
+line, obs-fold, chunk extensions, trailer fields, `Transfer-Encoding` other
+than exactly `chunked`, and `Content-Length` lists.
+
+Accepted: `HTTP/1.0` or `HTTP/1.1`, CRLF line ends only, a token method, an
+origin-form target (`/`, then `pchar`, `/`, `?` and `%` HEXDIG HEXDIG; no `#`),
 no whitespace before a colon, field values of VCHAR / obs-text / SP / HTAB,
-exactly one `Host` on HTTP/1.1, at most one `Content-Length` (digits, at most
-`max_body`) and at most one `Transfer-Encoding` (exactly `chunked`, HTTP/1.1
+exactly one `Host` on HTTP/1.1 with an empty or `uri-host [ ":" port ]` value
+(a `reg-name`, or `[` IP-literal bytes `]`), at most one `Content-Length`
+(digits, at most `max_body`) and at most one `Transfer-Encoding` (HTTP/1.1
 only), never both, and neither value may end in whitespace. Chunk sizes are
-1 to 8 hex digits; chunk extensions and trailer fields are rejected.
+1 to 8 hex digits.
 
 ## What is proven (`proofs/`)
 
@@ -75,16 +82,19 @@ only), never both, and neither value may end in whitespace. Chunk sizes are
 | `drive_next`, `carry_spec` | `H1Recv.lean` | after `Ready`, `carry` leaves exactly the bytes received after `used` at the start of `rx`, as the next request's |
 | `fit_limits_spec`, `must_close_spec` | `H1Recv.lean` | `max_head + max_body` fits in the buffer; `must_close` is true for HTTP/1.0 and from the `max_requests`-th request |
 | `accept_wellformed`, `parse_head_wellformed` | `H1Props.lean` | every accepted head has token names, CR/LF/NUL-free values, the `Host`/`Content-Length`/`Transfer-Encoding` counts above, and a framing that matches its fields |
-| `no_smuggling` | `H1Smuggle.lean` | every parser in the lenient family `Interp` computes the same head length and framing on every head we accept |
+| `parse_head_sound`, `parseHead_valid` | `H1Sound.lean` | every head `parse_head` accepts is an `H1Valid.ValidHead`: request line, field lines, origin-form target, `Host` value and the policy above, defined in `H1Valid.lean` with its own byte classes, lowercasing and literals and no import from the parser's spec; `h.framing` is `H1Valid.framing` of the field lines (RFC 9112 §6.3), and the method, target and field spans hold exactly those parts |
+| `no_smuggling`, `no_smuggling_valid` | `H1Smuggle.lean` | every parser in the lenient family `Interp` (which reads names with `H1Valid`, not the parser's `classify`) computes the same head length and framing on every head we accept, and that framing is `H1Valid.framing` |
 
-Not proven: the caller's `read` into `rx[filled..]` and `filled += n` (the
-theorems assume a read changes nothing below `filled`); the loop in
-`h5i-app-embedded` that calls `write_field` for each extra field; that
-`wants_close` finds exactly the `close` options (tested); that an accepted
-head matches the grammar above as a whole (its parts are in
-`accept_wellformed`); anything about time. Check with `cargo app check crates/h5i-app-h1` (no `sorry`,
+Not proven: that every valid head within the limits is accepted
+(completeness); the chunked decoder against an independent spec
+(`Spec.dechunk` and `chunk_step` share the hex digit table); the caller's
+`read` into `rx[filled..]` and `filled += n` (the theorems assume a read
+changes nothing below `filled`); the loop in `h5i-app-embedded` that calls
+`write_field` for each extra field; that `wants_close` finds exactly the
+`close` options (tested); anything about time. Check with `cargo app check crates/h5i-app-h1` (no `sorry`,
 `native_decide` or axioms beyond Lean's three).
 
 Tests: unit tests in `src/tests.rs`; `tests/differential.rs` compares
-`parse_head` with `httparse` on 9,000 generated, mutated and random inputs and
+`parse_head` with `httparse` on 9,000 generated, mutated and random inputs
+(where we are stricter, by an independent target and `Host` grammar) and
 checks the well-formedness properties at runtime.
