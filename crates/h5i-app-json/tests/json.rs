@@ -76,3 +76,47 @@ proptest! {
         prop_assert_eq!(parsed, to_serde(&v));
     }
 }
+
+mod slice {
+    use super::*;
+    use h5i_app_json::slice::{put_dec, put_key, put_str};
+
+    /// `f` into a buffer of `len` bytes at `pos`, bytes around it checked untouched.
+    fn into(len: usize, pos: usize, f: impl Fn(&mut [u8], usize) -> Option<usize>) -> Option<Vec<u8>> {
+        let mut out = vec![0xAA; len];
+        let r = f(&mut out, pos);
+        if let Some(p) = r {
+            assert!(out[..pos].iter().chain(&out[p..]).all(|&b| b == 0xAA));
+            return Some(out[pos..p].to_vec());
+        }
+        None
+    }
+
+    proptest! {
+        #[test]
+        fn str_matches_vec_writer(s in proptest::collection::vec(any::<u8>(), 0..40), pos in 0usize..8) {
+            let want = write(&vec![Tok::Str(s.clone())]);
+            prop_assert_eq!(into(pos + want.len() + 3, pos, |o, p| put_str(o, p, &s)), Some(want.clone()));
+            // One byte short: refused.
+            prop_assert_eq!(into(pos + want.len() - 1, pos, |o, p| put_str(o, p, &s)), None);
+            let key = write(&vec![Tok::Key(s.clone())]);
+            prop_assert_eq!(into(pos + key.len(), pos, |o, p| put_key(o, p, &s)), Some(key));
+        }
+
+        #[test]
+        fn dec_matches_vec_writer(n in any::<u64>(), pos in 0usize..8) {
+            let want = write(&vec![Tok::Num(n)]);
+            prop_assert_eq!(into(pos + want.len(), pos, |o, p| put_dec(o, p, n)), Some(want.clone()));
+            prop_assert_eq!(into(pos + want.len() - 1, pos, |o, p| put_dec(o, p, n)), None);
+        }
+    }
+
+    #[test]
+    fn position_past_the_end() {
+        let mut out = [0u8; 4];
+        assert_eq!(put_str(&mut out, 9, b""), None);
+        assert_eq!(put_dec(&mut out, 9, 1), None);
+        assert_eq!(put_dec(&mut out, 0, u64::MAX), None);
+        assert_eq!(put_dec(&mut out, 0, 1234), Some(4));
+    }
+}

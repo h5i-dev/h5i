@@ -18,8 +18,12 @@ match parse_head(&buf[..filled], &lim) {
 ```
 
 `chunk_step` decodes a `chunked` body one byte at a time with a four-integer
-state; `write_head` writes `HTTP/1.1 <status> <reason>`, `Content-Type`,
+state. `read_body` finds where the body and the message end in the receive
+buffer, decoding a chunked body in place; call it again with its state after
+appending bytes. `write_head` writes `HTTP/1.1 <status> <reason>`, `Content-Type`,
 `Content-Length` (always from the given length) and `Connection: close`.
+`write_head_open`, `write_field` and `end_head` write the same head with
+extra fields between the framing fields and the blank line.
 `h5i-app-embedded` is the async server built on it.
 
 ## Accepted grammar
@@ -37,16 +41,29 @@ only), never both, and neither value may end in whitespace. Chunk sizes are
 |---|---|---|
 | `parse_head_spec` | `H1Proofs.lean` | for every input and limit, `parse_head` returns what `Spec.parseHead` computes; so it never panics |
 | `chunk_step_spec` | `H1Proofs.lean` | `chunk_step` computes `Spec.chunkStep` for every state, byte and limit |
-| `write_head_total` | `H1Proofs.lean` | `write_head` never panics, for every buffer length |
+| `write_head_spec` | `H1Proofs.lean` | on `Some(p)`: the status is in 100..=599, the content type is field-value bytes, and `out` starts with exactly `Spec.renderHead`, `p` bytes long; the rest of `out` is unchanged |
+| `write_head_open_spec`, `end_head_W` | `H1Proofs.lean` | the same for the open head (`Spec.renderOpen`) and the final CRLF; each writer extends what is written, so open, fields, end write `Spec.renderHeadWith` of the fields (`renderHeadWith_snoc`) |
+| `write_head_total`, `write_head_open_total`, `end_head_total` | `H1Proofs.lean` | the head writers never panic, for every buffer length |
+| `write_field_total` | `H1Proofs.lean` | `write_field` never panics, for every buffer, position, name and value |
+| `write_field_spec` | `H1Proofs.lean` | on `Some(p)`: the name is a non-empty token and not reserved (`reservedSpec`: `Content-Length`, `Transfer-Encoding`, `Content-Type`, `Connection`, `Trailer`, `Upgrade`, any case), the value is field-value bytes without leading or trailing SP/HTAB, and exactly `name: value` CRLF was written at `pos`, nothing else changed |
 | `dec_digits_spec`, `put_W`, `put1_W`, `put_dec_W`, `put_reason_W` | `H1Proofs.lean` | the head writer's pieces write exactly their bytes after what is already written |
 | `parse_head_reads`, `parseHead_reads` | `H1Props.lean` | once `max_head` bytes are buffered, the result depends on them alone |
+| `parseHead_prefix`, `parse_head_prefix` | `H1Prefix.lean` | once the parser returns `Done` or `Reject` on a buffer, it returns the same on every longer buffer starting with it |
+| `parseHead_split_invariant` | `H1Prefix.lean` | so however a stream is split into reads, the first prefix the parser decides on gives the same result |
+| `feed_dechunk` | `H1Body.lean` | folding `chunkStep` from the start state over a byte list computes `Spec.dechunk`, a chunk-by-chunk definition of the whole body (payload and bytes consumed, a rejection, or more needed) |
+| `dechunk_local` | `H1Body.lean` | if `dechunk L` ends the body after `k` bytes, then `k ≤ L.length` and `dechunk (L.take k ++ R)` gives the same, for every `R` |
+| `read_body_chunked`, `dechunk_spec` | `H1Read.lean` | for a state satisfying `ChunkInv` (the fold so far, payload at `buf[start..w]`, `w ≤ r`, `buf[r..filled]` still the unread wire bytes): `read_body` returns `Spec.dechunk` of the body bytes received so far, with the payload at `buf[start..end]` and `used = start + consumed`; bytes below the first write and at or past `r` (so past `used`) are unchanged; on `More` the invariant holds at `filled` |
+| `inv_start`, `inv_extend` | `H1Read.lean` | `body_start`'s state satisfies `ChunkInv`, and appending bytes at `filled` keeps it |
+| `read_body_length`, `read_body_empty` | `H1Read.lean` | `Content-Length: n` is done at `start + n` once `filled` reaches it (413 if it cannot fit), no body is done at `start`; `buf` is not changed |
 | `accept_wellformed`, `parse_head_wellformed` | `H1Props.lean` | every accepted head has token names, CR/LF/NUL-free values, the `Host`/`Content-Length`/`Transfer-Encoding` counts above, and a framing that matches its fields |
 | `no_smuggling` | `H1Smuggle.lean` | every parser in the lenient family `Interp` computes the same head length and framing on every head we accept |
 
-Not proven: that `write_head`'s bytes equal `Spec.renderHead` (tested), the
-whole-body chunked decoding against a list-level spec (each step is proven),
-and anything about time. Check with `cargo app check crates/h5i-app-h1`
-(no `sorry`, `native_decide` or axioms beyond Lean's three).
+Not proven: the loops in `h5i-app-embedded` that call `parse_head` and
+`read_body` while appending reads at `filled`, and `write_field` for each
+extra field (I/O and iteration only; tested); that an accepted head matches
+the grammar above as a whole (its parts are in `accept_wellformed`); anything
+about time. Check with `cargo app check crates/h5i-app-h1` (no `sorry`,
+`native_decide` or axioms beyond Lean's three).
 
 Tests: unit tests in `src/tests.rs`; `tests/differential.rs` compares
 `parse_head` with `httparse` on 9,000 generated, mutated and random inputs and

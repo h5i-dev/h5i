@@ -9,4 +9,4 @@ publish = false
 [dependencies]
 thermostat-kernel = { path = "../kernel" }
 h5i-app-core = { path = "../../../../crates/h5i-app-core", default-features = false }
-h5i-app-embedded = { path = "../../../../crates/h5i-app-embedded" }
+h5i-app-embedded = { path = "../../../../crates/h5i-app-embedded", features = ["hmac", "flash"] }

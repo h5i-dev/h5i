@@ -8,21 +8,45 @@ repository = "https://github.com/h5i-dev/h5i"
 homepage = "https://github.com/h5i-dev/h5i"
 readme = "README.md"
 
+[features]
+default = []
+# `hmac::HmacAuth`: requests signed with HMAC-SHA256, replay-protected.
+hmac = ["dep:hmac", "dep:sha2"]
+# `store::FlashStore`: snapshots kept in NOR flash across resets.
+flash = ["dep:embedded-storage-async"]
+# `tcp::serve_tcp`: an embassy-net TCP listener.
+embassy-net = ["dep:embassy-net"]
+
 # The trusted shell: it moves bytes between a socket and the verified core
-# (h5i-app-h1), and between the core and a kernel. No allocator, no runtime.
+# (h5i-app-h1, h5i-app-json's slice writer), and between the core and a
+# kernel. No allocator, no runtime.
 [dependencies]
 h5i-app-h1.workspace = true
+h5i-app-json = { workspace = true, default-features = false }
 h5i-app-core = { workspace = true, default-features = false }
 # The I/O traits: tokio (through embedded-io-adapters), embassy-net or a UART.
 embedded-io-async = "0.7"
-# The device engine's lock: interrupts off on a single core, a mutex on a host.
+# Short sections (reading the snapshot): interrupts off on a single core, a
+# mutex on a host.
 critical-section = "1.2"
+# The write lock and the commit wakers. Executor-agnostic.
+embassy-sync = "0.8"
+hmac = { version = "0.12", default-features = false, optional = true }
+sha2 = { version = "0.10", default-features = false, optional = true }
+embedded-storage-async = { version = "0.4", optional = true }
+embassy-net = { version = "0.9", features = ["tcp"], optional = true }
 
 [dev-dependencies]
 critical-section = { version = "1.2", features = ["std"] }
 embedded-io-adapters = { version = "0.7", features = ["tokio-1"] }
 tokio = { version = "1", features = ["rt", "macros", "io-util", "time"] }
 proptest = "1"
+serde_json = "1"
+h5i-app-json = { workspace = true }
+# `tcp`'s test: two embassy-net stacks joined by an in-memory cable.
+embassy-net = { version = "0.9", features = ["tcp", "proto-ipv4", "medium-ethernet"] }
+embassy-net-driver-channel = "0.4"
+embassy-time = { version = "0.5", features = ["std", "generic-queue-8"] }
 
 [lints.clippy]
 # No heap: a parsed `Head` is moved by value, never boxed.

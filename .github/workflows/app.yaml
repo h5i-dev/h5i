@@ -76,7 +76,8 @@ jobs:
       - run: cargo test --workspace --locked
         working-directory: examples/embedded
       - run: rustup target add thumbv7em-none-eabihf
-      - run: cargo build -p h5i-app-h1 -p h5i-app-embedded --target thumbv7em-none-eabihf --locked
+      - run: cargo build -p h5i-app-h1 -p h5i-app-json -p h5i-app-embedded --no-default-features --target thumbv7em-none-eabihf --locked
+      - run: cargo build -p h5i-app-embedded --features hmac,flash,embassy-net,embassy-net/proto-ipv4,embassy-net/medium-ethernet --target thumbv7em-none-eabihf --locked
       - run: cargo build --release --locked
         working-directory: examples/embedded/thermostat/firmware
       # A TLS-only PostgreSQL for h5i-app-pg's `tls` tests.

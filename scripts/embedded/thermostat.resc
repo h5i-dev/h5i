@@ -3,7 +3,8 @@
 #   renode --disable-xwt --console -e '$elf=@path/to/thermostat-firmware; $port=8080; include @scripts/embedded/thermostat.resc'
 #
 # Every byte written to the socket goes to USART2's receiver and every byte
-# the firmware transmits comes back. The line is framed: put
+# the firmware transmits comes back. A TMP108 sits on I2C1; the heater and
+# relays are PD12-PD15 and PD11 (read them from GPIOD's ODR, 0x40020C14). The line is framed: put
 # scripts/embedded/uart-gateway.py in front of it and point clients there.
 
 :name: thermostat
@@ -14,6 +15,8 @@ $port?=8080
 using sysbus
 mach create "thermostat"
 machine LoadPlatformDescription @platforms/boards/stm32f4_discovery.repl
+# The temperature sensor the firmware reads: `i2c1.tmp108 Temperature 36.5`.
+machine LoadPlatformDescriptionFromString "tmp108: Sensors.TMP108 @ i2c1 0x48"
 # `false`: no telnet negotiation bytes, the socket carries raw HTTP.
 emulation CreateServerSocketTerminal $port "term" false
 connector Connect sysbus.usart2 term

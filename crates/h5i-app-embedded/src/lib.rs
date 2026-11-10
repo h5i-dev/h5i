@@ -23,24 +23,38 @@
 //! ```
 //!
 //! I/O is [`embedded_io_async`], so the same code runs over tokio on a host
-//! (`embedded-io-adapters`), embassy-net TCP or a UART. Timeouts belong to
-//! the I/O object (embassy-net's `set_timeout`, `tokio::time::timeout` on a
-//! host); the shell has no clock.
+//! (`embedded-io-adapters`), embassy-net TCP or a UART. The shell has no
+//! clock: the caller passes a [`Bound`] (embassy-time's `with_timeout`,
+//! tokio's `timeout`) that limits how long each request may take to arrive
+//! and each response to leave, so a client that trickles bytes cannot hold a
+//! connection.
 
 #![no_std]
 // Handlers run on a single-threaded executor (embassy, a tokio LocalSet), so
 // their futures need not be `Send`.
 #![allow(async_fn_in_trait)]
 
+// Tests run on a host; tokio's macros name `::std`.
+#[cfg(test)]
+extern crate std;
+
+pub mod form;
+#[cfg(feature = "hmac")]
+pub mod hmac;
+pub mod json;
 pub mod kernel;
 pub mod link;
 mod path;
+#[cfg(feature = "flash")]
+pub mod store;
+#[cfg(feature = "embassy-net")]
+pub mod tcp;
 #[cfg(test)]
 mod tests;
 
-pub use h5i_app_h1::{Head, Limits};
-use h5i_app_h1::{self as h1, ChunkOut, Framing, HeadResult};
 use embedded_io_async::{Read, Write};
+use h5i_app_h1::{self as h1, BodyOut, HeadResult};
+pub use h5i_app_h1::{Head, Limits};
 
 /// Server limits.
 #[derive(Clone, Copy, Debug)]
@@ -51,11 +65,15 @@ pub struct Config {
     pub limits: Limits,
     /// Requests served on one connection before it is closed.
     pub max_requests: u32,
+    /// Bytes reserved at the start of the transmit buffer for the response
+    /// head; the handler's body goes after them. A head that does not fit
+    /// (too many or too long [`Response::header`]s) becomes an empty 500.
+    pub head_room: usize,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Config { limits: Limits { max_head: 1024, max_body: 1024 }, max_requests: 100 }
+        Config { limits: Limits { max_head: 1024, max_body: 1024 }, max_requests: 100, head_room: HEAD_ROOM }
     }
 }
 
@@ -133,18 +151,22 @@ impl<'r> Request<'r> {
 
     /// The `i`th `{param}` as a decimal `u32` (no sign, no leading `+`).
     pub fn param_u32(&self, i: usize) -> Option<u32> {
-        let p = self.param(i)?;
-        if p.is_empty() || p.len() > 10 {
-            return None;
-        }
-        let mut v: u64 = 0;
-        for &c in p {
-            if !c.is_ascii_digit() {
-                return None;
-            }
-            v = v * 10 + (c - b'0') as u64;
-        }
-        u32::try_from(v).ok()
+        form::parse_u32(self.param(i)?)
+    }
+
+    /// The value of `name` in the query (`a=1&b=2`), undecoded; see [`form`].
+    pub fn query_param(&self, name: &[u8]) -> Option<&'r [u8]> {
+        form::param(self.query, name)
+    }
+
+    /// The method as sent.
+    pub fn method_bytes(&self) -> &'r [u8] {
+        &self.raw[self.head.method.start..self.head.method.end]
+    }
+
+    /// The request target as sent: the path and, after `?`, the query.
+    pub fn target(&self) -> &'r [u8] {
+        &self.raw[self.head.target.start..self.head.target.end]
     }
 
     /// `HTTP/1.<minor>`.
@@ -158,8 +180,28 @@ impl<'r> Request<'r> {
     }
 }
 
-/// What a handler answers: the status, a content type, and how many bytes of
-/// body it wrote at the start of its output buffer.
+/// Extra response fields a handler may add ([`Response::header`]).
+pub const MAX_FIELDS: usize = 4;
+/// Bytes [`Response::header_copy`] may copy, over all its fields.
+pub const INLINE_VALUE: usize = 64;
+
+/// A field value: a constant, or a span of the response's inline bytes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Value {
+    Static(&'static [u8]),
+    Inline(u8, u8),
+}
+
+/// What a handler answers: the status, a content type, how many bytes of
+/// body it wrote at the start of its output buffer, and up to
+/// [`MAX_FIELDS`] extra fields.
+///
+/// The extra fields go through the verified `write_field`, which refuses a
+/// name that is not a token, a framing name (`Content-Length`,
+/// `Transfer-Encoding`, `Connection`, `Content-Type`, `Trailer`, `Upgrade`)
+/// and a value with CR, LF or other controls. A refused field, one field too
+/// many or copied values over [`INLINE_VALUE`] bytes turn the response into
+/// an empty 500 that closes the connection, as a bad content type does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Response {
     pub status: u16,
@@ -167,12 +209,33 @@ pub struct Response {
     pub len: usize,
     /// Close the connection after this response.
     pub close: bool,
+    fields: [(&'static [u8], Value); MAX_FIELDS],
+    /// How many of `fields` are used; `u8::MAX` once one did not fit.
+    nfields: u8,
+    inline: [u8; INLINE_VALUE],
+    ninline: u8,
 }
 
+const NO_FIELD: (&[u8], Value) = (b"", Value::Static(b""));
+
 impl Response {
+    /// `len` bytes of body with this status and content type.
+    pub const fn new(status: u16, content_type: &'static [u8], len: usize) -> Response {
+        Response {
+            status,
+            content_type,
+            len,
+            close: false,
+            fields: [NO_FIELD; MAX_FIELDS],
+            nfields: 0,
+            inline: [0; INLINE_VALUE],
+            ninline: 0,
+        }
+    }
+
     /// No body.
-    pub fn status(status: u16) -> Response {
-        Response { status, content_type: b"", len: 0, close: false }
+    pub const fn status(status: u16) -> Response {
+        Response::new(status, b"", 0)
     }
 
     /// `body` copied into `out`; 500 with no body if it does not fit.
@@ -181,7 +244,7 @@ impl Response {
             return Response::status(500);
         }
         out[..body.len()].copy_from_slice(body);
-        Response { status, content_type, len: body.len(), close: false }
+        Response::new(status, content_type, body.len())
     }
 
     pub fn text(out: &mut [u8], status: u16, body: &[u8]) -> Response {
@@ -190,6 +253,57 @@ impl Response {
 
     pub fn json(out: &mut [u8], status: u16, body: &[u8]) -> Response {
         Response::bytes(out, status, b"application/json", body)
+    }
+
+    /// Close the connection after this response.
+    pub fn closing(mut self) -> Response {
+        self.close = true;
+        self
+    }
+
+    /// Add the field `name: value`.
+    pub fn header(self, name: &'static [u8], value: &'static [u8]) -> Response {
+        self.field(name, Value::Static(value))
+    }
+
+    /// Add the field `name: value`, copying `value` into the response.
+    pub fn header_copy(mut self, name: &'static [u8], value: &[u8]) -> Response {
+        let at = self.ninline as usize;
+        if value.len() > INLINE_VALUE - at {
+            return self.overflow();
+        }
+        self.inline[at..at + value.len()].copy_from_slice(value);
+        self.ninline += value.len() as u8;
+        self.field(name, Value::Inline(at as u8, value.len() as u8))
+    }
+
+    fn field(mut self, name: &'static [u8], value: Value) -> Response {
+        let n = self.nfields as usize;
+        if n >= MAX_FIELDS {
+            return self.overflow();
+        }
+        self.fields[n] = (name, value);
+        self.nfields += 1;
+        self
+    }
+
+    fn overflow(mut self) -> Response {
+        self.nfields = u8::MAX;
+        self
+    }
+
+    /// Whether every added field fit.
+    pub fn fields_fit(&self) -> bool {
+        self.nfields as usize <= MAX_FIELDS
+    }
+
+    /// The extra fields that fit, in order.
+    pub fn fields(&self) -> impl Iterator<Item = (&'static [u8], &[u8])> + '_ {
+        let n = (self.nfields as usize).min(MAX_FIELDS);
+        self.fields[..n].iter().map(move |&(name, v)| match v {
+            Value::Static(b) => (name, b),
+            Value::Inline(s, l) => (name, &self.inline[s as usize..s as usize + l as usize]),
+        })
     }
 }
 
@@ -295,23 +409,47 @@ impl<R> Router<R> {
         self.route(pattern, Method::Put, handler)
     }
 
+    pub fn patch<H>(self, pattern: &'static [u8], handler: H) -> Router<Route<H, R>> {
+        self.route(pattern, Method::Patch, handler)
+    }
+
     pub fn delete<H>(self, pattern: &'static [u8], handler: H) -> Router<Route<H, R>> {
         self.route(pattern, Method::Delete, handler)
     }
 }
 
-/// Bytes reserved at the start of the transmit buffer for the response head.
-/// The body is written after it.
-pub const HEAD_ROOM: usize = 192;
+/// The default [`Config::head_room`]: the status line, the framing fields
+/// and a few extra fields.
+pub const HEAD_ROOM: usize = 256;
+
+/// Runs a future under a time bound. The device provides it (embassy-time's
+/// `with_timeout`, tokio's `timeout`), since the shell has no clock.
+pub trait Bound {
+    /// `None` if `f` did not finish in time; it is then dropped.
+    async fn within<F: core::future::Future>(&self, f: F) -> Option<F::Output>;
+}
+
+/// No bound: for an I/O object that times out by itself, or for tests.
+pub struct NoBound;
+
+impl Bound for NoBound {
+    async fn within<F: core::future::Future>(&self, f: F) -> Option<F::Output> {
+        Some(f.await)
+    }
+}
 
 /// Why [`serve`] stopped.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Closed<E> {
     /// The peer closed the connection, or we did after a `close` response.
-    Done { requests: u32 },
+    Done {
+        requests: u32,
+    },
     Io(E),
-    /// `tx` is not longer than [`HEAD_ROOM`].
+    /// `tx` is not longer than [`Config::head_room`].
     TxTooSmall,
+    /// A response did not leave within the bound.
+    WriteTimeout,
 }
 
 /// What a connection's read loop decided about the next request.
@@ -326,36 +464,48 @@ enum Next {
 
 /// Serve one connection until it closes. Returns how many requests it
 /// answered.
-pub async fn serve<IO, S, R>(
+///
+/// Each request must arrive whole within `bound`, counted from when the
+/// server starts waiting for it (so an idle keep-alive connection is closed
+/// after one bound), and each response must be written within `bound`. A
+/// request that started but did not finish in time gets a 408 and the
+/// connection closes. The handler itself is not bounded.
+pub async fn serve<IO, S, R, B>(
     cfg: &Config,
     router: &Router<R>,
     state: &S,
     rx: &mut [u8],
     tx: &mut [u8],
     io: &mut IO,
+    bound: &B,
 ) -> Result<u32, Closed<IO::Error>>
 where
     IO: Read + Write,
     R: Routes<S>,
+    B: Bound,
 {
-    if tx.len() <= HEAD_ROOM {
+    let room = cfg.head_room;
+    if tx.len() <= room {
         return Err(Closed::TxTooSmall);
     }
     // The receive buffer bounds the limits: a whole request must fit.
     let max_head = cfg.limits.max_head.min(rx.len());
-    let room = (rx.len() - max_head).min(u32::MAX as usize) as u32;
-    let lim = Limits { max_head, max_body: cfg.limits.max_body.min(room) };
+    let rest = (rx.len() - max_head).min(u32::MAX as usize) as u32;
+    let lim = Limits { max_head, max_body: cfg.limits.max_body.min(rest) };
     let mut filled = 0usize;
     let mut served = 0u32;
     loop {
-        let next = match read_request(&lim, rx, &mut filled, io).await {
-            Ok(n) => n,
-            Err(e) => return Err(Closed::Io(e)),
+        let next = match bound.within(read_request(&lim, rx, &mut filled, io)).await {
+            Some(Ok(n)) => n,
+            Some(Err(e)) => return Err(Closed::Io(e)),
+            // Idle: close quietly. Part of a request: 408.
+            None if filled == 0 => return Ok(served),
+            None => Next::Reject(408),
         };
         let (head, body_start, body_end, used) = match next {
             Next::Eof => return Ok(served),
             Next::Reject(status) => {
-                send(io, tx, Response { status, content_type: b"", len: 0, close: true }, false).await?;
+                send(io, tx, room, Response::status(status).closing(), false, bound).await?;
                 return Ok(served);
             }
             Next::Ready(h, s, e, u) => (h, s, e, u),
@@ -379,7 +529,7 @@ where
                 nparams: 0,
             };
             let close = head.minor == 0 || served >= cfg.max_requests || wants_close(&req);
-            let (_, body_out) = tx.split_at_mut(HEAD_ROOM);
+            let (_, body_out) = tx.split_at_mut(room);
             let mut resp = match router.0.dispatch(&mut req, state, body_out).await {
                 Dispatch::Done(r) => r,
                 Dispatch::WrongMethod => Response::status(405),
@@ -392,7 +542,7 @@ where
             (resp, req.method == Method::Head)
         };
         let (resp, head_only) = resp;
-        if send(io, tx, resp, head_only).await? {
+        if send(io, tx, room, resp, head_only, bound).await? {
             return Ok(served);
         }
         // Pipelining: keep the bytes after this request.
@@ -423,41 +573,17 @@ async fn read_request<IO: Read>(
             }
         }
     };
+    // The verified `read_body` decides where the body and the message end;
+    // this loop only appends bytes at `filled`.
     let start = head.len;
-    match head.framing {
-        Framing::Empty => Ok(Next::Ready(head, start, start, start)),
-        Framing::Length(n) => {
-            // n <= max_body <= rx.len() - max_head, and head.len <= max_head.
-            let end = start + n as usize;
-            while *filled < end {
-                let k = io.read(&mut rx[*filled..]).await?;
-                if k == 0 {
-                    return Ok(Next::Reject(400));
-                }
-                *filled += k;
-            }
-            Ok(Next::Ready(head, start, end, end))
-        }
-        Framing::Chunked => {
-            let mut st = h1::CHUNK_START;
-            let mut r = start;
-            let mut w = start;
-            loop {
-                while r < *filled {
-                    let b = rx[r];
-                    let (s, out) = h1::chunk_step(st, b, lim.max_body);
-                    st = s;
-                    r += 1;
-                    match out {
-                        ChunkOut::Nothing => {}
-                        ChunkOut::Data => {
-                            rx[w] = b;
-                            w += 1;
-                        }
-                        ChunkOut::Done => return Ok(Next::Ready(head, start, w, r)),
-                        ChunkOut::Reject(s) => return Ok(Next::Reject(s)),
-                    }
-                }
+    let mut st = h1::body_start(start);
+    loop {
+        let (s, out) = h1::read_body(rx, *filled, start, head.framing, st, lim.max_body);
+        st = s;
+        match out {
+            BodyOut::Done(end, used) => return Ok(Next::Ready(head, start, end, used)),
+            BodyOut::Reject(s) => return Ok(Next::Reject(s)),
+            BodyOut::More => {
                 if *filled == rx.len() {
                     // Framing bytes filled the buffer.
                     return Ok(Next::Reject(413));
@@ -481,21 +607,40 @@ pub fn wants_close(req: &Request<'_>) -> bool {
         .any(|(_, v)| v.split(|&c| c == b',').any(|t| t.trim_ascii().eq_ignore_ascii_case(b"close")))
 }
 
-/// Write `resp`, whose body is at `tx[HEAD_ROOM..]`; whether the connection
+/// The head of `resp` in `head`: the verified writer's status line and
+/// framing fields, then each extra field through the verified
+/// `write_field`. `None` if anything was refused or did not fit.
+fn write_response_head(head: &mut [u8], resp: &Response, body_len: u32) -> Option<usize> {
+    if resp.status < 200 {
+        return None;
+    }
+    if !resp.fields_fit() {
+        return None;
+    }
+    let mut at = h1::write_head_open(head, resp.status, resp.content_type, body_len, resp.close)?;
+    for (name, value) in resp.fields() {
+        at = h1::write_field(head, at, name, value)?;
+    }
+    h1::end_head(head, at)
+}
+
+/// Write `resp`, whose body is at `tx[room..]`; whether the connection
 /// must now close. No body bytes go out for a HEAD request (`head_only`) or a
 /// status that has none (1xx, 204, 304). A 1xx from a handler, a status out
-/// of range or a bad content type become an empty 500 that closes.
-async fn send<IO: Write>(
+/// of range, a bad content type or a refused extra field become an empty 500
+/// that closes.
+async fn send<IO: Write, B: Bound>(
     io: &mut IO,
     tx: &mut [u8],
+    room: usize,
     resp: Response,
     head_only: bool,
+    bound: &B,
 ) -> Result<bool, Closed<IO::Error>> {
-    let (head, body) = tx.split_at_mut(HEAD_ROOM);
+    let (head, body) = tx.split_at_mut(room);
     let len = resp.len.min(body.len());
     let blen = len.min(u32::MAX as usize) as u32;
-    let written = if resp.status < 200 { None } else { h1::write_head(head, resp.status, resp.content_type, blen, resp.close) };
-    let (n, body_len, close) = match written {
+    let (n, body_len, close) = match write_response_head(head, &resp, blen) {
         Some(n) => {
             let send_body = !head_only && h1::has_body(resp.status);
             (n, if send_body { len } else { 0 }, resp.close)
@@ -505,8 +650,14 @@ async fn send<IO: Write>(
             None => return Ok(true),
         },
     };
-    io.write_all(&head[..n]).await.map_err(Closed::Io)?;
-    io.write_all(&body[..body_len]).await.map_err(Closed::Io)?;
-    io.flush().await.map_err(Closed::Io)?;
+    let write = async {
+        io.write_all(&head[..n]).await?;
+        io.write_all(&body[..body_len]).await?;
+        io.flush().await
+    };
+    match bound.within(write).await {
+        Some(r) => r.map_err(Closed::Io)?,
+        None => return Err(Closed::WriteTimeout),
+    }
     Ok(close)
 }

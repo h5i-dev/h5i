@@ -46,10 +46,11 @@ fn accept_errors_do_not_spin() {
     });
 }
 
-/// With a cap of one, a second client waits while the first holds its connection.
+/// With a cap of one, a second client waits while the first holds its
+/// connection; the first is cut once its request takes longer than the bound.
 #[test]
 fn connections_are_capped() {
-    static APP: App = App::new(b"k");
+    static APP: App = App::new(b"k", 1);
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     let local = tokio::task::LocalSet::new();
     local.block_on(&rt, async {
@@ -64,9 +65,11 @@ fn connections_are_capped() {
         second.write_all(b"GET /state HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n").await.unwrap();
         let mut out = Vec::new();
         second.read_to_end(&mut out).await.unwrap();
-        // Served only once the first connection's 800 ms were up.
+        // Served only once the first request's 800 ms were up.
         assert!(t0.elapsed() >= Duration::from_millis(500), "{:?}", t0.elapsed());
         assert!(out.starts_with(b"HTTP/1.1 200 OK"), "{}", String::from_utf8_lossy(&out));
-        drop(first);
+        let mut cut = Vec::new();
+        first.read_to_end(&mut cut).await.unwrap();
+        assert!(cut.starts_with(b"HTTP/1.1 408 "), "{}", String::from_utf8_lossy(&cut));
     });
 }

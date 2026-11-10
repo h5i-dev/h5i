@@ -671,6 +671,96 @@ fn expect(st: ChunkState, b: u8, want: u8, next: u8, out: ChunkOut) -> (ChunkSta
 }
 
 // ---------------------------------------------------------------------------
+// Bodies in the receive buffer
+
+/// Progress through a body in the receive buffer: the chunked decoder's
+/// state, the next byte to read (`r`) and where the next payload byte goes
+/// (`w`). A chunked body is decoded in place, so `w <= r`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BodyState {
+    pub chunk: ChunkState,
+    pub r: usize,
+    pub w: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BodyOut {
+    /// Append more bytes at `filled` and call again with the returned state.
+    More,
+    /// The payload is `buf[start..end]` and the message is `buf[..used]`:
+    /// `Done(end, used)`.
+    Done(usize, usize),
+    /// Answer with this status and close the connection.
+    Reject(u16),
+}
+
+pub const INTERNAL_ERROR: u16 = 500;
+
+/// The state before the first body byte, for a head of `start` bytes.
+pub fn body_start(start: usize) -> BodyState {
+    BodyState { chunk: CHUNK_START, r: start, w: start }
+}
+
+/// Read the body framed by `framing` from `buf[..filled]`, which holds a
+/// head of `start` bytes and then the body bytes received so far. A chunked
+/// body is decoded in place: its payload ends up at `buf[start..end]`.
+/// `st` is [`body_start`] on the first call and the returned state after.
+/// Reads and writes only below `filled`; a `Content-Length` that cannot fit
+/// in `buf` is 413.
+pub fn read_body(
+    buf: &mut [u8],
+    filled: usize,
+    start: usize,
+    framing: Framing,
+    st: BodyState,
+    max_body: u32,
+) -> (BodyState, BodyOut) {
+    match framing {
+        Framing::Empty => (st, BodyOut::Done(start, start)),
+        Framing::Length(n) => {
+            if start > buf.len() || n > (buf.len() - start) as u64 {
+                return (st, BodyOut::Reject(PAYLOAD_TOO_LARGE));
+            }
+            let end = start + n as usize;
+            if filled >= end {
+                (st, BodyOut::Done(end, end))
+            } else {
+                (st, BodyOut::More)
+            }
+        }
+        Framing::Chunked => dechunk(buf, filled, st, max_body),
+    }
+}
+
+/// Run [`chunk_step`] over `buf[st.r..filled]`, moving each payload byte
+/// down to `st.w`. `Reject(500)` if `st.w > st.r` or `filled > buf.len()`,
+/// which no state from [`body_start`] reaches.
+pub fn dechunk(buf: &mut [u8], filled: usize, st: BodyState, max_body: u32) -> (BodyState, BodyOut) {
+    if st.w > st.r || filled > buf.len() {
+        return (st, BodyOut::Reject(INTERNAL_ERROR));
+    }
+    let mut cs = st.chunk;
+    let mut r = st.r;
+    let mut w = st.w;
+    while r < filled {
+        let b = buf[r];
+        let (s, out) = chunk_step(cs, b, max_body);
+        cs = s;
+        r += 1;
+        match out {
+            ChunkOut::Nothing => {}
+            ChunkOut::Data => {
+                buf[w] = b;
+                w += 1;
+            }
+            ChunkOut::Done => return (BodyState { chunk: cs, r, w }, BodyOut::Done(w, r)),
+            ChunkOut::Reject(x) => return (BodyState { chunk: cs, r, w }, BodyOut::Reject(x)),
+        }
+    }
+    (BodyState { chunk: cs, r, w }, BodyOut::More)
+}
+
+// ---------------------------------------------------------------------------
 // Response heads
 
 /// Copy `src` into `out` at `pos`, or `None` if it does not fit.
@@ -774,6 +864,16 @@ pub fn has_body(status: u16) -> bool {
 /// response has no body (RFC 9112 §6.3), so it gets none and the caller must
 /// send no body bytes ([`has_body`]).
 pub fn write_head(out: &mut [u8], status: u16, content_type: &[u8], body_len: u32, close: bool) -> Option<usize> {
+    let at = match write_head_open(out, status, content_type, body_len, close) {
+        None => return None,
+        Some(a) => a,
+    };
+    end_head(out, at)
+}
+
+/// [`write_head`] without the final CRLF: [`write_field`] may add fields at
+/// the position it returns, and [`end_head`] ends the head.
+pub fn write_head_open(out: &mut [u8], status: u16, content_type: &[u8], body_len: u32, close: bool) -> Option<usize> {
     if status < 100 || status > 599 {
         return None;
     }
@@ -781,12 +881,7 @@ pub fn write_head(out: &mut [u8], status: u16, content_type: &[u8], body_len: u3
         return None;
     }
     let ct = content_type.len() > 0;
-    let ct_name: &[u8] = if ct { b"Content-Type: " } else { b"" };
-    let ct_end: &[u8] = if ct { b"\r\n" } else { b"" };
-    let conn: &[u8] = if close { b"Connection: close\r\n" } else { b"" };
     let cl = has_body(status);
-    let cl_name: &[u8] = if cl { b"Content-Length: " } else { b"" };
-    let cl_end: &[u8] = if cl { b"\r\n" } else { b"" };
     let mut at = match put(out, 0, b"HTTP/1.1 ") {
         None => return None,
         Some(a) => a,
@@ -815,7 +910,7 @@ pub fn write_head(out: &mut [u8], status: u16, content_type: &[u8], body_len: u3
         None => return None,
         Some(a) => a,
     };
-    at = match put(out, at, ct_name) {
+    at = match put_if(out, at, ct, b"Content-Type: ") {
         None => return None,
         Some(a) => a,
     };
@@ -823,29 +918,108 @@ pub fn write_head(out: &mut [u8], status: u16, content_type: &[u8], body_len: u3
         None => return None,
         Some(a) => a,
     };
-    at = match put(out, at, ct_end) {
+    at = match put_if(out, at, ct, b"\r\n") {
         None => return None,
         Some(a) => a,
     };
-    at = match put(out, at, cl_name) {
+    at = match put_if(out, at, cl, b"Content-Length: ") {
         None => return None,
         Some(a) => a,
     };
-    if cl {
-        at = match put_dec(out, at, body_len) {
-            None => return None,
-            Some(a) => a,
-        };
+    at = match put_dec_if(out, at, cl, body_len) {
+        None => return None,
+        Some(a) => a,
+    };
+    at = match put_if(out, at, cl, b"\r\n") {
+        None => return None,
+        Some(a) => a,
+    };
+    put_if(out, at, close, b"Connection: close\r\n")
+}
+
+/// `src` at `pos` when `cond`, else nothing. Keeps `write_head_open` one
+/// straight chain of writes.
+fn put_if(out: &mut [u8], pos: usize, cond: bool, src: &[u8]) -> Option<usize> {
+    if cond { put(out, pos, src) } else { Some(pos) }
+}
+
+/// `n` in decimal at `pos` when `cond`, else nothing.
+fn put_dec_if(out: &mut [u8], pos: usize, cond: bool, n: u32) -> Option<usize> {
+    if cond { put_dec(out, pos, n) } else { Some(pos) }
+}
+
+
+/// A field the shell writes itself, or one that would change how the
+/// response is framed or what happens to the connection: `content-length`,
+/// `transfer-encoding`, `content-type`, `connection`, `trailer`, `upgrade`
+/// (any case). One test each, so the extracted Lean stays small.
+pub fn reserved_name(name: &[u8]) -> bool {
+    let n = name.len();
+    if eq_ci(name, 0, n, b"content-length") {
+        return true;
     }
-    at = match put(out, at, cl_end) {
+    if eq_ci(name, 0, n, b"transfer-encoding") {
+        return true;
+    }
+    if eq_ci(name, 0, n, b"content-type") {
+        return true;
+    }
+    if eq_ci(name, 0, n, b"connection") {
+        return true;
+    }
+    if eq_ci(name, 0, n, b"trailer") {
+        return true;
+    }
+    eq_ci(name, 0, n, b"upgrade")
+}
+
+/// Every byte of `buf` is a `tchar`, and there is at least one.
+fn is_token(buf: &[u8]) -> bool {
+    buf.len() > 0 && token_end(buf, 0, buf.len()) == buf.len()
+}
+
+/// Write the field `name: value` CRLF at `pos`; the position after it.
+///
+/// `None` if it does not fit, `name` is not a token or is
+/// [`reserved_name`], or `value` holds a byte that is not a field-value
+/// byte, or starts or ends with SP or HTAB. So an extra field can neither
+/// end the head early, add a field of its own, nor change the framing.
+pub fn write_field(out: &mut [u8], pos: usize, name: &[u8], value: &[u8]) -> Option<usize> {
+    if !is_token(name) {
+        return None;
+    }
+    if reserved_name(name) {
+        return None;
+    }
+    if !field_bytes(value, 0, value.len()) {
+        return None;
+    }
+    if value.len() > 0 {
+        if is_ows(value[0]) {
+            return None;
+        }
+        if is_ows(value[value.len() - 1]) {
+            return None;
+        }
+    }
+    let mut at = match put(out, pos, name) {
         None => return None,
         Some(a) => a,
     };
-    at = match put(out, at, conn) {
+    at = match put(out, at, b": ") {
+        None => return None,
+        Some(a) => a,
+    };
+    at = match put(out, at, value) {
         None => return None,
         Some(a) => a,
     };
     put(out, at, b"\r\n")
+}
+
+/// The CRLF that ends a head, at `pos`.
+pub fn end_head(out: &mut [u8], pos: usize) -> Option<usize> {
+    put(out, pos, b"\r\n")
 }
 
 #[cfg(test)]

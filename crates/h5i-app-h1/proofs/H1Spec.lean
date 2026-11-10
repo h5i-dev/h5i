@@ -454,16 +454,29 @@ def reasonOf (status : Nat) : List Nat :=
 /-- 1xx, 204 and 304 responses have no body, and no `Content-Length`. -/
 def hasBody (status : Nat) : Bool := if status < 200 then false else status != 204 && status != 304
 
-/-- The response head `write_head` writes (ASCII):
-`HTTP/1.1 <status> <reason>` CRLF, `Content-Type: <ct>` CRLF when `ct` is not
-empty, `Content-Length: <bodyLen>` CRLF when `hasBody status`, `Connection:
-close` CRLF when `close`, and CRLF. -/
-def renderHead (status : Nat) (ct : List Nat) (bodyLen : Nat) (close : Bool) : List Nat :=
+/-- What `write_head_open` writes (ASCII): `HTTP/1.1 <status> <reason>` CRLF,
+`Content-Type: <ct>` CRLF when `ct` is not empty, `Content-Length: <bodyLen>`
+CRLF when `hasBody status`, and `Connection: close` CRLF when `close`. -/
+def renderOpen (status : Nat) (ct : List Nat) (bodyLen : Nat) (close : Bool) : List Nat :=
   [72, 84, 84, 80, 47, 49, 46, 49, 32] ++ [48 + status / 100, 48 + status / 10 % 10, 48 + status % 10, 32] ++
     reasonOf status ++ [13, 10] ++
-    (if ct = [] then [] else [67, 111, 110, 116, 101, 110, 116, 45, 84, 121, 112, 101, 58, 32]) ++ ct ++ (if ct = [] then [] else [13, 10]) ++
+    (if ct = [] then [] else [67, 111, 110, 116, 101, 110, 116, 45, 84, 121, 112, 101, 58, 32]) ++ ct ++
+    (if ct = [] then [] else [13, 10]) ++
     (if hasBody status then [67, 111, 110, 116, 101, 110, 116, 45, 76, 101, 110, 103, 116, 104, 58, 32] ++
       dec bodyLen ++ [13, 10] else []) ++
-    (if close then [67, 111, 110, 110, 101, 99, 116, 105, 111, 110, 58, 32, 99, 108, 111, 115, 101] ++ [13, 10] else []) ++ [13, 10]
+    (if close then [67, 111, 110, 110, 101, 99, 116, 105, 111, 110, 58, 32, 99, 108, 111, 115, 101, 13, 10] else [])
+
+/-- One extra field as `write_field` writes it: `name: value` CRLF. -/
+def renderField (f : List Nat × List Nat) : List Nat := f.1 ++ [58, 32] ++ f.2 ++ [13, 10]
+
+/-- A response head with extra fields after the framing fields, as
+`write_head_open`, `write_field` for each field, then `end_head` write it. -/
+def renderHeadWith (status : Nat) (ct : List Nat) (bodyLen : Nat) (close : Bool)
+    (fs : List (List Nat × List Nat)) : List Nat :=
+  renderOpen status ct bodyLen close ++ (fs.map renderField).flatten ++ [13, 10]
+
+/-- The response head `write_head` writes: `renderOpen`, then CRLF. -/
+def renderHead (status : Nat) (ct : List Nat) (bodyLen : Nat) (close : Bool) : List Nat :=
+  renderHeadWith status ct bodyLen close []
 
 end h5i_app_h1.Spec

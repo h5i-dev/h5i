@@ -1154,21 +1154,426 @@ theorem put_reason_W (o out : Slice U8) (bs : List Nat) (pos : Usize) (status : 
   all_goals (rw [Bool.eq_iff_iff]; simp only [bne_iff_ne, ne_eq, Bool.and_eq_true, UScalar.eq_equiv,
     UScalar.ofNatCore_val_eq] at *; simp_all)
 
-set_option maxHeartbeats 2000000 in
+@[step] theorem put_if_total (o : Slice U8) (pos : Usize) (c : Bool) (src : Slice U8) :
+    put_if o pos c src ⦃ _ _ => True ⦄ := by
+  unfold put_if; split <;> step*
+
+@[step] theorem put_dec_if_total (o : Slice U8) (pos : Usize) (c : Bool) (n : U32) :
+    put_dec_if o pos c n ⦃ _ _ => True ⦄ := by
+  unfold put_dec_if; split <;> step*
+
+@[step] theorem end_head_total (out : Slice U8) (pos : Usize) : end_head out pos ⦃ _ _ => True ⦄ := by
+  unfold end_head; step*
+
+/-- The bytes of `s`, as `parse_head`'s proofs read a buffer. -/
+abbrev G (s : Slice U8) : Nat → Nat := fun k => (B s.val).getD k 0
+
+theorem reads_self (s : Slice U8) : Reads s (G s) s.length := by
+  refine ⟨le_refl _, fun k hk _ => ?_⟩
+  simp [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hk]
+
+
+
+theorem put_if_W (o out : Slice U8) (bs : List Nat) (pos : Usize) (c : Bool) (src : Slice U8)
+    (hW : W o out bs) (hp : pos.val = bs.length) :
+    put_if o pos c src ⦃ r o' => match r with
+      | none => True
+      | some p => p.val = (bs ++ (if c then B src.val else [])).length ∧
+          W o' out (bs ++ (if c then B src.val else [])) ⦄ := by
+  unfold put_if
+  split
+  · apply WP.spec_mono (put_W o out bs pos src hW hp)
+    rintro ⟨r, o'⟩ h
+    cases r with
+    | none => trivial
+    | some p => simp only [if_true, List.length_append, B, List.length_map] at h ⊢; exact ⟨by simpa [Slice.length] using h.1, h.2⟩
+  · simp only [WP.spec_ok]; simp_all
+
+theorem put_dec_if_W (o out : Slice U8) (bs : List Nat) (pos : Usize) (c : Bool) (n : U32)
+    (hW : W o out bs) (hp : pos.val = bs.length) :
+    put_dec_if o pos c n ⦃ r o' => match r with
+      | none => True
+      | some p => p.val = (bs ++ (if c then Spec.dec n.val else [])).length ∧
+          W o' out (bs ++ (if c then Spec.dec n.val else [])) ⦄ := by
+  unfold put_dec_if
+  split
+  · apply WP.spec_mono (put_dec_W o out bs pos n hW hp)
+    rintro ⟨r, o'⟩ h
+    cases r with
+    | none => trivial
+    | some p => simp only [if_true, List.length_append] at h ⊢; exact h
+  · simp only [WP.spec_ok]; simp_all
+
+theorem put_W' (o out : Slice U8) (bs : List Nat) (pos : Usize) (src : Slice U8)
+    (hW : W o out bs) (hp : pos.val = bs.length) :
+    put o pos src ⦃ r o' => match r with
+      | none => True
+      | some p => p.val = (bs ++ B src.val).length ∧ W o' out (bs ++ B src.val) ⦄ := by
+  apply WP.spec_mono (put_W o out bs pos src hW hp)
+  rintro ⟨r, o'⟩ h
+  cases r with
+  | none => trivial
+  | some p => exact ⟨by simpa [Slice.length] using h.1, h.2⟩
+
+theorem put1_W' (o out : Slice U8) (bs : List Nat) (pos : Usize) (b : U8)
+    (hW : W o out bs) (hp : pos.val = bs.length) :
+    put1 o pos b ⦃ r o' => match r with
+      | none => True
+      | some p => p.val = (bs ++ [b.val]).length ∧ W o' out (bs ++ [b.val]) ⦄ := by
+  apply WP.spec_mono (put1_W o out bs pos b hW hp)
+  rintro ⟨r, o'⟩ h
+  cases r with
+  | none => trivial
+  | some p => exact ⟨by simpa using h.1, h.2⟩
+
+theorem put_reason_W' (o out : Slice U8) (bs : List Nat) (pos : Usize) (status : U16)
+    (hW : W o out bs) (hp : pos.val = bs.length) :
+    put_reason o pos status ⦃ r o' => match r with
+      | none => True
+      | some p => p.val = (bs ++ Spec.reasonOf status.val).length ∧ W o' out (bs ++ Spec.reasonOf status.val) ⦄ := by
+  apply WP.spec_mono (put_reason_W o out bs pos status hW hp)
+  rintro ⟨r, o'⟩ h
+  cases r with
+  | none => trivial
+  | some p => exact ⟨by simpa using h.1, h.2⟩
+
+/-- Open the `match` on a writer's result: `none` ends the chain, `some p`
+continues at `p` with the bytes written so far. -/
+theorem W_match {out o' : Slice U8} {bs : List Nat} {r : Option Usize}
+    {k : Usize → Result (Option Usize × Slice U8)} {Q : Option Usize × Slice U8 → Prop}
+    (h : match r with | none => True | some p => p.val = bs.length ∧ W o' out bs)
+    (hQ : Q (none, o'))
+    (hk : ∀ p : Usize, p.val = bs.length → W o' out bs → k p ⦃ fun x => Q x ⦄) :
+    (match r with | none => ok (none, o') | some a => k a) ⦃ fun x => Q x ⦄ := by
+  cases r with
+  | none => simpa using hQ
+  | some p => exact hk p h.1 h.2
+
+attribute [local step] put_W' put1_W' put_if_W put_dec_if_W put_reason_W' in
+set_option maxHeartbeats 4000000 in
+/-- What `write_head_open` checks and writes. On `some p`: the status is in
+100..=599, the content type is field-value bytes, and the buffer holds
+`Spec.renderOpen` and then the bytes it held after; `p` is its end. -/
+theorem write_head_open_spec (out : Slice U8) (status : U16) (ct : Slice U8) (bl : U32) (close : Bool) :
+    write_head_open out status ct bl close ⦃ r o => match r with
+      | none => True
+      | some p => 100 ≤ status.val ∧ status.val ≤ 599 ∧
+          Spec.allIn Spec.isFieldByte (G ct) 0 ct.length = true ∧
+          p.val = (Spec.renderOpen status.val (B ct.val) bl.val close).length ∧
+          W o out (Spec.renderOpen status.val (B ct.val) bl.val close) ⦄ := by
+  unfold write_head_open field_bytes
+  have hR := reads_self ct
+  have hW0 := W.refl out
+  split; · simp
+  split; · simp
+  rename_i hlo hhi
+  step
+  split
+  swap; · simp
+  rename_i hfb
+  have hfb2 : Spec.allIn Spec.isFieldByte (G ct) 0 ct.length = true := by
+    rw [← Slice.len_val, ← hfb]; exact (by assumption : _ = _).symm
+  repeat (first
+    | (apply W_match (by assumption) (by simp); intro _ hp hW)
+    | step)
+  rcases x with ⟨r, o'⟩
+  cases r with
+  | none => trivial
+  | some p =>
+  simp only at x_post
+  dsimp only
+  obtain ⟨hpv, hWf⟩ := x_post
+  refine ⟨by scalar_tac, by scalar_tac, hfb2, ?_⟩
+  suffices hX : _ = Spec.renderOpen status.val (B ct.val) bl.val close by
+    rw [← hX]; exact ⟨hpv, hWf⟩
+  have hct : (decide (ct.len > 0#usize) = true) ↔ ¬ (B ct.val = []) := by
+    have hl := Slice.len_val ct
+    simp only [Slice.length] at hl
+    simp only [decide_eq_true_eq, B, List.map_eq_nil_iff, ← List.length_eq_zero_iff]
+    constructor <;> intro h <;> scalar_tac
+  have hs : status.val ≤ 599 := by scalar_tac
+  have h2 : i2.val < 6 := by omega
+  have h6 : i6.val < 10 := by scalar_tac
+  have h9 : i9.val < 10 := by scalar_tac
+  have e3 : i3.val = i2.val := by rw [i3_post]; simp; omega
+  have e7 : i7.val = i6.val := by rw [i7_post]; simp; omega
+  have e10 : i10.val = i9.val := by rw [i10_post]; simp; omega
+  subst_vars
+  simp only [Spec.renderOpen, List.nil_append, List.append_assoc, i4_post, i8_post, i11_post, e3, e7, e10,
+    i2_post, i6_post, i5_post, i9_post, sp_val]
+  by_cases hc : B ct.val = []
+  · rw [if_neg (by rw [hct]; simpa using hc), if_neg (by rw [hct]; simpa using hc), if_pos hc, if_pos hc, hc]
+    cases Spec.hasBody status.val <;> cases close <;>
+      simp only [List.append_assoc, List.nil_append, List.append_nil, ↓reduceIte, Bool.false_eq_true] <;> rfl
+  · rw [if_pos (by rw [hct]; exact hc), if_pos (by rw [hct]; exact hc), if_neg hc, if_neg hc]
+    cases Spec.hasBody status.val <;> cases close <;>
+      simp only [List.append_assoc, List.nil_append, List.append_nil, ↓reduceIte, Bool.false_eq_true] <;> rfl
+
+/-- `write_head_open` never panics, for every buffer (of any length), status,
+content type and body length. -/
+theorem write_head_open_total (out : Slice U8) (status : U16) (ct : Slice U8) (bl : U32) (close : Bool) :
+    write_head_open out status ct bl close ⦃ _ _ => True ⦄ :=
+  WP.spec_mono (write_head_open_spec out status ct bl close) (fun _ _ => trivial)
+
+/-- `end_head` writes CRLF after what is already written. -/
+theorem end_head_W (o out : Slice U8) (bs : List Nat) (pos : Usize)
+    (hW : W o out bs) (hp : pos.val = bs.length) :
+    end_head o pos ⦃ r o' => match r with
+      | none => True
+      | some p => p.val = (bs ++ [13, 10]).length ∧ W o' out (bs ++ [13, 10]) ⦄ := by
+  unfold end_head
+  step
+  apply WP.spec_mono (put_W' o out bs pos s hW hp)
+  rintro ⟨r, o'⟩ h
+  have hs : B s.val = [13, 10] := by rw [s_post]; rfl
+  rw [hs] at h; exact h
+
+/-- What `write_head` checks and writes. On `some p`: the status is in
+100..=599, the content type is field-value bytes, and the buffer starts with
+exactly `Spec.renderHead`, `p` bytes long; the bytes after it are unchanged. -/
+theorem write_head_spec (out : Slice U8) (status : U16) (ct : Slice U8) (bl : U32) (close : Bool) :
+    write_head out status ct bl close ⦃ r o => match r with
+      | none => True
+      | some p => 100 ≤ status.val ∧ status.val ≤ 599 ∧
+          Spec.allIn Spec.isFieldByte (G ct) 0 ct.length = true ∧
+          p.val = (Spec.renderHead status.val (B ct.val) bl.val close).length ∧
+          W o out (Spec.renderHead status.val (B ct.val) bl.val close) ⦄ := by
+  unfold write_head
+  step with write_head_open_spec
+  cases o with
+  | none => simp
+  | some a =>
+    obtain ⟨h1, h2, h3, ha, hW⟩ := o_post
+    apply WP.spec_mono (end_head_W out1 out _ a hW ha)
+    rintro ⟨r, o'⟩ h
+    have hr : Spec.renderHead status.val (B ct.val) bl.val close =
+        Spec.renderOpen status.val (B ct.val) bl.val close ++ [13, 10] := by
+      simp [Spec.renderHead, Spec.renderHeadWith]
+    cases r with
+    | none => trivial
+    | some p => rw [hr]; exact ⟨h1, h2, h3, h.1, h.2⟩
+
 /-- `write_head` never panics, for every buffer (of any length), status,
 content type and body length. -/
 theorem write_head_total (out : Slice U8) (status : U16) (ct : Slice U8) (bl : U32) (close : Bool) :
-    write_head out status ct bl close ⦃ _ _ => True ⦄ := by
-  unfold write_head
-  have hR : Reads ct (fun k => (B ct.val).getD k 0) ct.length := by
-    refine ⟨le_refl _, fun k hk _ => ?_⟩
-    simp [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hk]
+    write_head out status ct bl close ⦃ _ _ => True ⦄ :=
+  WP.spec_mono (write_head_spec out status ct bl close) (fun _ _ => trivial)
+
+def litContentType : List Nat := [99, 111, 110, 116, 101, 110, 116, 45, 116, 121, 112, 101]
+def litConnection : List Nat := [99, 111, 110, 110, 101, 99, 116, 105, 111, 110]
+def litTrailer : List Nat := [116, 114, 97, 105, 108, 101, 114]
+def litUpgrade : List Nat := [117, 112, 103, 114, 97, 100, 101]
+
+theorem lit_ct : B (Array.to_slice (Array.make 12#usize [99#u8, 111#u8, 110#u8, 116#u8, 101#u8, 110#u8, 116#u8,
+    45#u8, 116#u8, 121#u8, 112#u8, 101#u8])).val = litContentType := by rfl
+theorem lit_conn : B (Array.to_slice (Array.make 10#usize [99#u8, 111#u8, 110#u8, 110#u8, 101#u8, 99#u8, 116#u8,
+    105#u8, 111#u8, 110#u8])).val = litConnection := by rfl
+theorem lit_trailer : B (Array.to_slice (Array.make 7#usize [116#u8, 114#u8, 97#u8, 105#u8, 108#u8, 101#u8,
+    114#u8])).val = litTrailer := by rfl
+theorem lit_upgrade : B (Array.to_slice (Array.make 7#usize [117#u8, 112#u8, 103#u8, 114#u8, 97#u8, 100#u8,
+    101#u8])).val = litUpgrade := by rfl
+
+/-- The names `write_field` refuses, ignoring case. -/
+def reservedSpec (g : Nat → Nat) (n : Nat) : Bool :=
+  Spec.eqCi g 0 n Spec.litContentLength || Spec.eqCi g 0 n Spec.litTransferEncoding ||
+  Spec.eqCi g 0 n litContentType || Spec.eqCi g 0 n litConnection ||
+  Spec.eqCi g 0 n litTrailer || Spec.eqCi g 0 n litUpgrade
+
+@[step] theorem reserved_name_spec (nm : Slice U8) :
+    reserved_name nm ⦃ r => r = reservedSpec (G nm) nm.length ⦄ := by
+  unfold reserved_name reservedSpec
+  have hR := reads_self nm
   step*
-  all_goals (try (split <;> step*))
-  all_goals (try (split <;> step*))
-  all_goals (try (split <;> step*))
-  all_goals (try (split <;> step*))
-  all_goals (try (split <;> step*))
-  all_goals (try (split <;> step*))
+  all_goals (subst_vars; simp only [lit_cl, lit_te, lit_ct, lit_conn, lit_trailer, lit_upgrade, Slice.len_val] at *)
+  all_goals simp_all
+
+
+theorem allIn_of_scan (p : Nat → Bool) (g : Nat → Nat) (i e : Nat) (h : Spec.scan p g i e = e) :
+    Spec.allIn p g i e = true := by
+  rw [Spec.scan] at h
+  rw [Spec.allIn]
+  split
+  · rename_i h1
+    rw [if_pos h1] at h
+    split
+    · rename_i h2
+      rw [if_pos h2] at h
+      exact allIn_of_scan p g (i + 1) e h
+    · rename_i h2
+      rw [if_neg h2] at h
+      omega
+  · rfl
+termination_by e - i
+
+@[step] theorem is_token_spec (buf : Slice U8) :
+    is_token buf ⦃ r => r = true → 0 < buf.length ∧ Spec.allIn Spec.isTchar (G buf) 0 buf.length = true ⦄ := by
+  unfold is_token
+  have hR := reads_self buf
+  step*
+  intro h
+  have he : i2 = buf.len := of_decide_eq_true h
+  rename_i hpos
+  have h0 : 0 < buf.len.val := by clear hR i2_post; scalar_tac
+  rw [Slice.len_val] at h0
+  refine ⟨h0, ?_⟩
+  apply allIn_of_scan
+  have := i2_post
+  rw [he, Slice.len_val] at this
+  exact this.symm
+
+/-- What `write_field` checks and writes. On `some p`: the name is a non-empty
+token and not one of the reserved names, the value is field-value bytes that
+neither start nor end with SP or HTAB, and the buffer holds what it held
+before, then `name: value` CRLF, then the bytes it held after; `p` is the end
+of the field. So the field cannot end the head, add a second field or change
+the framing. -/
+theorem write_field_spec (o out : Slice U8) (bs : List Nat) (pos : Usize) (nm value : Slice U8)
+    (hW : W o out bs) (hp : pos.val = bs.length) :
+    write_field o pos nm value ⦃ r o' => match r with
+      | none => True
+      | some p => 0 < nm.length ∧ Spec.allIn Spec.isTchar (G nm) 0 nm.length = true ∧
+          reservedSpec (G nm) nm.length = false ∧
+          Spec.allIn Spec.isFieldByte (G value) 0 value.length = true ∧
+          (0 < value.length → Spec.isOws (G value 0) = false ∧ Spec.isOws (G value (value.length - 1)) = false) ∧
+          p.val = bs.length + nm.length + 2 + value.length + 2 ∧
+          W o' out (bs ++ B nm.val ++ [58, 32] ++ B value.val ++ [13, 10]) ⦄ := by
+  unfold write_field
+  have hRn := reads_self nm
+  have hRv := reads_self value
+  step with is_token_spec nm
+  split
+  · rename_i htok
+    step with reserved_name_spec nm
+    split
+    · simp
+    · rename_i hres
+      unfold field_bytes
+      step with field_bytes_loop_spec value value.len 0#usize (G value) value.length hRv (by rw [Slice.len_val])
+      split
+      · rename_i hfb
+        split
+        · step
+          step
+          split
+          · simp
+          rename_i hb3
+          step
+          step
+          step
+          split
+          · simp
+          rename_i hb4
+          step with put_W o out bs pos nm hW hp
+          split
+          · simp
+          rename_i _ a0
+          simp only at o_post
+          obtain ⟨ha0, hW1⟩ := o_post
+          step
+          step with put_W out1 out (bs ++ B nm.val) a0 s hW1 (by rw [ha0]; simp)
+          split
+          · simp
+          rename_i _ a1'
+          simp only at o1_post
+          obtain ⟨ha1, hW2⟩ := o1_post
+          step with put_W out2 out (bs ++ B nm.val ++ B s.val) a1' value hW2 (by rw [ha1]; simp; omega)
+          split
+          · simp
+          rename_i _ a2'
+          simp only at o2_post
+          obtain ⟨ha2, hW3⟩ := o2_post
+          step
+          step with put_W out3 out (bs ++ B nm.val ++ B s.val ++ B value.val) a2' s1 hW3 (by rw [ha2]; simp; omega)
+          have hs : B s.val = [58, 32] := by rw [s_post]; rfl
+          have hs1 : B s1.val = [13, 10] := by rw [s1_post]; rfl
+          have hsl : s.length = 2 := by have := congrArg List.length hs; simpa [B] using this
+          have hs1l : s1.length = 2 := by have := congrArg List.length hs1; simpa [B] using this
+          cases r with
+          | none => trivial
+          | some p =>
+            obtain ⟨hp4, hW4⟩ := r_post
+            rw [hs, hs1] at hW4
+            obtain ⟨hn0, htk⟩ := b_post htok
+            refine ⟨hn0, htk, ?_, ?_, ?_, ?_, ?_⟩
+            · rw [← b1_post]; simpa using hres
+            · rw [← Slice.len_val, ← b2_post]; exact hfb
+            · intro _
+              have g0 : G value 0 = i2.val := by
+                simp only [G, B, List.getD_eq_getElem?_getD, i2_post, List.getElem?_map]
+                rw [List.getElem?_eq_getElem]; rfl
+              have g1 : G value (value.length - 1) = i5.val := by
+                have hi4 : i4.val = value.length - 1 := by rw [i4_post, Slice.len_val]
+                simp only [G, B, List.getD_eq_getElem?_getD, i5_post, List.getElem?_map, ← hi4]
+                rw [List.getElem?_eq_getElem]; rfl
+              rw [g0, g1, ← b3_post, ← b4_post]
+              exact ⟨by simpa using hb3, by simpa using hb4⟩
+            · rw [hp4]; simp only [List.length_append, B, List.length_map, hsl, hs1l, Slice.length]
+            · simpa only [List.append_assoc] using hW4
+        · rename_i hlen
+          step with put_W o out bs pos nm hW hp
+          split
+          · simp
+          rename_i _ a0
+          simp only at o_post
+          obtain ⟨ha0, hW1⟩ := o_post
+          step
+          step with put_W out1 out (bs ++ B nm.val) a0 s hW1 (by rw [ha0]; simp)
+          split
+          · simp
+          rename_i _ a1'
+          simp only at o1_post
+          obtain ⟨ha1, hW2⟩ := o1_post
+          step with put_W out2 out (bs ++ B nm.val ++ B s.val) a1' value hW2 (by rw [ha1]; simp; omega)
+          split
+          · simp
+          rename_i _ a2'
+          simp only at o2_post
+          obtain ⟨ha2, hW3⟩ := o2_post
+          step
+          step with put_W out3 out (bs ++ B nm.val ++ B s.val ++ B value.val) a2' s1 hW3 (by rw [ha2]; simp; omega)
+          have hs : B s.val = [58, 32] := by rw [s_post]; rfl
+          have hs1 : B s1.val = [13, 10] := by rw [s1_post]; rfl
+          have hsl : s.length = 2 := by have := congrArg List.length hs; simpa [B] using this
+          have hs1l : s1.length = 2 := by have := congrArg List.length hs1; simpa [B] using this
+          cases r with
+          | none => trivial
+          | some p =>
+            obtain ⟨hp4, hW4⟩ := r_post
+            rw [hs, hs1] at hW4
+            obtain ⟨hn0, htk⟩ := b_post htok
+            refine ⟨hn0, htk, ?_, ?_, ?_, ?_, ?_⟩
+            · rw [← b1_post]; simpa using hres
+            · rw [← Slice.len_val, ← b2_post]; exact hfb
+            · intro h0
+              exfalso
+              have : value.len.val = 0 := by scalar_tac
+              rw [Slice.len_val] at this
+              omega
+            · rw [hp4]; simp only [List.length_append, B, List.length_map, hsl, hs1l, Slice.length]
+            · simpa only [List.append_assoc] using hW4
+      · simp
+  · simp
+
+/-- `write_field` never panics, for every buffer, position, name and value. -/
+theorem write_field_total (out : Slice U8) (pos : Usize) (nm value : Slice U8) :
+    write_field out pos nm value ⦃ _ _ => True ⦄ := by
+  unfold write_field field_bytes
+  have hRn := reads_self nm
+  have hRv := reads_self value
+  step*
+
+/-- The pieces compose: `W` after `write_head_open` (`renderOpen`), each
+`write_field` (`renderField`), and `end_head` (CRLF) is `renderHeadWith` of
+the fields written. -/
+theorem renderHeadWith_snoc (status : Nat) (ct : List Nat) (bl : Nat) (close : Bool)
+    (fs : List (List Nat × List Nat)) (f : List Nat × List Nat) :
+    Spec.renderOpen status ct bl close ++ ((fs ++ [f]).map Spec.renderField).flatten =
+      Spec.renderOpen status ct bl close ++ (fs.map Spec.renderField).flatten ++ f.1 ++ [58, 32] ++ f.2 ++ [13, 10] := by
+  simp [Spec.renderField, List.append_assoc]
+
+theorem renderHeadWith_eq (status : Nat) (ct : List Nat) (bl : Nat) (close : Bool)
+    (fs : List (List Nat × List Nat)) :
+    Spec.renderHeadWith status ct bl close fs =
+      Spec.renderOpen status ct bl close ++ (fs.map Spec.renderField).flatten ++ [13, 10] := rfl
 
 end h5i_app_h1.Proofs

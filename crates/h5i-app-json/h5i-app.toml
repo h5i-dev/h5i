@@ -2,4 +2,4 @@
 
 [extract]
 crate = "."
-start-from = ["write"]
+start-from = ["write", "slice::put_str", "slice::put_key", "slice::put_dec"]
