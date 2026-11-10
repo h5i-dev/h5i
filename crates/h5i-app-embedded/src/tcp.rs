@@ -125,7 +125,15 @@ mod tests {
                 for path in ["/hello", "/hello/no"] {
                     let (mut srx, mut stx) = ([0u8; 1024], [0u8; 1024]);
                     let mut s = TcpSocket::new(cli, &mut srx, &mut stx);
-                    s.connect(IpEndpoint::new(Ipv4Address::new(10, 0, 0, 1).into(), 80)).await.unwrap();
+                    // One listener: between connections it is closing the
+                    // last socket and not yet accepting, so a SYN then gets
+                    // a reset. Retry, as a client of `serve_tcp` must.
+                    let mut tries = 0;
+                    while let Err(e) = s.connect(IpEndpoint::new(Ipv4Address::new(10, 0, 0, 1).into(), 80)).await {
+                        tries += 1;
+                        assert!(tries < 50, "connect {path}: {e:?}");
+                        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    }
                     let req = std::format!("GET {path} HTTP/1.1\r\nHost: d\r\nConnection: close\r\n\r\n");
                     s.write_all(req.as_bytes()).await.unwrap();
                     let mut v = Vec::new();
