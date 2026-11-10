@@ -1028,3 +1028,231 @@ mod kernel_binding {
         });
     }
 }
+
+/// The same pipelined stream, read whole or in random pieces, gets the same
+/// responses, and each request starts exactly at the previous one's `used`.
+mod segmentation {
+    use super::*;
+    use core::cell::RefCell;
+
+    /// splitmix64: deterministic, no dependency.
+    struct Rng(u64);
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
+            let mut z = self.0;
+            z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+            z ^ (z >> 31)
+        }
+        /// In `lo..=hi`.
+        fn range(&mut self, lo: usize, hi: usize) -> usize {
+            lo + (self.next() % (hi - lo + 1) as u64) as usize
+        }
+    }
+
+    /// What the handler saw: `raw` is `rx[..used]`, `head` its first
+    /// `head.len` bytes.
+    #[derive(Debug, PartialEq)]
+    struct Seen {
+        used: usize,
+        head: Vec<u8>,
+        body: Vec<u8>,
+        /// `raw` itself, kept only when the body is not chunked (a chunked
+        /// body is decoded in place).
+        raw: Option<Vec<u8>>,
+    }
+
+    async fn record(req: &Request<'_>, log: &RefCell<Vec<Seen>>, out: &mut [u8]) -> Response {
+        let chunked = req.head().framing == h1::Framing::Chunked;
+        log.borrow_mut().push(Seen {
+            used: req.raw.len(),
+            head: req.raw[..req.head().len].to_vec(),
+            body: req.body.to_vec(),
+            raw: (!chunked).then(|| req.raw.to_vec()),
+        });
+        Response::bytes(out, 200, b"application/octet-stream", req.body)
+    }
+
+    /// One request: its wire bytes, head length and decoded body.
+    struct Req {
+        wire: Vec<u8>,
+        head_len: usize,
+        body: Vec<u8>,
+        chunked: bool,
+        close: bool,
+    }
+
+    fn body_bytes(rng: &mut Rng, n: usize) -> Vec<u8> {
+        // Framing look-alikes on purpose: CR, LF, hex digits, a request line.
+        const ALPHA: &[u8] = b"\r\n0123456789abcdefABCDEF;: GET / HTTP/1.1\r\n\r\nxyz";
+        (0..n).map(|_| ALPHA[rng.range(0, ALPHA.len() - 1)]).collect()
+    }
+
+    fn hex(rng: &mut Rng, n: usize) -> Vec<u8> {
+        let mut s = std::format!("{n:x}");
+        if rng.range(0, 1) == 1 {
+            s = s.to_uppercase();
+        }
+        // Up to two leading zeros (sizes here have at most two digits; the
+        // limit is eight).
+        let mut v = std::vec![b'0'; rng.range(0, 2)];
+        v.extend_from_slice(s.as_bytes());
+        v
+    }
+
+    fn request(rng: &mut Rng, i: usize, close: bool) -> Req {
+        let kind = rng.range(0, 2);
+        let mut head = match kind {
+            0 => std::format!("GET /r/{i} HTTP/1.1\r\nHost: d\r\n"),
+            _ => std::format!("POST /r/{i} HTTP/1.1\r\nHost: d\r\n"),
+        }
+        .into_bytes();
+        if rng.range(0, 1) == 1 {
+            head.extend_from_slice(b"X-Pad: ");
+            let n = rng.range(0, 60);
+            head.extend((0..n).map(|k| b'a' + (k % 26) as u8));
+            head.extend_from_slice(b"\r\n");
+        }
+        if close {
+            head.extend_from_slice(b"Connection: close\r\n");
+        }
+        let body = if kind == 0 { Vec::new() } else {
+            let len = rng.range(0, 120);
+            body_bytes(rng, len)
+        };
+        let mut tail = Vec::new();
+        match kind {
+            0 => {}
+            1 => head.extend_from_slice(std::format!("Content-Length: {}\r\n", body.len()).as_bytes()),
+            _ => {
+                head.extend_from_slice(b"Transfer-Encoding: chunked\r\n");
+                let mut at = 0;
+                while at < body.len() {
+                    let n = rng.range(1, 30).min(body.len() - at);
+                    tail.extend(hex(rng, n));
+                    tail.extend_from_slice(b"\r\n");
+                    tail.extend_from_slice(&body[at..at + n]);
+                    tail.extend_from_slice(b"\r\n");
+                    at += n;
+                }
+                tail.extend(hex(rng, 0));
+                tail.extend_from_slice(b"\r\n\r\n");
+            }
+        }
+        head.extend_from_slice(b"\r\n");
+        let head_len = head.len();
+        let mut wire = head;
+        if kind == 1 {
+            wire.extend_from_slice(&body);
+        }
+        wire.extend(tail);
+        Req { wire, head_len, body, chunked: kind == 2, close }
+    }
+
+    /// Reads of the sizes `sizes` picks (or as much as fits, when `None`).
+    struct Script<'a> {
+        input: &'a [u8],
+        at: usize,
+        sizes: Option<(Rng, usize)>,
+        out: Vec<u8>,
+    }
+    impl embedded_io_async::ErrorType for Script<'_> {
+        type Error = core::convert::Infallible;
+    }
+    impl embedded_io_async::Read for Script<'_> {
+        async fn read(&mut self, b: &mut [u8]) -> Result<usize, Self::Error> {
+            let want = match &mut self.sizes {
+                Some((rng, max)) => rng.range(1, *max),
+                None => b.len(),
+            };
+            let n = want.min(b.len()).min(self.input.len() - self.at);
+            b[..n].copy_from_slice(&self.input[self.at..self.at + n]);
+            self.at += n;
+            Ok(n)
+        }
+    }
+    impl embedded_io_async::Write for Script<'_> {
+        async fn write(&mut self, b: &[u8]) -> Result<usize, Self::Error> {
+            self.out.extend_from_slice(b);
+            Ok(b.len())
+        }
+        async fn flush(&mut self) -> Result<(), Self::Error> {
+            Ok(())
+        }
+    }
+
+    /// Serve `input` read as `sizes` says: what was written, what the
+    /// handler saw, and `serve`'s result.
+    fn serve_script(input: &[u8], sizes: Option<(Rng, usize)>) -> (Vec<u8>, Vec<Seen>, u32) {
+        let log = RefCell::new(Vec::new());
+        let router = Router::new().get(b"/r/{i}", record).post(b"/r/{i}", record);
+        let mut io = Script { input, at: 0, sizes, out: Vec::new() };
+        let mut rx = [0u8; 2048];
+        let mut tx = [0u8; 1024];
+        let served = block_on(serve(&Config::default(), &router, &log, &mut rx, &mut tx, &mut io, &NoBound)).unwrap();
+        (io.out, log.into_inner(), served)
+    }
+
+    fn response(body: &[u8], close: bool) -> Vec<u8> {
+        let mut v = std::format!("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\n", body.len())
+            .into_bytes();
+        if close {
+            v.extend_from_slice(b"Connection: close\r\n");
+        }
+        v.extend_from_slice(b"\r\n");
+        v.extend_from_slice(body);
+        v
+    }
+
+    #[test]
+    fn random_read_sizes_change_nothing() {
+        let mut kinds = [0usize; 3];
+        for seed in 0..300u64 {
+            let mut rng = Rng(seed);
+            let n = rng.range(1, 12);
+            // Ends with: EOF, a `Connection: close`, or a malformed request.
+            let ending = rng.range(0, 2);
+            let reqs: Vec<Req> = (0..n).map(|i| request(&mut rng, i, ending == 1 && i == n - 1)).collect();
+            let mut input: Vec<u8> = reqs.iter().flat_map(|r| r.wire.iter().copied()).collect();
+            if ending == 2 {
+                input.extend_from_slice(b"POST /r/x HTTP/1.1\r\nHost: d\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabcX\r\n");
+            }
+            // The tail after a `close` request is never read as a request.
+            if ending == 1 {
+                input.extend_from_slice(b"GET /r/after HTTP/1.1\r\nHost: d\r\n\r\n");
+            }
+            for r in &reqs {
+                kinds[if r.chunked { 2 } else if r.body.is_empty() && r.wire.len() == r.head_len { 0 } else { 1 }] += 1;
+            }
+
+            let mut want: Vec<u8> = reqs.iter().flat_map(|r| response(&r.body, r.close)).collect();
+            let (whole, seen, served) = serve_script(&input, None);
+            if ending == 2 {
+                let rest = &whole[want.len().min(whole.len())..];
+                assert!(rest.starts_with(b"HTTP/1.1 400 ") && rest.ends_with(b"Connection: close\r\n\r\n"), "seed {seed}");
+                want = whole.clone();
+            }
+            assert_eq!(whole, want, "seed {seed}: whole read");
+            assert_eq!(served as usize, n, "seed {seed}");
+            assert_eq!(seen.len(), n, "seed {seed}");
+            for (k, (s, r)) in seen.iter().zip(&reqs).enumerate() {
+                assert_eq!(s.used, r.wire.len(), "seed {seed} req {k}: used");
+                assert_eq!(s.head, r.wire[..r.head_len], "seed {seed} req {k}: head");
+                assert_eq!(s.body, r.body, "seed {seed} req {k}: body");
+                if !r.chunked {
+                    assert_eq!(s.raw.as_deref(), Some(&r.wire[..]), "seed {seed} req {k}: raw");
+                }
+            }
+
+            for (j, max) in [1usize, 3, 17, 200, 2048].into_iter().enumerate() {
+                let sizes = Rng(seed * 31 + j as u64 + 1_000_000);
+                let (out, seen2, served2) = serve_script(&input, Some((sizes, max)));
+                assert_eq!(out, whole, "seed {seed} max {max}: responses differ");
+                assert_eq!(seen2, seen, "seed {seed} max {max}: requests differ");
+                assert_eq!(served2, served, "seed {seed} max {max}");
+            }
+        }
+        assert!(kinds.iter().all(|&k| k > 100), "{kinds:?}");
+    }
+}
