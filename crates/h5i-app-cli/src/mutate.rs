@@ -690,12 +690,7 @@ fn sandbox(p: &Project, name: &str) -> Result<Sandbox> {
         .map(|q| q.manifest_path.parent().unwrap().canonicalize())
         .collect::<std::io::Result<_>>()?;
     let proofs = p.proofs().canonicalize()?;
-    let mut anchor = p.root.clone();
-    for d in dirs.iter().chain([&proofs]) {
-        while !d.starts_with(&anchor) {
-            anchor = anchor.parent().context("no common ancestor")?.to_path_buf();
-        }
-    }
+    let anchor = anchor(&p.root, &dirs, &proofs)?;
     let safe: String = name
         .chars()
         .map(|c| if c.is_alphanumeric() { c } else { '-' })
@@ -747,6 +742,23 @@ fn sandbox(p: &Project, name: &str) -> Result<Sandbox> {
         project,
         log,
     })
+}
+
+/// The directory the copy mirrors: the deepest common ancestor of the
+/// project root, the crates and the proofs that is not itself a crate, since
+/// the copy's root gets the fresh workspace `Cargo.toml` (a kernel crate may
+/// be the project root, as in `h5i-app-h1`).
+fn anchor(root: &Path, dirs: &[PathBuf], proofs: &Path) -> Result<PathBuf> {
+    let mut anchor = root.to_path_buf();
+    for d in dirs.iter().map(PathBuf::as_path).chain([proofs]) {
+        while !d.starts_with(&anchor) {
+            anchor = anchor.parent().context("no common ancestor")?.to_path_buf();
+        }
+    }
+    while dirs.contains(&anchor) {
+        anchor = anchor.parent().context("crate at the filesystem root")?.to_path_buf();
+    }
+    Ok(anchor)
 }
 
 /// Dev-dependencies are never built here, but Cargo would still resolve them,
@@ -1401,6 +1413,31 @@ mod tests {
         std::fs::remove_dir_all(d.path().join("server")).unwrap();
         let p = Project::load(&d.path().join("h5i-app.toml")).unwrap();
         assert!(principal_mutant(&p, &files).unwrap().is_none());
+    }
+
+    #[test]
+    fn the_sandbox_keeps_a_root_crate_manifest() {
+        let d = tempfile::tempdir().unwrap();
+        let w = |f: &str, t: &str| {
+            let p = d.path().join(f);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, t).unwrap();
+        };
+        // The kernel crate is the project root, inside a workspace.
+        w("Cargo.toml", "[workspace]\nmembers = [\"k\"]\n[workspace.package]\nedition = \"2024\"\n");
+        w("k/Cargo.toml", "[package]\nname = \"k\"\nversion = \"0.1.0\"\nedition.workspace = true\n");
+        w("k/src/lib.rs", "pub fn f() {}\n");
+        w("k/h5i-app.toml", "[extract]\ncrate = \".\"\n");
+        std::fs::create_dir_all(d.path().join("k/proofs/.lake/packages")).unwrap();
+        let p = Project::load(&d.path().join("k/h5i-app.toml")).unwrap();
+        let s = sandbox(&p, "root-crate").unwrap();
+        let copy = &s.project.root;
+        let own = std::fs::read_to_string(copy.join("Cargo.toml")).unwrap();
+        assert!(own.contains("name = \"k\""), "{own}");
+        let ws = std::fs::read_to_string(copy.parent().unwrap().join("Cargo.toml")).unwrap();
+        assert!(ws.contains("members = [\"k\"]") && ws.contains("edition = \"2024\""), "{ws}");
+        assert!(copy.join("proofs/.lake/packages").exists());
+        util::metadata(copy, false).unwrap().package_at(copy).unwrap();
     }
 
     #[test]
