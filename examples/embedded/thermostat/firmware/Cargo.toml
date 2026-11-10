@@ -1,6 +1,6 @@
 [package]
 name = "thermostat-firmware"
-description = "The thermostat on an STM32F407 (stm32f4_discovery), serving HTTP over USART2; run in Renode"
+description = "The thermostat on an STM32F407 (stm32f4_discovery): HTTP over USART2, a TMP108 sensor, GPIO outputs, state in flash; run in Renode"
 edition = "2024"
 license = "Apache-2.0"
 version = "0.1.0"
@@ -11,6 +11,7 @@ publish = false
 
 [dependencies]
 thermostat-app = { path = "../app" }
+thermostat-kernel = { path = "../kernel" }
 h5i-app-embedded = { path = "../../../../crates/h5i-app-embedded" }
 cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
 cortex-m-rt = "0.7"
@@ -18,6 +19,9 @@ embassy-executor = { version = "0.10", features = ["platform-cortex-m", "executo
 embassy-stm32 = { version = "0.6", features = ["stm32f407vg", "memory-x", "rt", "time-driver-tim2", "exti"] }
 embassy-time = "0.5"
 panic-halt = "1"
+static_cell = "2"
+embedded-storage = "0.3"
+embedded-storage-async = "0.4"
 
 [profile.release]
 opt-level = "s"

@@ -3,10 +3,25 @@
 //!
 //! Escaping: `"` and `\` get a backslash, bytes below 0x20 become `\u00XX`,
 //! and all other bytes pass through. Valid UTF-8 in gives valid JSON out.
+//!
+//! `no_std`. The `Vec` writer ([`write`], [`Tok`], [`Value`]) needs the
+//! `alloc` feature (default); [`slice`] writes into a caller's buffer and
+//! needs nothing.
 
+#![no_std]
+
+#[cfg(feature = "alloc")]
+extern crate alloc;
+#[cfg(feature = "alloc")]
+use alloc::vec::Vec;
+
+pub mod slice;
+#[cfg(feature = "alloc")]
 mod value;
+#[cfg(feature = "alloc")]
 pub use value::Value;
 
+#[cfg(feature = "alloc")]
 /// One JSON token. A document is a sequence of them; commas and colons are
 /// added by `write`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -31,6 +46,7 @@ fn hex_digit(n: u8) -> u8 {
     }
 }
 
+#[cfg(feature = "alloc")]
 /// Appends one escaped byte.
 fn push_escaped_byte(out: &mut Vec<u8>, c: u8) {
     if c == 34 {
@@ -51,6 +67,7 @@ fn push_escaped_byte(out: &mut Vec<u8>, c: u8) {
     }
 }
 
+#[cfg(feature = "alloc")]
 /// Appends the escaped body of a JSON string (no quotes).
 pub fn push_escaped(out: &mut Vec<u8>, s: &Vec<u8>) {
     let mut i = 0;
@@ -60,6 +77,7 @@ pub fn push_escaped(out: &mut Vec<u8>, s: &Vec<u8>) {
     }
 }
 
+#[cfg(feature = "alloc")]
 /// Appends `n` in decimal, without leading zeros.
 pub fn push_dec(out: &mut Vec<u8>, n: u64) {
     let mut rev: Vec<u8> = Vec::new();
@@ -79,6 +97,7 @@ pub fn push_dec(out: &mut Vec<u8>, n: u64) {
     }
 }
 
+#[cfg(feature = "alloc")]
 fn ends_value(t: &Tok) -> bool {
     match t {
         Tok::Null => true,
@@ -91,6 +110,7 @@ fn ends_value(t: &Tok) -> bool {
     }
 }
 
+#[cfg(feature = "alloc")]
 fn is_close(t: &Tok) -> bool {
     match t {
         Tok::ArrClose => true,
@@ -99,6 +119,7 @@ fn is_close(t: &Tok) -> bool {
     }
 }
 
+#[cfg(feature = "alloc")]
 fn push_tok(out: &mut Vec<u8>, t: &Tok) {
     match t {
         Tok::Null => {
@@ -140,6 +161,7 @@ fn push_tok(out: &mut Vec<u8>, t: &Tok) {
     }
 }
 
+#[cfg(feature = "alloc")]
 /// Writes tokens as JSON text. A comma goes before any token that follows a
 /// complete value, except a closing bracket.
 pub fn write(toks: &Vec<Tok>) -> Vec<u8> {

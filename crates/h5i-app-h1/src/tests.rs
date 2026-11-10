@@ -241,3 +241,176 @@ fn response_head() {
     }
     assert_eq!(write_head(&mut out[..need], 200, b"", 5, false), Some(need));
 }
+
+#[test]
+fn extra_fields() {
+    let mut out = [0u8; 256];
+    let at = write_head_open(&mut out, 401, b"", 0, false).unwrap();
+    let at = write_field(&mut out, at, b"WWW-Authenticate", b"Bearer realm=\"d\"").unwrap();
+    let at = write_field(&mut out, at, b"Cache-Control", b"no-store").unwrap();
+    let n = end_head(&mut out, at).unwrap();
+    assert_eq!(
+        &out[..n],
+        b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nWWW-Authenticate: Bearer realm=\"d\"\r\nCache-Control: no-store\r\n\r\n"
+    );
+    // The same head as `write_head` when nothing is added.
+    let mut a = [0u8; 128];
+    let mut b = [0u8; 128];
+    let na = write_head(&mut a, 200, b"text/plain", 5, true).unwrap();
+    let ob = write_head_open(&mut b, 200, b"text/plain", 5, true).unwrap();
+    let nb = end_head(&mut b, ob).unwrap();
+    assert_eq!(&a[..na], &b[..nb]);
+}
+
+#[test]
+fn extra_fields_refused() {
+    let mut out = [0u8; 256];
+    let bad: &[(&[u8], &[u8])] = &[
+        (b"", b"x"),
+        (b"X Y", b"x"),
+        (b"X:", b"x"),
+        (b"Content-Length", b"0"),
+        (b"content-length", b"0"),
+        (b"Transfer-Encoding", b"chunked"),
+        (b"CONNECTION", b"keep-alive"),
+        (b"Content-Type", b"text/html"),
+        (b"Trailer", b"x"),
+        (b"Upgrade", b"websocket"),
+        (b"X", b"a\r\nSet-Cookie: s=1"),
+        (b"X", b"a\nb"),
+        (b"X", b"a\0b"),
+        (b"X", b" a"),
+        (b"X", b"a\t"),
+    ];
+    for (name, value) in bad {
+        assert_eq!(write_field(&mut out, 0, name, value), None, "{:?}", (name, value));
+    }
+    assert_eq!(write_field(&mut out, 0, b"X-Empty", b""), Some(11));
+    // Too small.
+    assert_eq!(write_field(&mut out[..10], 0, b"X-Empty", b""), None);
+    assert_eq!(write_field(&mut out, 250, b"X-Empty", b""), None);
+}
+
+/// `read_body` on a buffer that grows one byte per call, as the server's
+/// reads may deliver it.
+fn body_bytewise(msg: &[u8], start: usize, framing: Framing, max: u32) -> ([u8; 64], BodyOut) {
+    let mut whole = [0u8; 64];
+    whole[..msg.len()].copy_from_slice(msg);
+    let mut buf = whole;
+    let mut st = body_start(start);
+    for filled in start..=msg.len() {
+            let (s, out) = read_body(&mut buf[..msg.len()], filled, start, framing, st, max);
+        st = s;
+        if out != BodyOut::More {
+            return (buf, out);
+        }
+    }
+    (buf, BodyOut::More)
+}
+
+#[test]
+fn read_body_chunked_in_place() {
+    let msg = b"HEAD2\r\nab\r\n3\r\ncde\r\n0\r\n\r\nNEXT";
+    let (buf, out) = body_bytewise(msg, 4, Framing::Chunked, 1024);
+    let used = msg.len() - 4;
+    assert_eq!(out, BodyOut::Done(9, used));
+    assert_eq!(&buf[4..9], b"abcde");
+    assert_eq!(&buf[..4], b"HEAD");
+    assert_eq!(&buf[used..msg.len()], b"NEXT");
+}
+
+#[test]
+fn read_body_length_and_errors() {
+    let msg = b"HEADxyzREST";
+    assert_eq!(body_bytewise(msg, 4, Framing::Length(3), 1024).1, BodyOut::Done(7, 7));
+    assert_eq!(body_bytewise(msg, 4, Framing::Empty, 1024).1, BodyOut::Done(4, 4));
+    assert_eq!(body_bytewise(msg, 4, Framing::Length(8), 1024).1, BodyOut::Reject(413));
+    assert_eq!(body_bytewise(b"HEADzz\r\n", 4, Framing::Chunked, 1024).1, BodyOut::Reject(400));
+    assert_eq!(body_bytewise(b"HEAD10\r\n", 4, Framing::Chunked, 8).1, BodyOut::Reject(413));
+    let mut buf = *b"abcd";
+    let bad = BodyState { chunk: CHUNK_START, r: 1, w: 2 };
+    assert_eq!(crate::dechunk(&mut buf, 4, bad, 8).1, BodyOut::Reject(500));
+    assert_eq!(crate::dechunk(&mut buf, 5, body_start(0), 8).1, BodyOut::Reject(500));
+}
+
+/// Drive `recv_step` over `msg` arriving `step` bytes at a time into an
+/// `N`-byte buffer, closing after it if `close`.
+fn recv_bytewise<const N: usize>(msg: &[u8], step: usize, close: bool, lim: &Limits) -> ([u8; N], usize, Action) {
+    let mut rx = [0u8; N];
+    let mut filled = 0;
+    let mut at = 0;
+    let mut st = recv_start();
+    let mut eof = false;
+    loop {
+        let (s, a) = recv_step(st, &mut rx, filled, eof, lim);
+        st = s;
+        if a != Action::NeedRead {
+            return (rx, filled, a);
+        }
+        let n = step.min(msg.len() - at).min(rx.len() - filled);
+        if n == 0 {
+            if !close {
+                return (rx, filled, a);
+            }
+            eof = true;
+        }
+        rx[filled..filled + n].copy_from_slice(&msg[at..at + n]);
+        filled += n;
+        at += n;
+    }
+}
+
+#[test]
+fn recv_step_any_split() {
+    let msg = b"POST / HTTP/1.1\r\nHost: d\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nab\r\n0\r\n\r\nGET";
+    let mut first = None;
+    for step in 1..msg.len() + 1 {
+        let (rx, filled, a) = recv_bytewise::<128>(msg, step, false, &Limits { max_head: 64, max_body: 16 });
+        let Action::Ready(h, s, e, u) = a else { panic!("{step}: {a:?}") };
+        assert_eq!(&rx[s..e], b"ab");
+        assert_eq!(h.framing, Framing::Chunked);
+        // Everything after `used` is as received.
+        assert_eq!(&rx[u..filled], &msg[u..filled]);
+        let got = (s, e, u);
+        assert_eq!(*first.get_or_insert(got), got, "step {step}");
+    }
+    // Full before the head ends: 431; before the body ends: 413.
+    let big = b"GET / HTTP/1.1\r\nHost: d\r\nX: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\r\n\r\n";
+    assert_eq!(recv_bytewise::<64>(big, 7, true, &Limits { max_head: 1024, max_body: 16 }).2, Action::Reject(431));
+    let body = b"POST / HTTP/1.1\r\nHost: d\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n1\r\nb\r\n1\r\nc\r\n";
+    assert_eq!(recv_bytewise::<64>(body, 5, true, &Limits { max_head: 64, max_body: 1024 }).2, Action::Reject(413));
+    // Closed between requests, inside one, and a 400 on a partial head.
+    assert_eq!(recv_bytewise::<64>(b"", 1, true, &LIM).2, Action::Eof);
+    assert_eq!(recv_bytewise::<64>(b"GET / HT", 3, true, &LIM).2, Action::Reject(400));
+    assert_eq!(recv_bytewise::<64>(b"GET / HT", 3, false, &LIM).2, Action::NeedRead);
+}
+
+#[test]
+fn carry_and_limits() {
+    let mut rx = *b"0123456789";
+    assert_eq!(carry(&mut rx, 3, 7), 4);
+    assert_eq!(&rx[..4], b"3456");
+    assert_eq!(carry(&mut rx, 5, 4), 0);
+    assert_eq!(carry(&mut rx, 0, 11), 0);
+    let l = fit_limits(&Limits { max_head: 1024, max_body: 4096 }, 2048);
+    assert_eq!((l.max_head, l.max_body), (1024, 1024));
+    let l = fit_limits(&Limits { max_head: 4096, max_body: 4096 }, 2048);
+    assert_eq!((l.max_head, l.max_body), (2048, 0));
+}
+
+#[test]
+fn close_decision() {
+    let req = b"GET / HTTP/1.1\r\nHost: d\r\nConnection: keep-alive, Close \r\n\r\n";
+    let h = head(req);
+    assert!(wants_close(req, &h));
+    assert!(must_close(req, &h, 1, 100));
+    let req2 = b"GET / HTTP/1.1\r\nHost: d\r\nConnection: closed, x\r\n\r\n";
+    let h2 = head(req2);
+    assert!(!wants_close(req2, &h2));
+    assert!(!must_close(req2, &h2, 1, 100));
+    assert!(must_close(req2, &h2, 100, 100));
+    // Spans outside the buffer are no match, not a panic.
+    assert!(!wants_close(b"", &h));
+    let h10 = head(b"GET / HTTP/1.0\r\n\r\n");
+    assert!(must_close(b"", &h10, 1, 100));
+}

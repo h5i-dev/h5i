@@ -1,6 +1,8 @@
 //! A JSON tree for building replies. Not extracted; `tokens` is checked
 //! against serde_json by tests.
 
+use alloc::vec::Vec;
+
 use crate::Tok;
 
 #[derive(Clone, Debug, PartialEq, Eq)]

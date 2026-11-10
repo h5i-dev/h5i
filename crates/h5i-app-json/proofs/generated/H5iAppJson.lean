@@ -20,7 +20,7 @@ set_option maxRecDepth 2048
 namespace h5i_app_json
 
 /-- [h5i_app_json::Tok]
-    Source: 'crates/h5i-app-json/src/lib.rs', lines 13:0-24:1
+    Source: 'crates/h5i-app-json/src/lib.rs', lines 28:0-39:1
     Visibility: public -/
 @[discriminant isize]
 inductive Tok where
@@ -35,14 +35,14 @@ inductive Tok where
 | ObjClose : Tok
 
 /-- [h5i_app_json::hex_digit]:
-    Source: 'crates/h5i-app-json/src/lib.rs', lines 26:0-32:1 -/
+    Source: 'crates/h5i-app-json/src/lib.rs', lines 41:0-47:1 -/
 def hex_digit (n : Std.U8) : Result Std.U8 := do
   if n < 10#u8
   then 48#u8 + n
   else 87#u8 + n
 
 /-- [h5i_app_json::push_escaped_byte]:
-    Source: 'crates/h5i-app-json/src/lib.rs', lines 35:0-52:1 -/
+    Source: 'crates/h5i-app-json/src/lib.rs', lines 51:0-68:1 -/
 def push_escaped_byte
   (out : alloc.vec.Vec Std.U8) (c : Std.U8) :
   Result (alloc.vec.Vec Std.U8)
@@ -71,7 +71,7 @@ def push_escaped_byte
       else alloc.vec.Vec.push out c
 
 /-- [h5i_app_json::push_escaped]: loop body 0:
-    Source: 'crates/h5i-app-json/src/lib.rs', lines 57:4-60:5
+    Source: 'crates/h5i-app-json/src/lib.rs', lines 74:4-77:5
     Visibility: public -/
 @[rust_loop_body]
 def push_escaped_loop.body
@@ -90,7 +90,7 @@ def push_escaped_loop.body
   else ok (done out)
 
 /-- [h5i_app_json::push_escaped]: loop 0:
-    Source: 'crates/h5i-app-json/src/lib.rs', lines 57:4-60:5
+    Source: 'crates/h5i-app-json/src/lib.rs', lines 74:4-77:5
     Visibility: public -/
 @[rust_loop]
 def push_escaped_loop
@@ -102,7 +102,7 @@ def push_escaped_loop
     (out, i)
 
 /-- [h5i_app_json::push_escaped]:
-    Source: 'crates/h5i-app-json/src/lib.rs', lines 55:0-61:1
+    Source: 'crates/h5i-app-json/src/lib.rs', lines 72:0-78:1
     Visibility: public -/
 @[reducible]
 def push_escaped
@@ -112,7 +112,7 @@ def push_escaped
   push_escaped_loop out s 0#usize
 
 /-- [h5i_app_json::push_dec]: loop body 0:
-    Source: 'crates/h5i-app-json/src/lib.rs', lines 70:4-74:5
+    Source: 'crates/h5i-app-json/src/lib.rs', lines 88:4-92:5
     Visibility: public -/
 @[rust_loop_body]
 def push_dec_loop0.body
@@ -131,7 +131,7 @@ def push_dec_loop0.body
   else ok (done rev)
 
 /-- [h5i_app_json::push_dec]: loop 0:
-    Source: 'crates/h5i-app-json/src/lib.rs', lines 70:4-74:5
+    Source: 'crates/h5i-app-json/src/lib.rs', lines 88:4-92:5
     Visibility: public -/
 @[rust_loop]
 def push_dec_loop0
@@ -143,7 +143,7 @@ def push_dec_loop0
     (rev, m)
 
 /-- [h5i_app_json::push_dec]: loop body 1:
-    Source: 'crates/h5i-app-json/src/lib.rs', lines 76:4-79:5
+    Source: 'crates/h5i-app-json/src/lib.rs', lines 94:4-97:5
     Visibility: public -/
 @[rust_loop_body]
 def push_dec_loop1.body
@@ -161,7 +161,7 @@ def push_dec_loop1.body
   else ok (done out)
 
 /-- [h5i_app_json::push_dec]: loop 1:
-    Source: 'crates/h5i-app-json/src/lib.rs', lines 76:4-79:5
+    Source: 'crates/h5i-app-json/src/lib.rs', lines 94:4-97:5
     Visibility: public -/
 @[rust_loop]
 def push_dec_loop1
@@ -173,7 +173,7 @@ def push_dec_loop1
     (out, i)
 
 /-- [h5i_app_json::push_dec]:
-    Source: 'crates/h5i-app-json/src/lib.rs', lines 64:0-80:1
+    Source: 'crates/h5i-app-json/src/lib.rs', lines 82:0-98:1
     Visibility: public -/
 def push_dec
   (out : alloc.vec.Vec Std.U8) (n : Std.U64) :
@@ -189,7 +189,7 @@ def push_dec
   push_dec_loop1 out rev1 i2
 
 /-- [h5i_app_json::ends_value]:
-    Source: 'crates/h5i-app-json/src/lib.rs', lines 82:0-92:1 -/
+    Source: 'crates/h5i-app-json/src/lib.rs', lines 101:0-111:1 -/
 def ends_value (t : Tok) : Result Bool := do
   match t with
   | Tok.Null => ok true
@@ -203,7 +203,7 @@ def ends_value (t : Tok) : Result Bool := do
   | Tok.ObjClose => ok true
 
 /-- [h5i_app_json::is_close]:
-    Source: 'crates/h5i-app-json/src/lib.rs', lines 94:0-100:1 -/
+    Source: 'crates/h5i-app-json/src/lib.rs', lines 114:0-120:1 -/
 def is_close (t : Tok) : Result Bool := do
   match t with
   | Tok.Null => ok false
@@ -217,7 +217,7 @@ def is_close (t : Tok) : Result Bool := do
   | Tok.ObjClose => ok true
 
 /-- [h5i_app_json::push_tok]:
-    Source: 'crates/h5i-app-json/src/lib.rs', lines 102:0-141:1 -/
+    Source: 'crates/h5i-app-json/src/lib.rs', lines 123:0-162:1 -/
 def push_tok
   (out : alloc.vec.Vec Std.U8) (t : Tok) : Result (alloc.vec.Vec Std.U8) := do
   match t with
@@ -255,7 +255,7 @@ def push_tok
   | Tok.ObjClose => alloc.vec.Vec.push out 125#u8
 
 /-- [h5i_app_json::write]: loop body 0:
-    Source: 'crates/h5i-app-json/src/lib.rs', lines 1:0-156:5
+    Source: 'crates/h5i-app-json/src/lib.rs', lines 1:0-178:5
     Visibility: public -/
 @[rust_loop_body]
 def write_loop.body
@@ -288,7 +288,7 @@ def write_loop.body
   else ok (done out)
 
 /-- [h5i_app_json::write]: loop 0:
-    Source: 'crates/h5i-app-json/src/lib.rs', lines 1:0-156:5
+    Source: 'crates/h5i-app-json/src/lib.rs', lines 1:0-178:5
     Visibility: public -/
 @[rust_loop]
 def write_loop
@@ -301,10 +301,263 @@ def write_loop
     (out, after_value, i)
 
 /-- [h5i_app_json::write]:
-    Source: 'crates/h5i-app-json/src/lib.rs', lines 145:0-158:1
+    Source: 'crates/h5i-app-json/src/lib.rs', lines 167:0-180:1
     Visibility: public -/
 @[reducible]
 def write (toks : alloc.vec.Vec Tok) : Result (alloc.vec.Vec Std.U8) := do
   write_loop toks (alloc.vec.Vec.new Std.U8) false 0#usize
+
+/-- [h5i_app_json::slice::put_byte]:
+    Source: 'crates/h5i-app-json/src/slice.rs', lines 10:0-16:1 -/
+def slice.put_byte
+  (out : Slice Std.U8) (pos : Std.Usize) (b : Std.U8) :
+  Result ((Option Std.Usize) × (Slice Std.U8))
+  := do
+  let i := Slice.len out
+  if pos >= i
+  then ok (none, out)
+  else
+    let out1 ← Slice.update out pos b
+    let i1 ← pos + 1#usize
+    ok (some i1, out1)
+
+/-- [h5i_app_json::slice::put_escaped_byte]:
+    Source: 'crates/h5i-app-json/src/slice.rs', lines 19:0-41:1
+    Visibility: public -/
+def slice.put_escaped_byte
+  (out : Slice Std.U8) (pos : Std.Usize) (c : Std.U8) :
+  Result ((Option Std.Usize) × (Slice Std.U8))
+  := do
+  if c = 34#u8
+  then
+    let i := Slice.len out
+    if pos > i
+    then ok (none, out)
+    else
+      let i1 := Slice.len out
+      let i2 ← i1 - pos
+      if i2 < 2#usize
+      then ok (none, out)
+      else
+        let out1 ← Slice.update out pos 92#u8
+        let i3 ← pos + 1#usize
+        let out2 ← Slice.update out1 i3 c
+        let i4 ← pos + 2#usize
+        ok (some i4, out2)
+  else
+    if c = 92#u8
+    then
+      let i := Slice.len out
+      if pos > i
+      then ok (none, out)
+      else
+        let i1 := Slice.len out
+        let i2 ← i1 - pos
+        if i2 < 2#usize
+        then ok (none, out)
+        else
+          let out1 ← Slice.update out pos 92#u8
+          let i3 ← pos + 1#usize
+          let out2 ← Slice.update out1 i3 c
+          let i4 ← pos + 2#usize
+          ok (some i4, out2)
+    else
+      if c < 32#u8
+      then
+        let i := Slice.len out
+        if pos > i
+        then ok (none, out)
+        else
+          let i1 := Slice.len out
+          let i2 ← i1 - pos
+          if i2 < 6#usize
+          then ok (none, out)
+          else
+            let out1 ← Slice.update out pos 92#u8
+            let i3 ← pos + 1#usize
+            let out2 ← Slice.update out1 i3 117#u8
+            let i4 ← pos + 2#usize
+            let out3 ← Slice.update out2 i4 48#u8
+            let i5 ← pos + 3#usize
+            let out4 ← Slice.update out3 i5 48#u8
+            let i6 ← c / 16#u8
+            let i7 ← hex_digit i6
+            let i8 ← pos + 4#usize
+            let out5 ← Slice.update out4 i8 i7
+            let i9 ← c % 16#u8
+            let i10 ← hex_digit i9
+            let i11 ← pos + 5#usize
+            let out6 ← Slice.update out5 i11 i10
+            let i12 ← pos + 6#usize
+            ok (some i12, out6)
+      else slice.put_byte out pos c
+
+/-- [h5i_app_json::slice::put_escaped]: loop body 0:
+    Source: 'crates/h5i-app-json/src/slice.rs', lines 47:4-55:1
+    Visibility: public -/
+@[rust_loop_body]
+def slice.put_escaped_loop.body
+  (s : Slice Std.U8) (out : Slice Std.U8) («at» : Std.Usize) (i : Std.Usize)
+  :
+  Result (ControlFlow ((Slice Std.U8) × Std.Usize × Std.Usize) ((Option
+    Std.Usize) × (Slice Std.U8)))
+  := do
+  let i1 := Slice.len s
+  if i < i1
+  then
+    let i2 ← Slice.index_usize s i
+    let (o, out1) ← slice.put_escaped_byte out «at» i2
+    match o with
+    | none => ok (done (none, out1))
+    | some a => let i3 ← i + 1#usize
+                ok (cont (out1, a, i3))
+  else ok (done (some «at», out))
+
+/-- [h5i_app_json::slice::put_escaped]: loop 0:
+    Source: 'crates/h5i-app-json/src/slice.rs', lines 47:4-55:1
+    Visibility: public -/
+@[rust_loop]
+def slice.put_escaped_loop
+  (out : Slice Std.U8) (s : Slice Std.U8) («at» : Std.Usize) (i : Std.Usize)
+  :
+  Result ((Option Std.Usize) × (Slice Std.U8))
+  := do
+  loop
+    (fun (out1, at1, i1) => slice.put_escaped_loop.body s out1 at1 i1)
+    (out, «at», i)
+
+/-- [h5i_app_json::slice::put_escaped]:
+    Source: 'crates/h5i-app-json/src/slice.rs', lines 44:0-55:1
+    Visibility: public -/
+@[reducible]
+def slice.put_escaped
+  (out : Slice Std.U8) (pos : Std.Usize) (s : Slice Std.U8) :
+  Result ((Option Std.Usize) × (Slice Std.U8))
+  := do
+  slice.put_escaped_loop out s pos 0#usize
+
+/-- [h5i_app_json::slice::put_str]:
+    Source: 'crates/h5i-app-json/src/slice.rs', lines 58:0-68:1
+    Visibility: public -/
+def slice.put_str
+  (out : Slice Std.U8) (pos : Std.Usize) (s : Slice Std.U8) :
+  Result ((Option Std.Usize) × (Slice Std.U8))
+  := do
+  let (o, out1) ← slice.put_byte out pos 34#u8
+  match o with
+  | none => ok (none, out1)
+  | some a =>
+    let (o1, out2) ← slice.put_escaped out1 a s
+    match o1 with
+    | none => ok (none, out2)
+    | some a1 => slice.put_byte out2 a1 34#u8
+
+/-- [h5i_app_json::slice::put_key]:
+    Source: 'crates/h5i-app-json/src/slice.rs', lines 71:0-77:1
+    Visibility: public -/
+def slice.put_key
+  (out : Slice Std.U8) (pos : Std.Usize) (s : Slice Std.U8) :
+  Result ((Option Std.Usize) × (Slice Std.U8))
+  := do
+  let (o, out1) ← slice.put_str out pos s
+  match o with
+  | none => ok (none, out1)
+  | some a => slice.put_byte out1 a 58#u8
+
+/-- [h5i_app_json::slice::put_dec]: loop body 0:
+    Source: 'crates/h5i-app-json/src/slice.rs', lines 87:4-91:5
+    Visibility: public -/
+@[rust_loop_body]
+def slice.put_dec_loop0.body
+  (digits : Array Std.U8 20#usize) (k : Std.Usize) (m : Std.U64) :
+  Result (ControlFlow ((Array Std.U8 20#usize) × Std.Usize × Std.U64) ((Array
+    Std.U8 20#usize) × Std.Usize))
+  := do
+  if m > 0#u64
+  then
+    if k < 20#usize
+    then
+      let i ← m % 10#u64
+      let i1 ← lift (UScalar.cast .U8 i)
+      let i2 ← 48#u8 + i1
+      let a ← Array.update digits k i2
+      let k1 ← k + 1#usize
+      let m1 ← m / 10#u64
+      ok (cont (a, k1, m1))
+    else ok (done (digits, k))
+  else ok (done (digits, k))
+
+/-- [h5i_app_json::slice::put_dec]: loop 0:
+    Source: 'crates/h5i-app-json/src/slice.rs', lines 87:4-91:5
+    Visibility: public -/
+@[rust_loop]
+def slice.put_dec_loop0
+  (digits : Array Std.U8 20#usize) (k : Std.Usize) (m : Std.U64) :
+  Result ((Array Std.U8 20#usize) × Std.Usize)
+  := do
+  loop
+    (fun (digits1, k1, m1) => slice.put_dec_loop0.body digits1 k1 m1)
+    (digits, k, m)
+
+/-- [h5i_app_json::slice::put_dec]: loop body 1:
+    Source: 'crates/h5i-app-json/src/slice.rs', lines 96:4-99:5
+    Visibility: public -/
+@[rust_loop_body]
+def slice.put_dec_loop1.body
+  (pos : Std.Usize) (digits : Array Std.U8 20#usize) (k : Std.Usize)
+  (out : Slice Std.U8) (i : Std.Usize) :
+  Result (ControlFlow ((Slice Std.U8) × Std.Usize) (Slice Std.U8))
+  := do
+  if i < k
+  then
+    let i1 ← k - 1#usize
+    let i2 ← i1 - i
+    let i3 ← Array.index_usize digits i2
+    let i4 ← pos + i
+    let s ← Slice.update out i4 i3
+    let i5 ← i + 1#usize
+    ok (cont (s, i5))
+  else ok (done out)
+
+/-- [h5i_app_json::slice::put_dec]: loop 1:
+    Source: 'crates/h5i-app-json/src/slice.rs', lines 96:4-99:5
+    Visibility: public -/
+@[rust_loop]
+def slice.put_dec_loop1
+  (out : Slice Std.U8) (pos : Std.Usize) (digits : Array Std.U8 20#usize)
+  (k : Std.Usize) (i : Std.Usize) :
+  Result (Slice Std.U8)
+  := do
+  loop
+    (fun (out1, i1) => slice.put_dec_loop1.body pos digits k out1 i1)
+    (out, i)
+
+/-- [h5i_app_json::slice::put_dec]:
+    Source: 'crates/h5i-app-json/src/slice.rs', lines 80:0-101:1
+    Visibility: public -/
+def slice.put_dec
+  (out : Slice Std.U8) (pos : Std.Usize) (n : Std.U64) :
+  Result ((Option Std.Usize) × (Slice Std.U8))
+  := do
+  let digits := Array.repeat 20#usize 0#u8
+  let i ← n % 10#u64
+  let i1 ← lift (UScalar.cast .U8 i)
+  let i2 ← 48#u8 + i1
+  let a ← Array.update digits 0#usize i2
+  let k ← 0#usize + 1#usize
+  let m ← n / 10#u64
+  let (digits1, k1) ← slice.put_dec_loop0 a k m
+  let i3 := Slice.len out
+  if pos > i3
+  then ok (none, out)
+  else
+    let i4 := Slice.len out
+    let i5 ← i4 - pos
+    if i5 < k1
+    then ok (none, out)
+    else
+      let out1 ← slice.put_dec_loop1 out pos digits1 k1 0#usize
+      let i6 ← pos + k1
+      ok (some i6, out1)
 
 end h5i_app_json

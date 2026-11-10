@@ -16,4 +16,4 @@ lean_lib Generated where
 
 -- Hand-written specs and proofs.
 @[default_target] lean_lib Proofs where
-  roots := #[`H1Spec, `H1Proofs, `H1Props, `H1Smuggle]
+  roots := #[`H1Spec, `H1Proofs, `H1Props, `H1Smuggle, `H1Body, `H1Read, `H1Prefix, `H1Recv]

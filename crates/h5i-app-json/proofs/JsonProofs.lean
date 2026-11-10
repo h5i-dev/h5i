@@ -1,7 +1,8 @@
 import H5iAppJson
 import JsonSpec
 import H5iAppLib.Basic
-/-! The extracted writer computes `Spec.print`. -/
+/-! The extracted writers compute `Spec.print` (`write`) and `Spec.tokBytes`
+(the slice writers in `slice`). -/
 open Aeneas Aeneas.Std Result h5i_app_json h5i_app_json.Spec H5iAppLib
 
 namespace h5i_app_json.Proofs
@@ -346,5 +347,399 @@ theorem write_str_at (toks : alloc.vec.Vec Tok)
   · have hLj : L[j] = .key (B s.val) := by simp [L, hs, toT]
     refine ⟨58 :: post, ?_, write_str_contained s _⟩
     rw [hLj]; simp [step, isClose, tokBytes]
+
+/-! ## The slice writer -/
+
+/-- `o` holds `bs` over `out`: the same length, `bs` first, then `out`'s bytes. -/
+def W (o out : Slice U8) (bs : List Nat) : Prop :=
+  o.length = out.length ∧ bs.length ≤ out.length ∧ B o.val = bs ++ (B out.val).drop bs.length
+
+/-- Before anything is written at `pos`, `out` holds its own first `pos` bytes. -/
+theorem W.start (out : Slice U8) (pos : Nat) (h : pos ≤ out.length) : W out out ((B out.val).take pos) :=
+  ⟨rfl, by simp [B], by simp [B, Nat.min_eq_left (show pos ≤ out.val.length from h)]⟩
+
+theorem W.set1 {o out : Slice U8} {bs : List Nat} (hW : W o out bs) (k : Usize) (hk : k.val = bs.length)
+    (hlt : bs.length < out.length) (b : U8) : W (o.set k b) out (bs ++ [b.val]) := by
+  obtain ⟨h1, h2, h3⟩ := hW
+  have hol : bs.length < o.val.length := by simp only [Slice.length] at h1 hlt; omega
+  refine ⟨by simp only [Slice.length, Slice.set_val_eq, List.length_set] at h1 ⊢; exact h1,
+    by simp; omega, ?_⟩
+  rw [Slice.set_val_eq, hk, List.set_eq_take_append_cons_drop, if_pos hol]
+  have hb : B (o.val.take bs.length) = bs := by
+    simp only [B] at h3 ⊢; rw [List.map_take, h3, List.take_left' rfl]
+  have hd : B (o.val.drop (bs.length + 1)) = (B out.val).drop (bs.length + 1) := by
+    simp only [B] at h3 ⊢; rw [List.map_drop, h3, ← List.drop_drop, List.drop_left' rfl, List.drop_drop]
+  simp only [B, List.map_append, List.map_cons] at hb hd ⊢
+  rw [hb, hd]
+  simp
+
+theorem B_length (s : Slice U8) : (B s.val).length = s.length := by simp [B, Slice.length]
+
+@[step]
+theorem put_byte_W (o out : Slice U8) (bs : List Nat) (pos : Usize) (b : U8)
+    (hW : W o out bs) (hp : pos.val = bs.length) :
+    slice.put_byte o pos b ⦃ r o' => match r with
+      | none => True
+      | some p => p.val = bs.length + 1 ∧ W o' out (bs ++ [b.val]) ⦄ := by
+  unfold slice.put_byte
+  have hl := hW.1
+  step*
+  have hlt : bs.length < out.length := by simp only [Slice.length] at *; scalar_tac
+  refine ⟨by scalar_tac, ?_⟩
+  rw [out1_post]
+  exact hW.set1 pos hp hlt b
+
+theorem put_escaped_byte_W (o out : Slice U8) (bs : List Nat) (pos : Usize) (c : U8)
+    (hW : W o out bs) (hp : pos.val = bs.length) :
+    slice.put_escaped_byte o pos c ⦃ r o' => match r with
+      | none => True
+      | some p => p.val = bs.length + (escByte c.val).length ∧ W o' out (bs ++ escByte c.val) ⦄ := by
+  unfold slice.put_escaped_byte
+  have hl := hW.1
+  rcases (show c.val = 34 ∨ c.val = 92 ∨ c.val < 32 ∨ (c.val ≠ 34 ∧ c.val ≠ 92 ∧ 32 ≤ c.val) by omega)
+    with h1 | h1 | h1 | h1
+  · rw [show escByte c.val = [92, 34] by simp [escByte, h1]]
+    step*
+    have hroom : bs.length + 2 ≤ out.length := by
+      have := Slice.len_val o; simp only [Slice.length] at *; scalar_tac
+    refine ⟨by simp; scalar_tac, ?_⟩
+    have w := (hW.set1 pos hp (by omega) 92#u8).set1 i3 (by simp only [List.length_append, List.length_singleton]; omega) (by simp only [List.length_append, List.length_singleton]; omega) 34#u8
+    rw [out2_post, out1_post]; simpa using w
+  · rw [show escByte c.val = [92, 92] by simp [escByte, h1]]
+    step*
+    have hroom : bs.length + 2 ≤ out.length := by
+      have := Slice.len_val o; simp only [Slice.length] at *; scalar_tac
+    refine ⟨by simp; scalar_tac, ?_⟩
+    have w := (hW.set1 pos hp (by omega) 92#u8).set1 i3 (by simp only [List.length_append, List.length_singleton]; omega) (by simp only [List.length_append, List.length_singleton]; omega) 92#u8
+    rw [out2_post, out1_post]; simpa using w
+  · rw [show escByte c.val = [92, 117, 48, 48, hexd (c.val / 16), hexd (c.val % 16)] by
+      simp [escByte, h1, show c.val ≠ 34 by omega, show c.val ≠ 92 by omega]]
+    step*
+    all_goals (try (subst_vars; simp only [Slice.set_length] at *; scalar_tac))
+    have hroom : bs.length + 6 ≤ out.length := by
+      have := Slice.len_val o; simp only [Slice.length] at *; scalar_tac
+    refine ⟨by simp; scalar_tac, ?_⟩
+    have w1 := hW.set1 pos hp (by omega) 92#u8
+    have w2 := w1.set1 i3 (by simp only [List.length_append, List.length_singleton]; omega) (by simp only [List.length_append, List.length_singleton]; omega) 117#u8
+    have w3 := w2.set1 i4 (by simp only [List.length_append, List.length_singleton]; omega) (by simp only [List.length_append, List.length_singleton]; omega) 48#u8
+    have w4 := w3.set1 i5 (by simp only [List.length_append, List.length_singleton]; omega) (by simp only [List.length_append, List.length_singleton]; omega) 48#u8
+    have w5 := w4.set1 i8 (by simp only [List.length_append, List.length_singleton]; omega) (by simp only [List.length_append, List.length_singleton]; omega) i7
+    have w6 := w5.set1 i11 (by simp only [List.length_append, List.length_singleton]; omega) (by simp only [List.length_append, List.length_singleton]; omega) i10
+    rw [out6_post, out5_post, out4_post, out3_post, out2_post, out1_post]
+    simpa [i7_post, i10_post, i6_post, i9_post] using w6
+  · rw [show escByte c.val = [c.val] by simp [escByte, h1]]
+    have h34 : c ≠ 34#u8 := by intro h; apply h1.1; simp [h]
+    have h92 : c ≠ 92#u8 := by intro h; apply h1.2.1; simp [h]
+    have h32 : ¬ c < 32#u8 := by have := h1.2.2; scalar_tac
+    simp only [h34, h92, h32, if_false]
+    apply WP.spec_mono (put_byte_W o out bs pos c hW hp)
+    rintro ⟨r, o'⟩ h
+    simpa using h
+
+theorem esc_take_succ (s : Slice U8) (i : Nat) (h : i < s.length) :
+    esc (B (s.val.take (i + 1))) = esc (B (s.val.take i)) ++ escByte (s.val[i]'h).val := by
+  unfold B esc
+  rw [List.take_succ_eq_append_getElem h, List.map_append, List.flatMap_append]
+  simp
+
+theorem put_escaped_loop_W (o out s : Slice U8) (bs : List Nat) (pos i : Usize)
+    (hW : W o out (bs ++ esc (B (s.val.take i.val))))
+    (hp : pos.val = bs.length + (esc (B (s.val.take i.val))).length) (hi : i.val ≤ s.length) :
+    slice.put_escaped_loop o s pos i ⦃ r o' => match r with
+      | none => True
+      | some p => p.val = bs.length + (esc (B s.val)).length ∧ W o' out (bs ++ esc (B s.val)) ⦄ := by
+  unfold slice.put_escaped_loop
+  apply loop.spec_decr_nat (measure := fun (x : Slice U8 × Usize × Usize) => s.length - x.2.2.val)
+    (inv := fun x => x.2.2.val ≤ s.length ∧
+      x.2.1.val = bs.length + (esc (B (s.val.take x.2.2.val))).length ∧
+      W x.1 out (bs ++ esc (B (s.val.take x.2.2.val))))
+  · rintro ⟨o1, at1, j⟩ ⟨hj, hat, hW1⟩
+    simp only at hj hat hW1
+    unfold slice.put_escaped_loop.body
+    by_cases hjs : j.val < s.length
+    · have hlt : j < s.len := by scalar_tac
+      simp only [hlt, if_true]
+      step
+      step with put_escaped_byte_W o1 out (bs ++ esc (B (s.val.take j.val))) at1 i2 hW1 (by simpa using hat)
+      split
+      · simp
+      · rename_i _ a
+        simp only at o_post
+        obtain ⟨ha, hWa⟩ := o_post
+        step
+        have e := esc_take_succ s j.val hjs
+        refine ⟨by scalar_tac, ?_, ?_, by scalar_tac⟩
+        · rw [i3_post, e]; simp only [List.length_append] at ha ⊢; rw [ha, i2_post]; omega
+        · rw [i3_post, e, ← i2_post, ← List.append_assoc]; exact hWa
+    · have hge : ¬ j < s.len := by scalar_tac
+      simp only [hge, if_false, WP.spec_ok]
+      have : s.val.take j.val = s.val := List.take_of_length_le (by simp only [Slice.length] at *; omega)
+      rw [this] at hat hW1
+      exact ⟨hat, hW1⟩
+  · exact ⟨hi, hp, hW⟩
+
+/-- `put_str` writes exactly the bytes of a string token at `pos`. -/
+theorem put_str_W (o out s : Slice U8) (bs : List Nat) (pos : Usize)
+    (hW : W o out bs) (hp : pos.val = bs.length) :
+    slice.put_str o pos s ⦃ r o' => match r with
+      | none => True
+      | some p => p.val = bs.length + (tokBytes (.str (B s.val))).length ∧
+          W o' out (bs ++ tokBytes (.str (B s.val))) ⦄ := by
+  unfold slice.put_str slice.put_escaped
+  step with put_byte_W o out bs pos 34#u8 hW hp
+  split
+  · simp
+  rename_i _ a
+  simp only at o_post
+  obtain ⟨ha, hW1⟩ := o_post
+  step with put_escaped_loop_W out1 out s (bs ++ [34]) a 0#usize (by simpa [B, esc] using hW1) (by simpa [B, esc] using ha)
+    (by simp)
+  split
+  · simp
+  rename_i _ a1
+  simp only at o1_post
+  obtain ⟨ha1, hW2⟩ := o1_post
+  step with put_byte_W out2 out (bs ++ [34] ++ esc (B s.val)) a1 34#u8 hW2 (by rw [ha1]; simp; omega)
+  split
+  · simp
+  rename_i _ a2
+  simp only at r_post
+  obtain ⟨ha2, hW3⟩ := r_post
+  refine ⟨by rw [ha2]; simp [tokBytes]; omega, ?_⟩
+  simpa [tokBytes] using hW3
+
+/-- `put_key` writes exactly the bytes of a key token (the string and a colon) at `pos`. -/
+theorem put_key_W (o out s : Slice U8) (bs : List Nat) (pos : Usize)
+    (hW : W o out bs) (hp : pos.val = bs.length) :
+    slice.put_key o pos s ⦃ r o' => match r with
+      | none => True
+      | some p => p.val = bs.length + (tokBytes (.key (B s.val))).length ∧
+          W o' out (bs ++ tokBytes (.key (B s.val))) ⦄ := by
+  unfold slice.put_key
+  step with put_str_W o out s bs pos hW hp
+  split
+  · simp
+  rename_i _ a
+  simp only at o_post
+  obtain ⟨ha, hW1⟩ := o_post
+  step with put_byte_W out1 out (bs ++ tokBytes (.str (B s.val))) a 58#u8 hW1 (by rw [ha]; simp)
+  split
+  · simp
+  rename_i _ a1
+  simp only at r_post
+  obtain ⟨ha1, hW2⟩ := r_post
+  refine ⟨by rw [ha1]; simp [tokBytes]; omega, ?_⟩
+  simpa [tokBytes] using hW2
+
+theorem take_set_succ {α} (L : List α) (k : Nat) (x : α) (h : k < L.length) :
+    (L.set k x).take (k + 1) = L.take k ++ [x] := by
+  rw [List.take_succ_eq_append_getElem (by simpa using h), List.take_set_of_le (le_refl _),
+    List.getElem_set_self]
+
+theorem rdf_u64_div (m : U64) : (rdf (m.val / 10)).length ≤ 19 :=
+  rdf_len _ _ (by have := m.hBounds; simp at this ⊢; omega)
+
+theorem put_dec_loop0_W (d : Std.Array U8 20#usize) (k : Usize) (m : U64) (T : List Nat)
+    (hk : k.val + (rdf m.val).length ≤ 20)
+    (heq : B (d.val.take k.val) ++ (rdf m.val).map (48 + ·) = T) :
+    slice.put_dec_loop0 d k m ⦃ r => r.2.val ≤ 20 ∧ B (r.1.val.take r.2.val) = T ⦄ := by
+  unfold slice.put_dec_loop0
+  apply loop.spec_decr_nat (measure := fun (x : Std.Array U8 20#usize × Usize × U64) => x.2.2.val)
+    (inv := fun x => x.2.1.val + (rdf x.2.2.val).length ≤ 20 ∧
+      B (x.1.val.take x.2.1.val) ++ (rdf x.2.2.val).map (48 + ·) = T)
+  · rintro ⟨a, j, q⟩ ⟨hj, he⟩
+    simp only at hj he
+    unfold slice.put_dec_loop0.body
+    by_cases hq : 0 < q.val
+    · rw [rdf_pos q.val hq] at hj he
+      simp only [List.length_cons] at hj
+      have hgt : q > 0#u64 := by scalar_tac
+      have hlt : j < 20#usize := by scalar_tac
+      simp only [hgt, hlt, if_true]
+      step*
+      have hd : i1.val = q.val % 10 := by
+        rw [i1_post, UScalar.cast_val_mod_pow_of_inBounds_eq _ _ (by simp; omega), i_post]
+      refine ⟨?_, ?_, by scalar_tac⟩
+      · rw [k1_post, m1_post]; omega
+      · rw [← he, k1_post, m1_post, a_post, Std.Array.set_val_eq,
+          take_set_succ _ _ _ (by simp; omega)]
+        simp [B, i2_post, hd]
+    · have hq0 : q.val = 0 := by omega
+      have hng : ¬ q > 0#u64 := by scalar_tac
+      simp only [hng, if_false, WP.spec_ok]
+      rw [hq0, rdf] at he hj
+      simp at he hj
+      exact ⟨by omega, he⟩
+  · exact ⟨hk, heq⟩
+
+theorem rev_take_succ (d : List U8) (k i : Nat) (hk : k ≤ d.length) (hi : i < k) :
+    (B (d.take k)).reverse.take (i + 1) =
+      (B (d.take k)).reverse.take i ++ [(d[k - 1 - i]'(by omega)).val] := by
+  have hl : (B (d.take k)).reverse.length = k := by simp [B]; omega
+  rw [List.take_succ_eq_append_getElem (by rw [hl]; exact hi)]
+  congr 2
+  simp only [B, List.getElem_reverse, List.getElem_map, List.getElem_take, List.length_map,
+    List.length_take, Nat.min_eq_left hk]
+
+theorem put_dec_loop1_W (o out : Slice U8) (bs : List Nat) (pos : Usize) (d : Std.Array U8 20#usize)
+    (k i : Usize) (hk : k.val ≤ 20) (hp : pos.val = bs.length) (hroom : bs.length + k.val ≤ out.length)
+    (hi : i.val ≤ k.val) (hW : W o out (bs ++ (B (d.val.take k.val)).reverse.take i.val)) :
+    slice.put_dec_loop1 o pos d k i ⦃ o' => W o' out (bs ++ (B (d.val.take k.val)).reverse) ⦄ := by
+  unfold slice.put_dec_loop1
+  have hdl : d.val.length = 20 := by simp
+  apply loop.spec_decr_nat (measure := fun (x : Slice U8 × Usize) => k.val - x.2.val)
+    (inv := fun x => x.2.val ≤ k.val ∧ W x.1 out (bs ++ (B (d.val.take k.val)).reverse.take x.2.val))
+  · rintro ⟨o1, j⟩ ⟨hj, hW1⟩
+    simp only at hj hW1
+    unfold slice.put_dec_loop1.body
+    by_cases hjk : j.val < k.val
+    · have hlt : j < k := by scalar_tac
+      simp only [hlt, if_true]
+      have hl1 := hW1.1
+      step*
+      refine ⟨by scalar_tac, ?_, by scalar_tac⟩
+      have e := rev_take_succ d.val k.val j.val (by omega) hjk
+      rw [i5_post, e, ← List.append_assoc, s_post]
+      have hidx : i2.val = k.val - 1 - j.val := by scalar_tac
+      have hdi : (d.val[k.val - 1 - j.val]'(by omega)).val = i3.val := by
+        rw [i3_post]; simp only [hidx]
+      rw [hdi]
+      have hrl : (B (d.val.take k.val)).reverse.length = k.val := by simp [B]; omega
+      exact hW1.set1 i4 (by simp only [List.length_append, List.length_take, hrl]; omega)
+        (by simp only [List.length_append, List.length_take, hrl]; omega) i3
+    · have hge : ¬ j < k := by scalar_tac
+      simp only [hge, if_false, WP.spec_ok]
+      have hjk' : j.val = k.val := by omega
+      have hl : (B (d.val.take k.val)).reverse.length = k.val := by simp [B]; omega
+      rw [hjk', List.take_of_length_le (by omega)] at hW1
+      exact hW1
+  · exact ⟨hi, hW⟩
+
+/-- `put_dec` writes exactly the bytes of a number token (`n` in decimal) at `pos`. -/
+theorem put_dec_W (o out : Slice U8) (bs : List Nat) (pos : Usize) (n : U64)
+    (hW : W o out bs) (hp : pos.val = bs.length) :
+    slice.put_dec o pos n ⦃ r o' => match r with
+      | none => True
+      | some p => p.val = bs.length + (tokBytes (.num n.val)).length ∧
+          W o' out (bs ++ tokBytes (.num n.val)) ⦄ := by
+  unfold slice.put_dec
+  have hl := hW.1
+  step
+  step
+  step
+  step
+  step
+  step
+  have hd : i1.val = n.val % 10 := by
+    rw [i1_post, UScalar.cast_val_mod_pow_of_inBounds_eq _ _ (by simp; omega), o']
+  have hr := rdf_u64_div n
+  step with put_dec_loop0_W a k m (((n.val % 10) :: rdf (n.val / 10)).map (48 + ·))
+    (by rw [k_post, m_post]; omega)
+    (by rw [k_post, m_post, a_post, Std.Array.set_val_eq]; simp [B, i2_post, hd])
+  have hk1 := digits1_post
+  have hD := digits1_post1
+  have hk1v : k1.val = (dec n.val).length := by
+    have := congrArg List.length hD
+    have h20 : digits1.val.length = 20 := by simp
+    simp only [B, List.length_map, List.length_take, h20, List.length_cons] at this
+    rw [dec_eq]; simp only [List.length_reverse, List.length_map, List.length_cons]; omega
+  split
+  · simp
+  step
+  split
+  · simp
+  have hroom : bs.length + k1.val ≤ out.length := by scalar_tac
+  step with put_dec_loop1_W o out bs pos digits1 k1 0#usize hk1 hp hroom (by simp) (by simpa using hW)
+  step
+  rw [hD, ← dec_eq] at out1_post
+  exact ⟨by simp [tokBytes]; scalar_tac, by simpa [tokBytes] using out1_post⟩
+
+/-- What `put_str` writes at `pos` is one JSON string that lexes back to `s` and
+ends at its own closing quote: `s`'s bytes cannot end it early. -/
+theorem put_str_contained (o out s : Slice U8) (bs : List Nat) (pos : Usize)
+    (hW : W o out bs) (hp : pos.val = bs.length) :
+    slice.put_str o pos s ⦃ r o' => match r with
+      | none => True
+      | some _ => ∃ rest, B o'.val = bs ++ 34 :: (esc (B s.val) ++ 34 :: rest) ∧
+          lexStr (esc (B s.val) ++ 34 :: rest) = some (B s.val, rest) ⦄ := by
+  apply WP.spec_mono (put_str_W o out s bs pos hW hp)
+  rintro ⟨r, o'⟩ h
+  cases r with
+  | none => trivial
+  | some p =>
+    obtain ⟨-, -, -, hB⟩ := h
+    refine ⟨(B out.val).drop (bs ++ tokBytes (.str (B s.val))).length, ?_, ?_⟩
+    · rw [hB]; simp [tokBytes]
+    · exact lex_esc _ _ (fun c hc => by simp only [B, List.mem_map] at hc; obtain ⟨x, -, rfl⟩ := hc; scalar_tac)
+
+/-! Totality: no slice writer panics, for any buffer, position and input. -/
+
+theorem put_byte_total (o : Slice U8) (pos : Usize) (b : U8) : slice.put_byte o pos b ⦃ _ _ => True ⦄ := by
+  unfold slice.put_byte; step*
+
+theorem put_escaped_byte_total (o : Slice U8) (pos : Usize) (c : U8) :
+    slice.put_escaped_byte o pos c ⦃ _ _ => True ⦄ := by
+  by_cases h : pos.val ≤ o.length
+  · exact WP.spec_mono (put_escaped_byte_W o o _ pos c (W.start o pos.val h) (by simp [B]; omega))
+      (fun _ _ => trivial)
+  · unfold slice.put_escaped_byte slice.put_byte
+    have : pos > o.len := by scalar_tac
+    have : pos ≥ o.len := by scalar_tac
+    simp only [*, if_true]
+    split_ifs <;> simp
+
+@[step] theorem put_escaped_byte_total' (o : Slice U8) (pos : Usize) (c : U8) :
+    slice.put_escaped_byte o pos c ⦃ _ _ => True ⦄ := put_escaped_byte_total o pos c
+
+theorem put_escaped_total (o : Slice U8) (pos : Usize) (s : Slice U8) :
+    slice.put_escaped o pos s ⦃ _ _ => True ⦄ := by
+  unfold slice.put_escaped slice.put_escaped_loop
+  apply loop.spec_decr_nat (measure := fun (x : Slice U8 × Usize × Usize) => s.length - x.2.2.val)
+    (inv := fun _ => True)
+  · rintro ⟨o1, at1, j⟩ -
+    unfold slice.put_escaped_loop.body
+    step*
+  · trivial
+
+@[step] theorem put_escaped_total' (o : Slice U8) (pos : Usize) (s : Slice U8) :
+    slice.put_escaped o pos s ⦃ _ _ => True ⦄ := put_escaped_total o pos s
+
+@[step] theorem put_byte_total' (o : Slice U8) (pos : Usize) (b : U8) :
+    slice.put_byte o pos b ⦃ _ _ => True ⦄ := put_byte_total o pos b
+
+theorem put_str_total (o : Slice U8) (pos : Usize) (s : Slice U8) : slice.put_str o pos s ⦃ _ _ => True ⦄ := by
+  unfold slice.put_str
+  step with put_byte_total
+  split
+  · simp
+  step with put_escaped_total
+  split
+  · simp
+  exact put_byte_total _ _ _
+
+theorem put_key_total (o : Slice U8) (pos : Usize) (s : Slice U8) : slice.put_key o pos s ⦃ _ _ => True ⦄ := by
+  unfold slice.put_key
+  step with put_str_total
+  split
+  · simp
+  exact put_byte_total _ _ _
+
+theorem put_dec_total (o : Slice U8) (pos : Usize) (n : U64) : slice.put_dec o pos n ⦃ _ _ => True ⦄ := by
+  by_cases h : pos.val ≤ o.length
+  · exact WP.spec_mono (put_dec_W o o _ pos n (W.start o pos.val h) (by simp [B]; omega)) (fun _ _ => trivial)
+  · unfold slice.put_dec
+    step as ⟨x, hx⟩
+    step
+    step
+    step
+    step
+    step
+    have hr := rdf_u64_div n
+    step with put_dec_loop0_W a k m (((n.val % 10) :: rdf (n.val / 10)).map (48 + ·))
+      (by rw [k_post, m_post]; omega)
+      (by rw [k_post, m_post, a_post, Std.Array.set_val_eq]; simp [B]; rw [i2_post, i1_post, UScalar.cast_val_mod_pow_of_inBounds_eq _ _ (by simp; omega), hx])
+    have : pos > o.len := by scalar_tac
+    simp only [this, if_true, WP.spec_ok]
+    simp
 
 end h5i_app_json.Proofs

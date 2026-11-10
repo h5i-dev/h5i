@@ -6,12 +6,21 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use embedded_io_adapters::tokio_1::FromTokio;
-use h5i_app_embedded::{Config, serve};
-use thermostat_app::{App, router};
+use h5i_app_embedded::{Bound, Config, serve};
+use thermostat_app::{App, sim_router};
 
 /// The firmware's buffers.
 pub const RX: usize = 2048;
 pub const TX: usize = 1024;
+
+/// tokio's clock as the shell's time bound.
+pub struct TokioBound(pub Duration);
+
+impl Bound for TokioBound {
+    async fn within<F: Future>(&self, f: F) -> Option<F::Output> {
+        tokio::time::timeout(self.0, f).await.ok()
+    }
+}
 
 /// How long an accept loop waits after its `n`th error in a row (`n >= 1`):
 /// 50 ms doubling to at most 2 s, so a persistent error (EMFILE) cannot spin.
@@ -50,9 +59,9 @@ pub async fn accept_with_backoff<L: Accept>(l: &L) -> L::Conn {
 }
 
 /// Serve connections on `listener`, at most `max_conns` at once (the rest
-/// wait in the listen backlog), each for at most `per_conn`. Run inside a
-/// `LocalSet`.
-pub async fn run(listener: tokio::net::TcpListener, app: &'static App, max_conns: usize, per_conn: Duration) {
+/// wait in the listen backlog). Each request must arrive, and each response
+/// leave, within `bound`. Run inside a `LocalSet`.
+pub async fn run(listener: tokio::net::TcpListener, app: &'static App, max_conns: usize, bound: Duration) {
     let live = Rc::new(Cell::new(0usize));
     loop {
         while live.get() >= max_conns {
@@ -65,10 +74,17 @@ pub async fn run(listener: tokio::net::TcpListener, app: &'static App, max_conns
             let mut io = FromTokio::new(sock);
             let mut rx = [0u8; RX];
             let mut tx = [0u8; TX];
-            let routes = router();
-            // The shell has no clock: a slow or idle connection is cut here.
-            let _ = tokio::time::timeout(per_conn, serve(&Config::default(), &routes, app, &mut rx, &mut tx, &mut io)).await;
+            let routes = sim_router();
+            let _ = serve(&Config::default(), &routes, app, &mut rx, &mut tx, &mut io, &TokioBound(bound)).await;
             live.set(live.get() - 1);
         });
     }
+}
+
+/// A boot id that differs from run to run.
+pub fn boot_id() -> u32 {
+    use std::hash::{BuildHasher, Hasher};
+    let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+    h.write_u128(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos()));
+    h.finish() as u32
 }

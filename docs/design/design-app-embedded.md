@@ -183,12 +183,14 @@ verified core, and between the core and a kernel.
 - I/O: generic over `embedded_io_async::{Read, Write}`, so the same code
   runs over tokio on the host (`embedded-io-adapters`), embassy-net TCP, or a
   UART on the device. No runtime dependency in the crate.
-- `Server::serve(&app, &mut rx: [u8; N], &mut tx: [u8; M], io)` loop: read
-  into `rx`, call `parse_head`; on `Incomplete` read more (a full buffer is
-  431 then close); on `Reject(s)` write the status with `Connection: close`
-  and close; on `Done` read the body by `Framing` (via `chunk_step` for
-  chunked), dispatch, write the response with `write_head`, then keep-alive
-  or close. Read timeout and max requests per connection come from `Config`.
+- `serve(cfg, router, state, rx, tx, io, bound)` loop: call h1's
+  `recv_step`; on `NeedRead` read into `rx[filled..]` and add the count to
+  `filled` (a read of 0 sets `eof`); on `Reject(s)` write the status with
+  `Connection: close` and close; on `Ready` dispatch, write the response,
+  close if `must_close` says so, else `carry` the bytes after the request
+  and go on. The receive decisions (parsing, framing, in-place chunked
+  decoding, 400/413/431, the next request's start) are all in h1. Read
+  timeout and max requests per connection come from `Config`.
 - Routing and handlers, axum-shaped: `Router::new().route("/relay/{id}",
   post(handler))`, handlers are `async fn` taking extractors (`Path<u32>`,
   `Body<'r>`, `Actor<K>`, `State<&S>`) and returning `IntoResponse`. Router
@@ -266,7 +268,7 @@ verified core, and between the core and a kernel.
 
 | Item | Status |
 |---|---|
-| `h5i-app-h1` parsing, chunked decoding, response head | proven (panic freedom, spec, smuggling relative to `Interp`, read bound) |
+| `h5i-app-h1` parsing, chunked decoding, receive loop, response head | proven (panic freedom, spec, smuggling relative to `Interp`, read bound) |
 | thermostat `transition`/`apply` | proven (panic freedom, interlock invariant, read-only) |
 | memory per connection, no heap | structural (`no_std`, no alloc, fixed buffers, size check) |
 | `h5i-app-embedded` shell, router, extractors, command decoding | trusted, tested |
@@ -279,19 +281,624 @@ verified core, and between the core and a kernel.
 
 | Piece | Where |
 |---|---|
-| verified core | `crates/h5i-app-h1` (`src/lib.rs`, `proofs/H1Spec.lean`, `H1Proofs.lean`, `H1Props.lean`, `H1Smuggle.lean`) |
-| async shell | `crates/h5i-app-embedded` (`serve`, `Router`, `kernel::{DeviceEngine, PskAuth, Api, respond}`) |
+| verified core | `crates/h5i-app-h1` (`src/lib.rs`, `proofs/H1Spec.lean`, `H1Proofs.lean`, `H1Props.lean`, `H1Smuggle.lean`, `H1Body.lean`, `H1Read.lean`, `H1Prefix.lean`, `H1Recv.lean`) |
+| async shell | `crates/h5i-app-embedded` (`serve`, `Router`, `kernel::{DeviceEngine, Calls, Store}`, `hmac`, `store`, `json`, `form`, `tcp`, `link`) |
 | `no_std` core | `crates/h5i-app-core` features `std` (default) / `alloc` |
 | thermostat | `examples/embedded/thermostat/{kernel,proofs,app,host,firmware}` |
 | Renode | `scripts/embedded/{install-renode.sh,thermostat.resc,renode-smoke.sh}` (Renode 1.17.0) |
+
+### Device integration (trusted, tested)
+
+- Route binding: `Calls::call(auth, decode)` gives each route its own
+  command decoder, so the router, not a second match on the path, decides
+  which commands a request can produce.
+- Engine: writes are serialized by an async lock and saved to a `Store`
+  before they are visible; a failed save commits nothing. Reads take a short
+  critical section. `changed` wakes device tasks on every commit;
+  `execute` stamps with the device's clock when it has one.
+- Thermostat: the temperature comes from a sensor task (TMP108 on I2C), not
+  HTTP; an actuator task drives GPIO from committed states; a failed sensor
+  reads as the interlock temperature.
+- `FlashStore`: two regions, CRC per record, the region with the newest
+  record never erased; power cuts at every byte tested.
+- `HmacAuth`: HMAC-SHA256 over method, target and body, bound to a boot id
+  and an increasing counter; no confidentiality, replies unauthenticated.
+- Extra response fields go through the verified `write_field`.
+- `serve` takes a `Bound` per request read and per response write
+  (slow clients get 408); `serve_tcp` runs it on embassy-net.
 
 ### Proven (gate: `cargo app check`, no `sorry`/`native_decide`/axioms)
 
 - `parse_head_spec`: `parse_head` = `Spec.parseHead` for every buffer and limit
   (panic freedom included). `chunk_step_spec`: `chunk_step` = `Spec.chunkStep`
-  for every state. `write_head_total`: `write_head` never panics; its pieces
-  (`dec_digits_spec`, `put_W`, `put1_W`, `put_dec_W`, `put_reason_W`) write
-  exactly their bytes after a written prefix.
+  for every state. `write_head_spec`: on `some n`, `out[..n]` is exactly
+  `Spec.renderHead` and the rest of `out` is unchanged; `write_head_open_spec`,
+  `write_field_spec` and `end_head_W` compose to `Spec.renderHeadWith`.
+- `feed_dechunk` / `dechunk_local` (`H1Body.lean`): folding `chunkStep` over a
+  byte list is `Spec.dechunk`, and the body's end depends only on the bytes
+  before it.
+- `read_body_chunked` (`H1Read.lean`): the body reader in the receive buffer
+  returns `Spec.dechunk` of the body bytes received, payload at
+  `buf[start..end]`, `used = start + consumed`, nothing at or past `used`
+  written, and in-place writes stay behind unread bytes (`ChunkInv`).
+- `parseHead_prefix` / `parseHead_split_invariant` (`H1Prefix.lean`): a
+  `Done` or `Reject` stays the same on longer input, so the split of the
+  stream into reads does not matter.
+- `drive_view` / `drive_split` / `drive_at_once` / `drive_next`
+  (`H1Recv.lean`): for every sequence of reads, the loop over the extracted
+  `recv_step` ends with the same action, payload and `filled` as one call on
+  all the bytes at once; `used` is the head plus the body's wire length;
+  `rx[used..filled]` is as received and `carry` makes it the next request's
+  start; `NeedRead` only with room left (431/413 otherwise).
+- `accept_wellformed` / `parse_head_wellformed` (`H1Props.lean`).
+- `no_smuggling` (`H1Smuggle.lean`) relative to `Interp`: line ends CRLF or LF;
+  first or last duplicate `Content-Length`; TE-wins or CL-wins; whitespace
+  before the colon stripped or kept; obs-fold unfolded or ignored; values
+  trimmed or kept. For every input `parse_head` accepts, every member, given
+  any prefix that holds the head, computes the same head length and framing.
+- `parseHead_reads` / `parse_head_reads`: the result depends only on the first
+  `max_head` bytes once they are buffered.
+- Thermostat: `transition_total`, `set_relay_refused`, `inv_reachable`,
+  `interlock`, `ReadOnly.sound`; mutants 3/3 caught.
+
+### Tested, not proven
+
+- `response_no_splitting`: the bytes `write_head` emits contain exactly one
+  CRLFCRLF, at the end, and `Content-Length` equals `body_len`.
+
+**Resource bounds**
+
+- Memory: `h5i-app-h1` has no `alloc`, and every type has a size fixed by
+  constants, so per-connection memory is `RX_BUF + TX_BUF + size_of::<Head>()`
+  plus the handler future. This is structural, checked by `#![no_std]` with
+  no `extern crate alloc`, and by a size assertion for the firmware's `.bss`
+  and stack in the example (`cargo size` / linker `ASSERT`). Not a Lean theorem.
+- Reads stay within the bound: `parse_head_reads` shows the result depends
+  only on `buf[..min(len, max_head + 1)]`, so a peer sending more cannot make
+  the server buffer more.
+- Work per byte: each loop's index strictly increases and is bounded by the
+  input length (the termination measure), so `parse_head` makes at most
+  `min(len, max_head + 1)` iterations of its main loop and `chunk_step` is
+  loop-free. State this as a theorem if a step counter can be threaded
+  through cheaply; otherwise state it as the documented termination measure
+  and do not claim more.
+- Not proven: wall-clock time (needs assumptions about the network and the
+  executor), number of connections (bounded structurally by the static task
+  pool size), stack depth of the async shell.
+
+### `h5i-app-embedded`: the async shell (trusted)
+
+`#![no_std]`, no alloc. Its job is to move bytes between a socket and the
+verified core, and between the core and a kernel.
+
+- I/O: generic over `embedded_io_async::{Read, Write}`, so the same code
+  runs over tokio on the host (`embedded-io-adapters`), embassy-net TCP, or a
+  UART on the device. No runtime dependency in the crate.
+- `serve(cfg, router, state, rx, tx, io, bound)` loop: call h1's
+  `recv_step`; on `NeedRead` read into `rx[filled..]` and add the count to
+  `filled` (a read of 0 sets `eof`); on `Reject(s)` write the status with
+  `Connection: close` and close; on `Ready` dispatch, write the response,
+  close if `must_close` says so, else `carry` the bytes after the request
+  and go on. The receive decisions (parsing, framing, in-place chunked
+  decoding, 400/413/431, the next request's start) are all in h1. Read
+  timeout and max requests per connection come from `Config`.
+- Routing and handlers, axum-shaped: `Router::new().route("/relay/{id}",
+  post(handler))`, handlers are `async fn` taking extractors (`Path<u32>`,
+  `Body<'r>`, `Actor<K>`, `State<&S>`) and returning `IntoResponse`. Router
+  is a tuple-typed chain like picoserve so no allocation or `dyn` is needed.
+- Kernel binding mirrors `h5i-app-http`: `Authenticator<K>` (bearer tokens
+  through the verified `h5i-app-token` parser if it can go `no_std`, or a
+  pre-shared key compared in constant time), `Api<K>` with
+  `decode_command(route, &[u8]) -> Result<Command, Status>` and
+  `encode_reply(&Reply, &mut [u8]) -> Option<usize>`, and a `DeviceEngine<K>`
+  holding one tenant's snapshot in a `critical_section`/embassy mutex, whose
+  `execute` does `transition` then `apply` exactly like `MemoryEngine::execute`.
+  Request decoding stays trusted, as in the axum shell: the kernel's theorems
+  hold for every command, so a bad decoding can do no more than a client
+  could ask for.
+
+### `h5i-app-core` without `std`
+
+- `#![cfg_attr(not(feature = "std"), no_std)]`, `default = ["std"]`,
+  `alloc` feature implied by `std`.
+- No `std`: `Kernel`, `TenantId`, `Timestamp` (without `now`).
+- `alloc`: `ReplyCodec`, `Executor` (`std::error::Error` becomes
+  `core::error::Error`, the same trait).
+- `std`: `MemoryEngine`, `MemoryError`, `Timestamp::now`.
+- Nothing changes for existing users; the workspace and `examples/app` must
+  build and test as before.
+
+## Examples
+
+`examples/embedded/`, its own Cargo workspace like `examples/app`.
+
+**`thermostat`**, a device kernel with an embedded safety property:
+
+- `kernel/` (Aeneas subset, no alloc): snapshot `{ setpoint_dc: i16, temp_dc:
+  i16, heater: bool, relays: [bool; 4], mode }`. Commands: `SetSetpoint`,
+  `ReportTemp`, `SetRelay { idx, on }`, `SetMode`, `Read`.
+- Proofs: `transition` never panics for any command, including `idx ≥ 4`
+  (refused, not indexed); the interlock invariant `heater → temp_dc <
+  MAX_TEMP` and `setpoint_dc ∈ [MIN, MAX]` holds in every reachable state;
+  `Read` is read-only (`H5iAppLib.ReadOnly.Sound`).
+- `host/`: runs the shell over tokio for development, fuzzing and curl.
+- `firmware/`: Cortex-M binary run in Renode.
+
+## Renode
+
+- Install the portable Linux release of [Renode](https://github.com/renode/renode)
+  under `~/.local/opt/renode` (scripted, version pinned in the script).
+- Target: a Cortex-M board Renode models well (start with
+  `stm32f4_discovery` or `nrf52840`), Rust target `thumbv7em-none-eabihf`,
+  `cortex-m-rt` and `embassy-executor`.
+- Transport, in order of preference, keep the first that works in Renode:
+  1. Ethernet with `embassy-net` if Renode models the board's MAC well
+     enough for it, bridged to the host with a TAP or Renode's switch.
+  2. Raw HTTP over UART: `emulation CreateServerSocketTerminal 8080 "term"
+     false` and `connector Connect sysbus.usartN term`, so `curl
+     http://127.0.0.1:8080/...` reaches the firmware byte for byte. One
+     connection at a time, which is fine for a demo.
+- `scripts/embedded/renode-smoke.sh` starts Renode headless (`--disable-xwt
+  --console`), loads the ELF, and checks with curl: a valid GET and POST,
+  pipelined requests, and rejections (CL+TE, duplicate CL, obs-fold, space
+  before colon, oversized head, bad chunk size). Then it checks the device is
+  still serving, which shows the rejections did not crash it.
+
+## Testing beyond proofs
+
+- Host unit tests for the shell and the core.
+- A differential test of `parse_head` against `httparse` on random and
+  mutated inputs (`httparse` as a dev-dependency only): wherever both accept,
+  method, target and headers agree; list where they differ and why (we are
+  stricter by design).
+- A fuzz target (cargo-fuzz or a bounded proptest) asserting no panic and the
+  `accept_wellformed` properties at runtime.
+- The smuggling corpus from the Renode script also runs on host.
+
+## Trust summary (to fold into design-app-trust.md)
+
+| Item | Status |
+|---|---|
+| `h5i-app-h1` parsing, chunked decoding, receive loop, response head | proven (panic freedom, spec, smuggling relative to `Interp`, read bound) |
+| thermostat `transition`/`apply` | proven (panic freedom, interlock invariant, read-only) |
+| memory per connection, no heap | structural (`no_std`, no alloc, fixed buffers, size check) |
+| `h5i-app-embedded` shell, router, extractors, command decoding | trusted, tested |
+| `embassy`, HAL, `embedded-io`, Renode models, Charon/Aeneas/Lean | assumed |
+| that the device runs the extracted code | CI re-extracts and diffs (A9), as for other crates |
+
+## Final state
+
+### Built
+
+| Piece | Where |
+|---|---|
+| verified core | `crates/h5i-app-h1` (`src/lib.rs`, `proofs/H1Spec.lean`, `H1Proofs.lean`, `H1Props.lean`, `H1Smuggle.lean`, `H1Body.lean`, `H1Read.lean`, `H1Prefix.lean`, `H1Recv.lean`) |
+| async shell | `crates/h5i-app-embedded` (`serve`, `Router`, `kernel::{DeviceEngine, Calls, Store}`, `hmac`, `store`, `json`, `form`, `tcp`, `link`) |
+| `no_std` core | `crates/h5i-app-core` features `std` (default) / `alloc` |
+| thermostat | `examples/embedded/thermostat/{kernel,proofs,app,host,firmware}` |
+| Renode | `scripts/embedded/{install-renode.sh,thermostat.resc,renode-smoke.sh}` (Renode 1.17.0) |
+
+### Device integration (trusted, tested)
+
+- Route binding: `Calls::call(auth, decode)` gives each route its own
+  command decoder, so the router, not a second match on the path, decides
+  which commands a request can produce.
+- Engine: writes are serialized by an async lock and saved to a `Store`
+  before they are visible; a failed save commits nothing. Reads take a short
+  critical section. `changed` wakes device tasks on every commit;
+  `execute` stamps with the device's clock when it has one.
+- Thermostat: the temperature comes from a sensor task (TMP108 on I2C), not
+  HTTP; an actuator task drives GPIO from committed states; a failed sensor
+  reads as the interlock temperature.
+- `FlashStore`: two regions, CRC per record, the region with the newest
+  record never erased; power cuts at every byte tested.
+- `HmacAuth`: HMAC-SHA256 over method, target and body, bound to a boot id
+  and an increasing counter; no confidentiality, replies unauthenticated.
+- Extra response fields go through the verified `write_field`.
+- `serve` takes a `Bound` per request read and per response write
+  (slow clients get 408); `serve_tcp` runs it on embassy-net.
+
+### Proven (gate: `cargo app check`, no `sorry`/`native_decide`/axioms)
+
+- `parse_head_spec`: `parse_head` = `Spec.parseHead` for every buffer and limit
+  (panic freedom included). `chunk_step_spec`: `chunk_step` = `Spec.chunkStep`
+  for every state. `write_head_spec`: on `some n`, `out[..n]` is exactly
+  `Spec.renderHead` and the rest of `out` is unchanged; `write_head_open_spec`,
+  `write_field_spec` and `end_head_W` compose to `Spec.renderHeadWith`.
+- `feed_dechunk` / `dechunk_local` (`H1Body.lean`): folding `chunkStep` over a
+  byte list is `Spec.dechunk`, and the body's end depends only on the bytes
+  before it.
+- `read_body_chunked` (`H1Read.lean`): the body reader in the receive buffer
+  returns `Spec.dechunk` of the body bytes received, payload at
+  `buf[start..end]`, `used = start + consumed`, nothing at or past `used`
+  written, and in-place writes stay behind unread bytes (`ChunkInv`).
+- `parseHead_prefix` / `parseHead_split_invariant` (`H1Prefix.lean`): a
+  `Done` or `Reject` stays the same on longer input, so the split of the
+  stream into reads does not matter.
+- `drive_view` / `drive_split` / `drive_at_once` / `drive_next`
+  (`H1Recv.lean`): for every sequence of reads, the loop over the extracted
+  `recv_step` ends with the same action, payload and `filled` as one call on
+  all the bytes at once; `used` is the head plus the body's wire length;
+  `rx[used..filled]` is as received and `carry` makes it the next request's
+  start; `NeedRead` only with room left (431/413 otherwise).
+- `accept_wellformed` / `parse_head_wellformed` (`H1Props.lean`).
+- `no_smuggling` (`H1Smuggle.lean`) relative to `Interp`: line ends CRLF or LF;
+  first or last duplicate `Content-Length`; TE-wins or CL-wins; whitespace
+  before the colon stripped or kept; obs-fold unfolded or ignored; values
+  trimmed or kept. For every input `parse_head` accepts, every member, given
+  any prefix that holds the head, computes the same head length and framing.
+- `parseHead_reads` / `parse_head_reads`: the result depends only on the first
+  `max_head` bytes once they are buffered.
+- Thermostat: `transition_total`, `set_relay_refused`, `inv_reachable`,
+  `interlock`, `ReadOnly.sound`; mutants 3/3 caught.
+
+### Tested, not proven
+
+- `write_head` output equals `Spec.renderHead` (unit tests; the Lean spec is
+  written, the end-to-end theorem is not: Aeneas' `step` cannot infer the
+  prefix lemmas' ghost arguments, and the manual chain was not finished).
+- `response_no_splitting`: the content type is checked to hold only
+  field-value bytes (proven to be checked: `write_head` returns `None`
+  otherwise), but "exactly one CRLFCRLF" is not a theorem.
+- `pipeline_split`: the shell's read loops (append at `filled`, call
+  `parse_head` / `read_body` again, keep `rx[used..filled]`) are tested
+  (shell tests, Renode smoke); each call is proven.
+- Work per byte: each loop's index strictly increases and is bounded by the
+  input length (the termination measure), so `parse_head` makes at most
+  `min(len, max_head + 1)` iterations of its main loop and `chunk_step` is
+  loop-free. State this as a theorem if a step counter can be threaded
+  through cheaply; otherwise state it as the documented termination measure
+  and do not claim more.
+- Not proven: wall-clock time (needs assumptions about the network and the
+  executor), number of connections (bounded structurally by the static task
+  pool size), stack depth of the async shell.
+
+### `h5i-app-embedded`: the async shell (trusted)
+
+`#![no_std]`, no alloc. Its job is to move bytes between a socket and the
+verified core, and between the core and a kernel.
+
+- I/O: generic over `embedded_io_async::{Read, Write}`, so the same code
+  runs over tokio on the host (`embedded-io-adapters`), embassy-net TCP, or a
+  UART on the device. No runtime dependency in the crate.
+- `serve(cfg, router, state, rx, tx, io, bound)` loop: call h1's
+  `recv_step`; on `NeedRead` read into `rx[filled..]` and add the count to
+  `filled` (a read of 0 sets `eof`); on `Reject(s)` write the status with
+  `Connection: close` and close; on `Ready` dispatch, write the response,
+  close if `must_close` says so, else `carry` the bytes after the request
+  and go on. The receive decisions (parsing, framing, in-place chunked
+  decoding, 400/413/431, the next request's start) are all in h1. Read
+  timeout and max requests per connection come from `Config`.
+- Routing and handlers, axum-shaped: `Router::new().route("/relay/{id}",
+  post(handler))`, handlers are `async fn` taking extractors (`Path<u32>`,
+  `Body<'r>`, `Actor<K>`, `State<&S>`) and returning `IntoResponse`. Router
+  is a tuple-typed chain like picoserve so no allocation or `dyn` is needed.
+- Kernel binding mirrors `h5i-app-http`: `Authenticator<K>` (bearer tokens
+  through the verified `h5i-app-token` parser if it can go `no_std`, or a
+  pre-shared key compared in constant time), `Api<K>` with
+  `decode_command(route, &[u8]) -> Result<Command, Status>` and
+  `encode_reply(&Reply, &mut [u8]) -> Option<usize>`, and a `DeviceEngine<K>`
+  holding one tenant's snapshot in a `critical_section`/embassy mutex, whose
+  `execute` does `transition` then `apply` exactly like `MemoryEngine::execute`.
+  Request decoding stays trusted, as in the axum shell: the kernel's theorems
+  hold for every command, so a bad decoding can do no more than a client
+  could ask for.
+
+### `h5i-app-core` without `std`
+
+- `#![cfg_attr(not(feature = "std"), no_std)]`, `default = ["std"]`,
+  `alloc` feature implied by `std`.
+- No `std`: `Kernel`, `TenantId`, `Timestamp` (without `now`).
+- `alloc`: `ReplyCodec`, `Executor` (`std::error::Error` becomes
+  `core::error::Error`, the same trait).
+- `std`: `MemoryEngine`, `MemoryError`, `Timestamp::now`.
+- Nothing changes for existing users; the workspace and `examples/app` must
+  build and test as before.
+
+## Examples
+
+`examples/embedded/`, its own Cargo workspace like `examples/app`.
+
+**`thermostat`**, a device kernel with an embedded safety property:
+
+- `kernel/` (Aeneas subset, no alloc): snapshot `{ setpoint_dc: i16, temp_dc:
+  i16, heater: bool, relays: [bool; 4], mode }`. Commands: `SetSetpoint`,
+  `ReportTemp`, `SetRelay { idx, on }`, `SetMode`, `Read`.
+- Proofs: `transition` never panics for any command, including `idx ≥ 4`
+  (refused, not indexed); the interlock invariant `heater → temp_dc <
+  MAX_TEMP` and `setpoint_dc ∈ [MIN, MAX]` holds in every reachable state;
+  `Read` is read-only (`H5iAppLib.ReadOnly.Sound`).
+- `host/`: runs the shell over tokio for development, fuzzing and curl.
+- `firmware/`: Cortex-M binary run in Renode.
+
+## Renode
+
+- Install the portable Linux release of [Renode](https://github.com/renode/renode)
+  under `~/.local/opt/renode` (scripted, version pinned in the script).
+- Target: a Cortex-M board Renode models well (start with
+  `stm32f4_discovery` or `nrf52840`), Rust target `thumbv7em-none-eabihf`,
+  `cortex-m-rt` and `embassy-executor`.
+- Transport, in order of preference, keep the first that works in Renode:
+  1. Ethernet with `embassy-net` if Renode models the board's MAC well
+     enough for it, bridged to the host with a TAP or Renode's switch.
+  2. Raw HTTP over UART: `emulation CreateServerSocketTerminal 8080 "term"
+     false` and `connector Connect sysbus.usartN term`, so `curl
+     http://127.0.0.1:8080/...` reaches the firmware byte for byte. One
+     connection at a time, which is fine for a demo.
+- `scripts/embedded/renode-smoke.sh` starts Renode headless (`--disable-xwt
+  --console`), loads the ELF, and checks with curl: a valid GET and POST,
+  pipelined requests, and rejections (CL+TE, duplicate CL, obs-fold, space
+  before colon, oversized head, bad chunk size). Then it checks the device is
+  still serving, which shows the rejections did not crash it.
+
+## Testing beyond proofs
+
+- Host unit tests for the shell and the core.
+- A differential test of `parse_head` against `httparse` on random and
+  mutated inputs (`httparse` as a dev-dependency only): wherever both accept,
+  method, target and headers agree; list where they differ and why (we are
+  stricter by design).
+- A fuzz target (cargo-fuzz or a bounded proptest) asserting no panic and the
+  `accept_wellformed` properties at runtime.
+- The smuggling corpus from the Renode script also runs on host.
+
+## Trust summary (to fold into design-app-trust.md)
+
+| Item | Status |
+|---|---|
+| `h5i-app-h1` parsing, chunked decoding, receive loop, response head | proven (panic freedom, spec, smuggling relative to `Interp`, read bound) |
+| thermostat `transition`/`apply` | proven (panic freedom, interlock invariant, read-only) |
+| memory per connection, no heap | structural (`no_std`, no alloc, fixed buffers, size check) |
+| `h5i-app-embedded` shell, router, extractors, command decoding | trusted, tested |
+| `embassy`, HAL, `embedded-io`, Renode models, Charon/Aeneas/Lean | assumed |
+| that the device runs the extracted code | CI re-extracts and diffs (A9), as for other crates |
+
+## Final state
+
+### Built
+
+| Piece | Where |
+|---|---|
+| verified core | `crates/h5i-app-h1` (`src/lib.rs`, `proofs/H1Spec.lean`, `H1Proofs.lean`, `H1Props.lean`, `H1Smuggle.lean`, `H1Body.lean`, `H1Read.lean`, `H1Prefix.lean`, `H1Recv.lean`) |
+| async shell | `crates/h5i-app-embedded` (`serve`, `Router`, `kernel::{DeviceEngine, Calls, Store}`, `hmac`, `store`, `json`, `form`, `tcp`, `link`) |
+| `no_std` core | `crates/h5i-app-core` features `std` (default) / `alloc` |
+| thermostat | `examples/embedded/thermostat/{kernel,proofs,app,host,firmware}` |
+| Renode | `scripts/embedded/{install-renode.sh,thermostat.resc,renode-smoke.sh}` (Renode 1.17.0) |
+
+### Device integration (trusted, tested)
+
+- Route binding: `Calls::call(auth, decode)` gives each route its own
+  command decoder, so the router, not a second match on the path, decides
+  which commands a request can produce.
+- Engine: writes are serialized by an async lock and saved to a `Store`
+  before they are visible; a failed save commits nothing. Reads take a short
+  critical section. `changed` wakes device tasks on every commit;
+  `execute` stamps with the device's clock when it has one.
+- Thermostat: the temperature comes from a sensor task (TMP108 on I2C), not
+  HTTP; an actuator task drives GPIO from committed states; a failed sensor
+  reads as the interlock temperature.
+- `FlashStore`: two regions, CRC per record, the region with the newest
+  record never erased; power cuts at every byte tested.
+- `HmacAuth`: HMAC-SHA256 over method, target and body, bound to a boot id
+  and an increasing counter; no confidentiality, replies unauthenticated.
+- Extra response fields go through the verified `write_field`.
+- `serve` takes a `Bound` per request read and per response write
+  (slow clients get 408); `serve_tcp` runs it on embassy-net.
+
+### Proven (gate: `cargo app check`, no `sorry`/`native_decide`/axioms)
+
+- `parse_head_spec`: `parse_head` = `Spec.parseHead` for every buffer and limit
+  (panic freedom included). `chunk_step_spec`: `chunk_step` = `Spec.chunkStep`
+  for every state. `write_head_spec`: on `some n`, `out[..n]` is exactly
+  `Spec.renderHead` and the rest of `out` is unchanged; `write_head_open_spec`,
+  `write_field_spec` and `end_head_W` compose to `Spec.renderHeadWith`.
+- `feed_dechunk` / `dechunk_local` (`H1Body.lean`): folding `chunkStep` over a
+  byte list is `Spec.dechunk`, and the body's end depends only on the bytes
+  before it.
+- `read_body_chunked` (`H1Read.lean`): the body reader in the receive buffer
+  returns `Spec.dechunk` of the body bytes received, payload at
+  `buf[start..end]`, `used = start + consumed`, nothing at or past `used`
+  written, and in-place writes stay behind unread bytes (`ChunkInv`).
+- `parseHead_prefix` / `parseHead_split_invariant` (`H1Prefix.lean`): a
+  `Done` or `Reject` stays the same on longer input, so the split of the
+  stream into reads does not matter.
+- `drive_view` / `drive_split` / `drive_at_once` / `drive_next`
+  (`H1Recv.lean`): for every sequence of reads, the loop over the extracted
+  `recv_step` ends with the same action, payload and `filled` as one call on
+  all the bytes at once; `used` is the head plus the body's wire length;
+  `rx[used..filled]` is as received and `carry` makes it the next request's
+  start; `NeedRead` only with room left (431/413 otherwise).
+- `accept_wellformed` / `parse_head_wellformed` (`H1Props.lean`).
+- `no_smuggling` (`H1Smuggle.lean`) relative to `Interp`: line ends CRLF or LF;
+  first or last duplicate `Content-Length`; TE-wins or CL-wins; whitespace
+  before the colon stripped or kept; obs-fold unfolded or ignored; values
+  trimmed or kept. For every input `parse_head` accepts, every member, given
+  any prefix that holds the head, computes the same head length and framing.
+- `parseHead_reads` / `parse_head_reads`: the result depends only on the first
+  `max_head` bytes once they are buffered.
+- Thermostat: `transition_total`, `set_relay_refused`, `inv_reachable`,
+  `interlock`, `ReadOnly.sound`; mutants 3/3 caught.
+
+### Tested, not proven
+
+- `response_no_splitting`: the bytes `write_head` emits contain exactly one
+  CRLFCRLF, at the end, and `Content-Length` equals `body_len`.
+
+**Resource bounds**
+
+- Memory: `h5i-app-h1` has no `alloc`, and every type has a size fixed by
+  constants, so per-connection memory is `RX_BUF + TX_BUF + size_of::<Head>()`
+  plus the handler future. This is structural, checked by `#![no_std]` with
+  no `extern crate alloc`, and by a size assertion for the firmware's `.bss`
+  and stack in the example (`cargo size` / linker `ASSERT`). Not a Lean theorem.
+- Reads stay within the bound: `parse_head_reads` shows the result depends
+  only on `buf[..min(len, max_head + 1)]`, so a peer sending more cannot make
+  the server buffer more.
+- Work per byte: each loop's index strictly increases and is bounded by the
+  input length (the termination measure), so `parse_head` makes at most
+  `min(len, max_head + 1)` iterations of its main loop and `chunk_step` is
+  loop-free. State this as a theorem if a step counter can be threaded
+  through cheaply; otherwise state it as the documented termination measure
+  and do not claim more.
+- Not proven: wall-clock time (needs assumptions about the network and the
+  executor), number of connections (bounded structurally by the static task
+  pool size), stack depth of the async shell.
+
+### `h5i-app-embedded`: the async shell (trusted)
+
+`#![no_std]`, no alloc. Its job is to move bytes between a socket and the
+verified core, and between the core and a kernel.
+
+- I/O: generic over `embedded_io_async::{Read, Write}`, so the same code
+  runs over tokio on the host (`embedded-io-adapters`), embassy-net TCP, or a
+  UART on the device. No runtime dependency in the crate.
+- `serve(cfg, router, state, rx, tx, io, bound)` loop: call h1's
+  `recv_step`; on `NeedRead` read into `rx[filled..]` and add the count to
+  `filled` (a read of 0 sets `eof`); on `Reject(s)` write the status with
+  `Connection: close` and close; on `Ready` dispatch, write the response,
+  close if `must_close` says so, else `carry` the bytes after the request
+  and go on. The receive decisions (parsing, framing, in-place chunked
+  decoding, 400/413/431, the next request's start) are all in h1. Read
+  timeout and max requests per connection come from `Config`.
+- Routing and handlers, axum-shaped: `Router::new().route("/relay/{id}",
+  post(handler))`, handlers are `async fn` taking extractors (`Path<u32>`,
+  `Body<'r>`, `Actor<K>`, `State<&S>`) and returning `IntoResponse`. Router
+  is a tuple-typed chain like picoserve so no allocation or `dyn` is needed.
+- Kernel binding mirrors `h5i-app-http`: `Authenticator<K>` (bearer tokens
+  through the verified `h5i-app-token` parser if it can go `no_std`, or a
+  pre-shared key compared in constant time), `Api<K>` with
+  `decode_command(route, &[u8]) -> Result<Command, Status>` and
+  `encode_reply(&Reply, &mut [u8]) -> Option<usize>`, and a `DeviceEngine<K>`
+  holding one tenant's snapshot in a `critical_section`/embassy mutex, whose
+  `execute` does `transition` then `apply` exactly like `MemoryEngine::execute`.
+  Request decoding stays trusted, as in the axum shell: the kernel's theorems
+  hold for every command, so a bad decoding can do no more than a client
+  could ask for.
+
+### `h5i-app-core` without `std`
+
+- `#![cfg_attr(not(feature = "std"), no_std)]`, `default = ["std"]`,
+  `alloc` feature implied by `std`.
+- No `std`: `Kernel`, `TenantId`, `Timestamp` (without `now`).
+- `alloc`: `ReplyCodec`, `Executor` (`std::error::Error` becomes
+  `core::error::Error`, the same trait).
+- `std`: `MemoryEngine`, `MemoryError`, `Timestamp::now`.
+- Nothing changes for existing users; the workspace and `examples/app` must
+  build and test as before.
+
+## Examples
+
+`examples/embedded/`, its own Cargo workspace like `examples/app`.
+
+**`thermostat`**, a device kernel with an embedded safety property:
+
+- `kernel/` (Aeneas subset, no alloc): snapshot `{ setpoint_dc: i16, temp_dc:
+  i16, heater: bool, relays: [bool; 4], mode }`. Commands: `SetSetpoint`,
+  `ReportTemp`, `SetRelay { idx, on }`, `SetMode`, `Read`.
+- Proofs: `transition` never panics for any command, including `idx ≥ 4`
+  (refused, not indexed); the interlock invariant `heater → temp_dc <
+  MAX_TEMP` and `setpoint_dc ∈ [MIN, MAX]` holds in every reachable state;
+  `Read` is read-only (`H5iAppLib.ReadOnly.Sound`).
+- `host/`: runs the shell over tokio for development, fuzzing and curl.
+- `firmware/`: Cortex-M binary run in Renode.
+
+## Renode
+
+- Install the portable Linux release of [Renode](https://github.com/renode/renode)
+  under `~/.local/opt/renode` (scripted, version pinned in the script).
+- Target: a Cortex-M board Renode models well (start with
+  `stm32f4_discovery` or `nrf52840`), Rust target `thumbv7em-none-eabihf`,
+  `cortex-m-rt` and `embassy-executor`.
+- Transport, in order of preference, keep the first that works in Renode:
+  1. Ethernet with `embassy-net` if Renode models the board's MAC well
+     enough for it, bridged to the host with a TAP or Renode's switch.
+  2. Raw HTTP over UART: `emulation CreateServerSocketTerminal 8080 "term"
+     false` and `connector Connect sysbus.usartN term`, so `curl
+     http://127.0.0.1:8080/...` reaches the firmware byte for byte. One
+     connection at a time, which is fine for a demo.
+- `scripts/embedded/renode-smoke.sh` starts Renode headless (`--disable-xwt
+  --console`), loads the ELF, and checks with curl: a valid GET and POST,
+  pipelined requests, and rejections (CL+TE, duplicate CL, obs-fold, space
+  before colon, oversized head, bad chunk size). Then it checks the device is
+  still serving, which shows the rejections did not crash it.
+
+## Testing beyond proofs
+
+- Host unit tests for the shell and the core.
+- A differential test of `parse_head` against `httparse` on random and
+  mutated inputs (`httparse` as a dev-dependency only): wherever both accept,
+  method, target and headers agree; list where they differ and why (we are
+  stricter by design).
+- A fuzz target (cargo-fuzz or a bounded proptest) asserting no panic and the
+  `accept_wellformed` properties at runtime.
+- The smuggling corpus from the Renode script also runs on host.
+
+## Trust summary (to fold into design-app-trust.md)
+
+| Item | Status |
+|---|---|
+| `h5i-app-h1` parsing, chunked decoding, receive loop, response head | proven (panic freedom, spec, smuggling relative to `Interp`, read bound) |
+| thermostat `transition`/`apply` | proven (panic freedom, interlock invariant, read-only) |
+| memory per connection, no heap | structural (`no_std`, no alloc, fixed buffers, size check) |
+| `h5i-app-embedded` shell, router, extractors, command decoding | trusted, tested |
+| `embassy`, HAL, `embedded-io`, Renode models, Charon/Aeneas/Lean | assumed |
+| that the device runs the extracted code | CI re-extracts and diffs (A9), as for other crates |
+
+## Final state
+
+### Built
+
+| Piece | Where |
+|---|---|
+| verified core | `crates/h5i-app-h1` (`src/lib.rs`, `proofs/H1Spec.lean`, `H1Proofs.lean`, `H1Props.lean`, `H1Smuggle.lean`, `H1Body.lean`, `H1Read.lean`, `H1Prefix.lean`, `H1Recv.lean`) |
+| async shell | `crates/h5i-app-embedded` (`serve`, `Router`, `kernel::{DeviceEngine, Calls, Store}`, `hmac`, `store`, `json`, `form`, `tcp`, `link`) |
+| `no_std` core | `crates/h5i-app-core` features `std` (default) / `alloc` |
+| thermostat | `examples/embedded/thermostat/{kernel,proofs,app,host,firmware}` |
+| Renode | `scripts/embedded/{install-renode.sh,thermostat.resc,renode-smoke.sh}` (Renode 1.17.0) |
+
+### Device integration (trusted, tested)
+
+- Route binding: `Calls::call(auth, decode)` gives each route its own
+  command decoder, so the router, not a second match on the path, decides
+  which commands a request can produce.
+- Engine: writes are serialized by an async lock and saved to a `Store`
+  before they are visible; a failed save commits nothing. Reads take a short
+  critical section. `changed` wakes device tasks on every commit;
+  `execute` stamps with the device's clock when it has one.
+- Thermostat: the temperature comes from a sensor task (TMP108 on I2C), not
+  HTTP; an actuator task drives GPIO from committed states; a failed sensor
+  reads as the interlock temperature.
+- `FlashStore`: two regions, CRC per record, the region with the newest
+  record never erased; power cuts at every byte tested.
+- `HmacAuth`: HMAC-SHA256 over method, target and body, bound to a boot id
+  and an increasing counter; no confidentiality, replies unauthenticated.
+- Extra response fields go through the verified `write_field`.
+- `serve` takes a `Bound` per request read and per response write
+  (slow clients get 408); `serve_tcp` runs it on embassy-net.
+
+### Proven (gate: `cargo app check`, no `sorry`/`native_decide`/axioms)
+
+- `parse_head_spec`: `parse_head` = `Spec.parseHead` for every buffer and limit
+  (panic freedom included). `chunk_step_spec`: `chunk_step` = `Spec.chunkStep`
+  for every state. `write_head_spec`: on `some n`, `out[..n]` is exactly
+  `Spec.renderHead` and the rest of `out` is unchanged; `write_head_open_spec`,
+  `write_field_spec` and `end_head_W` compose to `Spec.renderHeadWith`.
+- `feed_dechunk` / `dechunk_local` (`H1Body.lean`): folding `chunkStep` over a
+  byte list is `Spec.dechunk`, and the body's end depends only on the bytes
+  before it.
+- `read_body_chunked` (`H1Read.lean`): the body reader in the receive buffer
+  returns `Spec.dechunk` of the body bytes received, payload at
+  `buf[start..end]`, `used = start + consumed`, nothing at or past `used`
+  written, and in-place writes stay behind unread bytes (`ChunkInv`).
+- `parseHead_prefix` / `parseHead_split_invariant` (`H1Prefix.lean`): a
+  `Done` or `Reject` stays the same on longer input, so the split of the
+  stream into reads does not matter.
+- `drive_view` / `drive_split` / `drive_at_once` / `drive_next`
+  (`H1Recv.lean`): for every sequence of reads, the loop over the extracted
+  `recv_step` ends with the same action, payload and `filled` as one call on
+  all the bytes at once; `used` is the head plus the body's wire length;
+  `rx[used..filled]` is as received and `carry` makes it the next request's
+  start; `NeedRead` only with room left (431/413 otherwise).
 - `accept_wellformed` / `parse_head_wellformed` (`H1Props.lean`).
 - `no_smuggling` (`H1Smuggle.lean`) relative to `Interp`: line ends CRLF or LF;
   first or last duplicate `Content-Length`; TE-wins or CL-wins; whitespace
@@ -346,11 +953,12 @@ verified core, and between the core and a kernel.
    `Executor` and `sorted_by_key`.
 8. **Handlers take `(&Request, &S, &mut [u8])`** rather than per-argument
    extractors: borrowed extractors (`Body<'r>`) and HRTB `AsyncFn` bounds do
-   not compose without allocation. `Request::param_u32`, `header`, `body`
-   play the extractors' role.
-9. **No read timeout in `Config`; the UART is framed.** The shell has no
-   clock: the host runner bounds each TCP connection with
-   `tokio::time::timeout` (30 s, at most 32 at once, accept errors back off).
+   not compose without allocation. `Request::param_u32`, `query_param`,
+   `header`, `body`, `form` and `json::Object` play the extractors' role.
+9. **Time bounds come from the caller; the UART is framed.** The shell has
+   no clock: `serve` takes a `Bound` that limits each request's arrival and
+   each response's write (the host runner: 10 s, at most 32 connections,
+   accept errors back off).
    An earlier version of the firmware ran `serve` on the raw UART and
    resynchronized only after a closing response; an independent review showed
    that a partial head left by one client was completed by the next client's
@@ -373,9 +981,9 @@ verified core, and between the core and a kernel.
    anyone who can write to the UART directly (or to Renode's UART socket,
    which must be reachable only by the gateway) can forge markers. Clients
    behind the gateway wait for each other, up to the bound each.
-10. **Transport: framed UART behind a gateway, not Ethernet.** The UART
-    path (choice 2) works in Renode with the framing of deviation 9; Ethernet
-    (embassy-net, a TAP bridge) was not attempted.
+10. **Transport: framed UART behind a gateway in Renode.** The UART path
+    works in Renode with the framing of deviation 9. `serve_tcp` (embassy-net)
+    is tested on two in-memory stacks on a host; no firmware runs it yet.
 12. **Bodyless responses.** `write_head` omits `Content-Length` for 1xx,
     204 and 304 (`has_body`); the shell sends no body for them or for HEAD
     (which runs the GET handler), and turns a handler's 1xx into a closing

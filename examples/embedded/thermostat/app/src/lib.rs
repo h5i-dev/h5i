@@ -1,24 +1,31 @@
-//! The thermostat's HTTP API, shared by the host runner and the firmware.
+//! The thermostat's HTTP API and device logic, shared by the host runner and
+//! the firmware.
 //!
 //! ```text
 //! GET  /state                 the snapshot as JSON (no key needed)
 //! PUT  /setpoint   "215"      tenths of a degree, 50..=300
-//! POST /temp       "-12"      a sensor reading
 //! PUT  /mode       "auto"     off | heat | auto
 //! PUT  /relay/{i}  "on"       on | off; i >= 4 is refused by the kernel
 //! ```
 //!
-//! Writes need `Authorization: Bearer <key>`. Decoding requests and encoding
-//! replies is trusted (A2, A3); the kernel's theorems hold for every command.
+//! Writes are signed (`h5i_app_embedded::hmac`). The temperature comes from
+//! the device's own sensor ([`sensor_command`]), not from HTTP: the
+//! interlock the kernel proves is about the reported temperature, so no
+//! client may report one. The host runner, which has no sensor, adds
+//! `POST /temp` ([`sim_router`]) for tests.
+//!
+//! Each route binds its own decoder (A2, trusted); encoding replies is
+//! trusted (A3); the kernel's theorems hold for every command.
 
 #![no_std]
 
-use core::fmt::Write as _;
-
 use h5i_app_core::{Kernel, TenantId};
-use h5i_app_embedded::kernel::{Api, Authenticator, DeviceEngine, PskAuth, respond};
-use h5i_app_embedded::{Request, Response, Router, Routes};
-use thermostat_kernel::{Command, Device, Error, Mode, Reply, Snapshot};
+use h5i_app_embedded::hmac::HmacAuth;
+use h5i_app_embedded::json::Writer;
+use h5i_app_embedded::kernel::{Anyone, Calls, Codec, Device as HasEngine, DeviceEngine, NoStore, Store};
+use h5i_app_embedded::store::SnapshotCodec;
+use h5i_app_embedded::{Request, Router, Routes, form};
+use thermostat_kernel::{Command, Device, Error, MAX_TEMP_DC, Mode, RELAYS, Reply, Snapshot};
 
 /// The kernel, as the shell sees it.
 pub struct Thermostat;
@@ -48,141 +55,252 @@ impl Kernel for Thermostat {
     }
 }
 
-/// The device's state and key.
-pub struct App {
-    pub engine: DeviceEngine<Thermostat>,
-    pub auth: PskAuth<Device>,
+/// Clients without a key: may read.
+pub const GUEST: Device = Device { admin: false };
+/// The device's own sensor task. Not an admin: it can report a temperature
+/// and nothing else the kernel guards.
+pub const SENSOR: Device = Device { admin: false };
+
+/// The device's state, its store `St`, and the key that signs writes.
+pub struct App<St = NoStore> {
+    pub engine: DeviceEngine<Thermostat, St>,
+    pub admin: HmacAuth<Device>,
+    pub guest: Anyone<Device>,
 }
 
-impl App {
-    /// Starts from `thermostat_kernel::INITIAL`, the state the proofs start from.
-    pub const fn new(key: &'static [u8]) -> App {
+impl App<NoStore> {
+    /// Starts from `thermostat_kernel::INITIAL`, the state the proofs start
+    /// from. `boot` must differ on every boot (see `hmac`).
+    pub const fn new(key: &'static [u8], boot: u32) -> App {
+        App::with_store(key, boot, NoStore)
+    }
+}
+
+impl<St: Store<Thermostat>> App<St> {
+    /// Call `engine.restore()` before serving to resume from `store`.
+    pub const fn with_store(key: &'static [u8], boot: u32, store: St) -> App<St> {
         App {
-            engine: DeviceEngine::new(thermostat_kernel::INITIAL),
-            auth: PskAuth { key, principal: Device { admin: true } },
+            engine: DeviceEngine::with_store(thermostat_kernel::INITIAL, store),
+            admin: HmacAuth::new(key, Device { admin: true }, boot),
+            guest: Anyone(GUEST),
         }
     }
 }
 
-/// Anyone may read.
-struct Open;
-
-impl Authenticator<Thermostat> for Open {
-    fn authenticate(&self, _: &Request<'_>) -> Result<Device, u16> {
-        Ok(Device { admin: false })
+impl<St: Store<Thermostat>> HasEngine<Thermostat> for App<St> {
+    type Store = St;
+    fn engine(&self) -> &DeviceEngine<Thermostat, St> {
+        &self.engine
     }
 }
 
-/// Text bodies: a decimal, or a word.
+/// JSON replies.
 pub struct Wire;
 
-fn trimmed(b: &[u8]) -> &[u8] {
-    b.trim_ascii()
+impl Codec<Thermostat> for Wire {
+    fn encode_reply(reply: &Reply, out: &mut [u8]) -> Option<usize> {
+        let Reply::State(s) = reply;
+        let mut w = Writer::new(out);
+        w.open_obj();
+        w.key(b"setpoint_dc");
+        w.int(s.setpoint_dc as i64);
+        w.key(b"temp_dc");
+        w.int(s.temp_dc as i64);
+        w.key(b"heater");
+        w.bool(s.heater);
+        w.key(b"relays");
+        w.open_arr();
+        for r in s.relays {
+            w.bool(r);
+        }
+        w.close_arr();
+        w.key(b"mode");
+        w.str(mode_name(s.mode));
+        w.close_obj();
+        w.finish()
+    }
+
+    fn encode_error(err: &Error, out: &mut [u8]) -> (u16, usize) {
+        let (status, code): (u16, &[u8]) = match err {
+            Error::SetpointOutOfRange => (422, b"setpoint_out_of_range"),
+            Error::NoSuchRelay => (404, b"no_such_relay"),
+            Error::Forbidden => (403, b"forbidden"),
+        };
+        let mut w = Writer::new(out);
+        w.open_obj();
+        w.key(b"error");
+        w.str(code);
+        w.close_obj();
+        (status, w.finish().unwrap_or(0))
+    }
+}
+
+fn mode_name(m: Mode) -> &'static [u8] {
+    match m {
+        Mode::Off => b"off",
+        Mode::Heat => b"heat",
+        Mode::Auto => b"auto",
+    }
 }
 
 /// `-?[0-9]{1,5}` within `i16`.
 pub fn parse_i16(b: &[u8]) -> Option<i16> {
-    let (neg, digits) = match b.split_first() {
-        Some((b'-', rest)) => (true, rest),
-        _ => (false, b),
+    form::parse_i32(b).filter(|_| b.len() <= 6).and_then(|v| i16::try_from(v).ok())
+}
+
+fn body<'r>(req: &Request<'r>) -> &'r [u8] {
+    req.body.trim_ascii()
+}
+
+fn decode_setpoint(req: &Request<'_>) -> Result<Command, u16> {
+    parse_i16(body(req)).map(|dc| Command::SetSetpoint { dc }).ok_or(400)
+}
+
+fn decode_mode(req: &Request<'_>) -> Result<Command, u16> {
+    let mode = match body(req) {
+        b"off" => Mode::Off,
+        b"heat" => Mode::Heat,
+        b"auto" => Mode::Auto,
+        _ => return Err(400),
     };
-    if digits.is_empty() || digits.len() > 5 || !digits.iter().all(u8::is_ascii_digit) {
-        return None;
-    }
-    let mut v: i32 = 0;
-    for &c in digits {
-        v = v * 10 + (c - b'0') as i32;
-    }
-    i16::try_from(if neg { -v } else { v }).ok()
+    Ok(Command::SetMode { mode })
 }
 
-impl Api<Thermostat> for Wire {
-    fn decode_command(req: &Request<'_>) -> Result<Command, u16> {
-        let body = trimmed(req.body);
-        match req.path {
-            b"/state" => Ok(Command::Read),
-            b"/setpoint" => parse_i16(body).map(|dc| Command::SetSetpoint { dc }).ok_or(400),
-            b"/temp" => parse_i16(body).map(|dc| Command::ReportTemp { dc }).ok_or(400),
-            b"/mode" => match body {
-                b"off" => Ok(Command::SetMode { mode: Mode::Off }),
-                b"heat" => Ok(Command::SetMode { mode: Mode::Heat }),
-                b"auto" => Ok(Command::SetMode { mode: Mode::Auto }),
-                _ => Err(400),
-            },
-            _ => {
-                // /relay/{i}: the router matched it; the index is any u8.
-                let idx = req.param_u32(0).ok_or(404u16)?;
-                let idx = u8::try_from(idx).map_err(|_| 404u16)?;
-                let on = match body {
-                    b"on" => true,
-                    b"off" => false,
-                    _ => return Err(400),
-                };
-                Ok(Command::SetRelay { idx, on })
-            }
-        }
-    }
-
-    fn encode_reply(reply: &Reply, out: &mut [u8]) -> Option<usize> {
-        let Reply::State(s) = reply;
-        let mut w = Cursor { buf: out, at: 0 };
-        let mode = match s.mode {
-            Mode::Off => "off",
-            Mode::Heat => "heat",
-            Mode::Auto => "auto",
-        };
-        write!(
-            w,
-            "{{\"setpoint_dc\":{},\"temp_dc\":{},\"heater\":{},\"relays\":[{},{},{},{}],\"mode\":\"{}\"}}",
-            s.setpoint_dc, s.temp_dc, s.heater, s.relays[0], s.relays[1], s.relays[2], s.relays[3], mode
-        )
-        .ok()?;
-        Some(w.at)
-    }
-
-    fn encode_error(err: &Error, out: &mut [u8]) -> (u16, usize) {
-        let (status, msg): (u16, &[u8]) = match err {
-            Error::SetpointOutOfRange => (422, b"{\"error\":\"setpoint_out_of_range\"}"),
-            Error::NoSuchRelay => (404, b"{\"error\":\"no_such_relay\"}"),
-            Error::Forbidden => (403, b"{\"error\":\"forbidden\"}"),
-        };
-        let n = msg.len().min(out.len());
-        out[..n].copy_from_slice(&msg[..n]);
-        (status, n)
-    }
+fn decode_relay(req: &Request<'_>) -> Result<Command, u16> {
+    // Any u8 reaches the kernel, which refuses an index of 4 or more.
+    let idx = req.param_u32(0).and_then(|i| u8::try_from(i).ok()).ok_or(404u16)?;
+    let on = match body(req) {
+        b"on" => true,
+        b"off" => false,
+        _ => return Err(400),
+    };
+    Ok(Command::SetRelay { idx, on })
 }
 
-struct Cursor<'a> {
-    buf: &'a mut [u8],
-    at: usize,
+fn decode_temp(req: &Request<'_>) -> Result<Command, u16> {
+    parse_i16(body(req)).map(|dc| Command::ReportTemp { dc }).ok_or(400)
 }
 
-impl core::fmt::Write for Cursor<'_> {
-    fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        let b = s.as_bytes();
-        if b.len() > self.buf.len() - self.at {
-            return Err(core::fmt::Error);
-        }
-        self.buf[self.at..self.at + b.len()].copy_from_slice(b);
-        self.at += b.len();
-        Ok(())
-    }
+fn guest<St>(a: &App<St>) -> &Anyone<Device> {
+    &a.guest
 }
 
-async fn read(req: &Request<'_>, app: &App, out: &mut [u8]) -> Response {
-    respond::<Thermostat, Wire>(&app.engine, &Open, req, out)
+fn admin<St>(a: &App<St>) -> &HmacAuth<Device> {
+    &a.admin
 }
 
-async fn write(req: &Request<'_>, app: &App, out: &mut [u8]) -> Response {
-    respond::<Thermostat, Wire>(&app.engine, &app.auth, req, out)
-}
-
-/// The routes.
-pub fn router() -> Router<impl Routes<App>> {
+/// The device's routes.
+pub fn router<St: Store<Thermostat>>() -> Router<impl Routes<App<St>>> {
+    let k = Calls::<Thermostat, Wire, App<St>>::new();
     Router::new()
-        .get(b"/state", read)
-        .put(b"/setpoint", write)
-        .post(b"/temp", write)
-        .put(b"/mode", write)
-        .put(b"/relay/{i}", write)
+        .get(b"/state", k.call(guest, |_| Ok(Command::Read)))
+        .put(b"/setpoint", k.call(admin, decode_setpoint))
+        .put(b"/mode", k.call(admin, decode_mode))
+        .put(b"/relay/{i}", k.call(admin, decode_relay))
+}
+
+/// [`router`] and `POST /temp` (signed), standing in for the sensor on a
+/// host. Not for a device that has one.
+pub fn sim_router<St: Store<Thermostat>>() -> Router<impl Routes<App<St>>> {
+    let k = Calls::<Thermostat, Wire, App<St>>::new();
+    router::<St>().post(b"/temp", k.call(admin, decode_temp))
+}
+
+/// The temperature in tenths of a degree from a TMP108's temperature
+/// register (12 bits, two's complement, 1/16 °C per step, MSB first), or
+/// `None` for an unreadable sensor. The sensor task reports `None` as
+/// [`MAX_TEMP_DC`]: the interlock then turns the heater off, so a dead sensor
+/// fails safe.
+pub fn sensor_command(reading: Option<[u8; 2]>) -> Command {
+    let dc = match reading {
+        Some([msb, lsb]) => {
+            let raw = (i16::from_be_bytes([msb, lsb]) >> 4) as i32;
+            // raw / 16 °C = raw * 10 / 16 tenths, rounded toward zero.
+            (raw * 10 / 16) as i16
+        }
+        None => MAX_TEMP_DC,
+    };
+    Command::ReportTemp { dc }
+}
+
+/// What the outputs must show for a committed state: the heater, then the
+/// relays. The actuator task sets its pins from this.
+pub fn outputs(s: &Snapshot) -> [bool; 1 + RELAYS] {
+    [s.heater, s.relays[0], s.relays[1], s.relays[2], s.relays[3]]
+}
+
+/// The snapshot in flash: 8 bytes.
+pub struct Flash;
+
+impl SnapshotCodec<Thermostat> for Flash {
+    const VERSION: u16 = 1;
+
+    fn encode(s: &Snapshot, out: &mut [u8]) -> Option<usize> {
+        let o = out.get_mut(..8)?;
+        o[0..2].copy_from_slice(&s.setpoint_dc.to_le_bytes());
+        o[2..4].copy_from_slice(&s.temp_dc.to_le_bytes());
+        o[4] = s.heater as u8;
+        o[5] = s.relays.iter().enumerate().fold(0u8, |m, (i, &r)| m | ((r as u8) << i));
+        o[6] = match s.mode {
+            Mode::Off => 0,
+            Mode::Heat => 1,
+            Mode::Auto => 2,
+        };
+        o[7] = 0;
+        Some(8)
+    }
+
+    fn decode(b: &[u8]) -> Option<Snapshot> {
+        if b.len() != 8 || b[4] > 1 || b[5] > 15 || b[7] != 0 {
+            return None;
+        }
+        let mode = match b[6] {
+            0 => Mode::Off,
+            1 => Mode::Heat,
+            2 => Mode::Auto,
+            _ => return None,
+        };
+        let mut relays = [false; RELAYS];
+        for (i, r) in relays.iter_mut().enumerate() {
+            *r = b[5] & (1 << i) != 0;
+        }
+        Some(Snapshot {
+            setpoint_dc: i16::from_le_bytes([b[0], b[1]]),
+            temp_dc: i16::from_le_bytes([b[2], b[3]]),
+            heater: b[4] == 1,
+            relays,
+            mode,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tmp108_readings() {
+        let dc = |r| match sensor_command(r) {
+            Command::ReportTemp { dc } => dc,
+            _ => unreachable!(),
+        };
+        // Datasheet examples: 0x190 = 25 °C, 0xE70 = -25 °C, 0x7FF = 127.9375 °C.
+        assert_eq!(dc(Some([0x19, 0x00])), 250);
+        assert_eq!(dc(Some([0xE7, 0x00])), -250);
+        assert_eq!(dc(Some([0x7F, 0xF0])), 1279);
+        assert_eq!(dc(Some([0x00, 0x10])), 0);
+        assert_eq!(dc(Some([0x23, 0x00])), 350);
+        assert_eq!(dc(None), MAX_TEMP_DC);
+    }
+
+    #[test]
+    fn flash_codec_round_trips() {
+        let s = Snapshot { setpoint_dc: -7, temp_dc: 351, heater: true, relays: [true, false, false, true], mode: Mode::Auto };
+        let mut b = [0u8; 8];
+        assert_eq!(Flash::encode(&s, &mut b), Some(8));
+        assert_eq!(Flash::decode(&b), Some(s));
+        assert_eq!(Flash::decode(&b[..7]), None);
+        b[6] = 3;
+        assert_eq!(Flash::decode(&b), None);
+    }
 }

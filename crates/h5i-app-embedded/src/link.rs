@@ -28,7 +28,8 @@
 
 use embedded_io_async::{ErrorKind, ErrorType, Read, Write};
 
-use crate::{Config, Routes, Router, serve};
+pub use crate::Bound;
+use crate::{Config, NoBound, Router, Routes, serve};
 
 pub const FLAG: u8 = 0x7E;
 pub const ESC: u8 = 0x7D;
@@ -273,15 +274,9 @@ impl<IO: Read + Write> Write for Conn<'_, IO> {
     }
 }
 
-/// Runs a future under a time bound; the device provides it (embassy-time's
-/// `with_timeout`, tokio's `timeout`), since the shell has no clock.
-pub trait Bound {
-    /// `None` if `f` did not finish in time; it is then dropped.
-    async fn within<F: core::future::Future>(&self, f: F) -> Option<F::Output>;
-}
-
 /// Serve framed connections one after another until the line ends. Each
-/// connection gets an empty receive buffer and at most `bound` to finish;
+/// connection gets an empty receive buffer and at most `bound` to finish,
+/// in all (a per-request bound would let one client hold the shared line);
 /// whatever it left unread or buffered is dropped with it.
 pub async fn serve_link<IO, S, R, B>(
     cfg: &Config,
@@ -301,7 +296,7 @@ where
         if link.accept().await?.is_none() {
             return Ok(());
         }
-        let _ = bound.within(serve(cfg, router, state, rx, tx, &mut link.conn())).await;
+        let _ = bound.within(serve(cfg, router, state, rx, tx, &mut link.conn(), &NoBound)).await;
         link.finish().await?;
     }
 }
