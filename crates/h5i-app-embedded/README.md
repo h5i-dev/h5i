@@ -6,7 +6,8 @@ microcontrollers. It is the trusted shell around the verified
 (head, body framing, chunked bodies decoded in place, 400/413/431) and
 `carry` (where the next pipelined request starts); the shell only reads into
 `rx[filled..]` when asked and adds the count to `filled`. It routes, and
-writes response heads with `write_head_open`, `write_field` and `end_head`.
+writes response heads with `write_head_with` (status line, framing fields,
+the extra fields through `write_field`, CRLF).
 
 ```rust
 let k = Calls::<Thermostat, Wire, App>::new();

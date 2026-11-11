@@ -37,6 +37,25 @@ fn get() {
 }
 
 #[test]
+fn targets_and_hosts() {
+    let targets: &[&[u8]] = &[b"/", b"/a/b/", b"/a%2Fb%7e?x=1&y=%20", b"/a?b?c/d", b"//x", b"/:@!$&'()*+,;=-._~"];
+    for t in targets {
+        let mut b = b"GET ".to_vec();
+        b.extend_from_slice(t);
+        b.extend_from_slice(b" HTTP/1.1\r\nHost: x\r\n\r\n");
+        let h = head(&b);
+        assert_eq!(span(&b, h.target), *t);
+    }
+    let hosts: &[&[u8]] = &[b"", b"a", b"a.b-c_d~", b"a:", b"a:8080", b"10.0.0.1:80", b"[::1]", b"[fe80::1]:8080", b"[v1.x]", b"a%41", b"!$&'()*+,;="];
+    for v in hosts {
+        let mut b = b"GET / HTTP/1.1\r\nHost: ".to_vec();
+        b.extend_from_slice(v);
+        b.extend_from_slice(b"\r\n\r\n");
+        head(&b);
+    }
+}
+
+#[test]
 fn framing() {
     assert_eq!(head(b"POST / HTTP/1.1\r\nhost: x\r\ncontent-LENGTH: 12\r\n\r\n").framing, Framing::Length(12));
     assert_eq!(head(b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 0007\r\n\r\n").framing, Framing::Length(7));
@@ -98,6 +117,28 @@ fn rejects() {
         (b"GET / HTTP/1.2\r\nHost: x\r\n\r\n", 505),
         (b"GET / http/1.1\r\nHost: x\r\n\r\n", 400),
         (b"\r\nGET / HTTP/1.1\r\nHost: x\r\n\r\n", 400),
+        // Targets: origin-form only, `%` HEXDIG HEXDIG, no fragment.
+        (b"GET /hello#frag HTTP/1.1\r\nHost: x\r\n\r\n", 400),
+        (b"GET /a%zz HTTP/1.1\r\nHost: x\r\n\r\n", 400),
+        (b"GET /a%2 HTTP/1.1\r\nHost: x\r\n\r\n", 400),
+        (b"GET /a% HTTP/1.1\r\nHost: x\r\n\r\n", 400),
+        (b"GET /a\"b HTTP/1.1\r\nHost: x\r\n\r\n", 400),
+        (b"GET /a<b> HTTP/1.1\r\nHost: x\r\n\r\n", 400),
+        (b"GET /a\\b HTTP/1.1\r\nHost: x\r\n\r\n", 400),
+        (b"GET /a[b] HTTP/1.1\r\nHost: x\r\n\r\n", 400),
+        (b"GET /a{b}|^` HTTP/1.1\r\nHost: x\r\n\r\n", 400),
+        // Host values: uri-host [ ":" port ].
+        (b"GET / HTTP/1.1\r\nHost: a b\r\n\r\n", 400),
+        (b"GET / HTTP/1.1\r\nHost: user@evil\r\n\r\n", 400),
+        (b"GET / HTTP/1.1\r\nHost: a/b\r\n\r\n", 400),
+        (b"GET / HTTP/1.1\r\nHost: a:8x\r\n\r\n", 400),
+        (b"GET / HTTP/1.1\r\nHost: a:1:2\r\n\r\n", 400),
+        (b"GET / HTTP/1.1\r\nHost: a%g0\r\n\r\n", 400),
+        (b"GET / HTTP/1.1\r\nHost: []\r\n\r\n", 400),
+        (b"GET / HTTP/1.1\r\nHost: [::1\r\n\r\n", 400),
+        (b"GET / HTTP/1.1\r\nHost: [::1]x\r\n\r\n", 400),
+        (b"GET / HTTP/1.1\r\nHost: \xff\r\n\r\n", 400),
+        (b"GET / HTTP/1.0\r\nHost: a?b\r\n\r\n", 400),
         // Fields.
         (b"GET / HTTP/1.1\r\nHost: x\r\nX: a\x00b\r\n\r\n", 400),
         (b"GET / HTTP/1.1\r\nHost: x\r\nX: a\x7fb\r\n\r\n", 400),
@@ -260,6 +301,25 @@ fn extra_fields() {
     let ob = write_head_open(&mut b, 200, b"text/plain", 5, true).unwrap();
     let nb = end_head(&mut b, ob).unwrap();
     assert_eq!(&a[..na], &b[..nb]);
+    // `write_head_with` writes the same as the three steps.
+    let mut c = [0u8; 256];
+    let e: Field = (b"", b"");
+    let fs: [Field; MAX_EXTRA_FIELDS] =
+        [(b"WWW-Authenticate", b"Bearer realm=\"d\""), (b"Cache-Control", b"no-store"), (b"Upgrade", b"h2c"), e];
+    let nc = write_head_with(&mut c, 401, b"", 0, false, fs, 2).unwrap();
+    assert_eq!(&c[..nc], &out[..n]);
+    let nd = write_head_with(&mut c, 200, b"text/plain", 5, true, fs, 0).unwrap();
+    assert_eq!(&c[..nd], &a[..na]);
+    // A refused field (the third is `Upgrade`) or one that does not fit
+    // refuses the head; fields past `n` are not looked at.
+    assert_eq!(write_head_with(&mut c, 401, b"", 0, false, fs, 3), None);
+    assert_eq!(write_head_with(&mut c[..n - 1], 401, b"", 0, false, fs, 2), None);
+    assert_eq!(write_fields(&mut c, 7, fs, 0), Some(7));
+    let all: [Field; MAX_EXTRA_FIELDS] = [(b"A", b"1"), (b"B", b""), (b"C", b"x y"), (b"D", b"4")];
+    let k = write_fields(&mut c, 0, all, 4).unwrap();
+    assert_eq!(&c[..k], b"A: 1\r\nB: \r\nC: x y\r\nD: 4\r\n");
+    // `n` past the array: all four.
+    assert_eq!(write_fields(&mut c, 0, all, 9), Some(k));
 }
 
 #[test]

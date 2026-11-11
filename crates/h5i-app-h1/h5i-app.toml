@@ -2,4 +2,4 @@
 
 [extract]
 crate = "."
-start-from = ["parse_head", "chunk_step", "read_body", "body_start", "recv_start", "recv_step", "carry", "fit_limits", "must_close", "write_head", "write_head_open", "write_field", "end_head"]
+start-from = ["parse_head", "chunk_step", "read_body", "body_start", "recv_start", "recv_step", "carry", "fit_limits", "must_close", "write_head", "write_head_open", "write_field", "end_head", "write_fields", "write_head_with"]

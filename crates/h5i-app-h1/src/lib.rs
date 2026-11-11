@@ -7,10 +7,11 @@
 //! (`docs/design/design-app-embedded.md`). Results are offsets into the
 //! caller's buffer, never borrows.
 //!
-//! The accepted grammar is a strict subset of RFC 9112: CRLF line ends only,
-//! no obs-fold, no whitespace before a colon, origin-form targets, exactly one
-//! `Host` on HTTP/1.1, at most one `Content-Length` (digits only) and at most
-//! one `Transfer-Encoding` (exactly `chunked`), never both.
+//! It accepts a subset of HTTP/1.1 and rejects some valid requests: CRLF line
+//! ends only, no obs-fold, no whitespace before a colon, origin-form targets
+//! (`absolute-path [ "?" query ]`), exactly one `Host` on HTTP/1.1 with a
+//! `uri-host [ ":" port ]` value, at most one `Content-Length` (digits only)
+//! and at most one `Transfer-Encoding` (exactly `chunked`), never both.
 
 #![no_std]
 
@@ -115,9 +116,49 @@ pub fn is_field_byte(b: u8) -> bool {
     b == HTAB || (b >= SP && b != 127)
 }
 
-/// A byte of an origin-form target: visible ASCII.
-pub fn is_target_byte(b: u8) -> bool {
-    b >= 33 && b <= 126
+/// `unreserved` or `sub-delims` (RFC 3986 §2.2, §2.3): a byte of a
+/// `reg-name` other than `%`. One test per range, as in [`is_tchar`].
+pub fn is_reg_byte(b: u8) -> bool {
+    if b < 33 {
+        false
+    } else if b < 48 {
+        b != 34 && b != 35 && b != 37 && b != 47
+    } else if b < 58 {
+        true
+    } else if b < 65 {
+        b == 59 || b == 61
+    } else if b < 91 {
+        true
+    } else if b < 97 {
+        b == 95
+    } else if b < 123 {
+        true
+    } else {
+        b == 126
+    }
+}
+
+/// Byte classes for [`span_end`].
+pub const CLASS_REG: u8 = 0;
+pub const CLASS_TARGET: u8 = 1;
+pub const CLASS_LITERAL: u8 = 2;
+pub const CLASS_DIGIT: u8 = 3;
+
+/// A byte of class `class` other than `%`: a `reg-name` byte; a target byte
+/// (`pchar`, `/` or `?`); an IP-literal byte (`unreserved`, `sub-delims`,
+/// `:`); a digit.
+pub fn byte_in(b: u8, class: u8) -> bool {
+    if class == CLASS_DIGIT {
+        b >= 48 && b <= 57
+    } else if is_reg_byte(b) {
+        true
+    } else if class == CLASS_TARGET {
+        b == COLON || b == 64 || b == 47 || b == 63
+    } else if class == CLASS_LITERAL {
+        b == COLON
+    } else {
+        false
+    }
 }
 
 fn is_ows(b: u8) -> bool {
@@ -141,14 +182,24 @@ fn token_end(buf: &[u8], i: usize, end: usize) -> usize {
     k
 }
 
-/// First index in `[i, end)` whose byte is not a target byte, or `end`.
-fn target_end(buf: &[u8], i: usize, end: usize) -> usize {
+/// The end of the longest run from `i` within `[i, end)` of bytes of
+/// `class` ([`byte_in`]) and, for a `reg-name` or a target, `%` HEXDIG
+/// HEXDIG. A `%` not followed by two hex digits ends the run at the `%`.
+fn span_end(buf: &[u8], i: usize, end: usize, class: u8) -> usize {
     let mut k = i;
     while k < end {
-        if !is_target_byte(buf[k]) {
+        let b = buf[k];
+        if b == 37 && class <= CLASS_TARGET {
+            if end - k > 2 && hex_value(buf[k + 1]) < 16 && hex_value(buf[k + 2]) < 16 {
+                k += 3;
+            } else {
+                return k;
+            }
+        } else if byte_in(b, class) {
+            k += 1;
+        } else {
             return k;
         }
-        k += 1;
     }
     k
 }
@@ -231,7 +282,9 @@ pub enum ReqLine {
     Ok(Span, Span, u8),
 }
 
-/// `method SP origin-form SP HTTP-version` in `buf[i..j]`.
+/// `method SP origin-form SP HTTP-version` in `buf[i..j]`. The target is
+/// `absolute-path [ "?" query ]` (RFC 9112 §3.2.1): `/` then `pchar`, `/`,
+/// `?` and `%` HEXDIG HEXDIG; anything else, `#` included, is 400.
 fn request_line(buf: &[u8], i: usize, j: usize) -> ReqLine {
     let m = token_end(buf, i, j);
     if m == i || m >= j {
@@ -241,7 +294,7 @@ fn request_line(buf: &[u8], i: usize, j: usize) -> ReqLine {
         return ReqLine::Bad(BAD_REQUEST);
     }
     let ts = m + 1;
-    let te = target_end(buf, ts, j);
+    let te = span_end(buf, ts, j, CLASS_TARGET);
     if te == ts || te >= j {
         return ReqLine::Bad(BAD_REQUEST);
     }
@@ -335,6 +388,32 @@ fn eq_ci(buf: &[u8], s: usize, e: usize, lit: &[u8]) -> bool {
     true
 }
 
+/// `[p, e)` is empty or `":" *DIGIT`.
+fn port_ok(buf: &[u8], p: usize, e: usize) -> bool {
+    if p >= e {
+        return true;
+    }
+    if buf[p] != COLON {
+        return false;
+    }
+    span_end(buf, p + 1, e, CLASS_DIGIT) == e
+}
+
+/// `buf[s..e]` is a `Host` value: `uri-host [ ":" port ]` (RFC 9110 §7.2),
+/// where `uri-host` is a `reg-name` (which covers IPv4 addresses) or `[`
+/// IP-literal bytes `]`. The empty value is allowed.
+fn host_ok(buf: &[u8], s: usize, e: usize) -> bool {
+    if s < e && buf[s] == 91 {
+        let k = span_end(buf, s + 1, e, CLASS_LITERAL);
+        if k == s + 1 || k >= e || buf[k] != 93 {
+            return false;
+        }
+        port_ok(buf, k + 1, e)
+    } else {
+        port_ok(buf, span_end(buf, s, e, CLASS_REG), e)
+    }
+}
+
 pub const KIND_OTHER: u8 = 0;
 pub const KIND_HOST: u8 = 1;
 pub const KIND_CONTENT_LENGTH: u8 = 2;
@@ -419,7 +498,7 @@ fn add_header(
     let mut g = f;
     let kind = classify(buf, ns, ne);
     if kind == KIND_HOST {
-        if g.host {
+        if g.host || !host_ok(buf, vs, ve) {
             return Added::Bad(BAD_REQUEST);
         }
         g.host = true;
@@ -1193,6 +1272,65 @@ pub fn write_field(out: &mut [u8], pos: usize, name: &[u8], value: &[u8]) -> Opt
 /// The CRLF that ends a head, at `pos`.
 pub fn end_head(out: &mut [u8], pos: usize) -> Option<usize> {
     put(out, pos, b"\r\n")
+}
+
+/// Extra fields [`write_head_with`] takes at most.
+pub const MAX_EXTRA_FIELDS: usize = 4;
+
+/// An extra response field: `(name, value)`.
+pub type Field<'a> = (&'a [u8], &'a [u8]);
+
+/// [`write_field`] for each of the first `n` of `fields` (all of them if
+/// `n > MAX_EXTRA_FIELDS`), in order, from `pos`; `None` as soon as one is
+/// refused or does not fit. (No loop: Aeneas cannot index an array of
+/// borrowed slices.)
+pub fn write_fields(out: &mut [u8], pos: usize, fields: [Field<'_>; MAX_EXTRA_FIELDS], n: usize) -> Option<usize> {
+    let [f0, f1, f2, f3] = fields;
+    let at = match field_if(out, pos, f0, n > 0) {
+        None => return None,
+        Some(a) => a,
+    };
+    let at = match field_if(out, at, f1, n > 1) {
+        None => return None,
+        Some(a) => a,
+    };
+    let at = match field_if(out, at, f2, n > 2) {
+        None => return None,
+        Some(a) => a,
+    };
+    field_if(out, at, f3, n > 3)
+}
+
+/// [`write_field`] of `f` if `cond`, else nothing.
+fn field_if(out: &mut [u8], pos: usize, f: Field<'_>, cond: bool) -> Option<usize> {
+    if !cond {
+        return Some(pos);
+    }
+    write_field(out, pos, f.0, f.1)
+}
+
+/// A whole response head with the first `n` of `fields` as extra fields
+/// (all of them if `n > MAX_EXTRA_FIELDS`):
+/// [`write_head_open`], then [`write_fields`], then [`end_head`]. `None` if
+/// any of them refuses.
+pub fn write_head_with(
+    out: &mut [u8],
+    status: u16,
+    content_type: &[u8],
+    body_len: u32,
+    close: bool,
+    fields: [Field<'_>; MAX_EXTRA_FIELDS],
+    n: usize,
+) -> Option<usize> {
+    let at = match write_head_open(out, status, content_type, body_len, close) {
+        None => return None,
+        Some(a) => a,
+    };
+    let at = match write_fields(out, at, fields, n) {
+        None => return None,
+        Some(a) => a,
+    };
+    end_head(out, at)
 }
 
 #[cfg(test)]
