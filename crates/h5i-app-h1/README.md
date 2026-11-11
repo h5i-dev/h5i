@@ -67,6 +67,7 @@ only), never both, and neither value may end in whitespace. Chunk sizes are
 | `write_head_total`, `write_head_open_total`, `end_head_total` | `H1Proofs.lean` | the head writers never panic, for every buffer length |
 | `write_field_total` | `H1Proofs.lean` | `write_field` never panics, for every buffer, position, name and value |
 | `write_field_spec` | `H1Proofs.lean` | on `Some(p)`: the name is a non-empty token and not reserved (`reservedSpec`: `Content-Length`, `Transfer-Encoding`, `Content-Type`, `Connection`, `Trailer`, `Upgrade`, any case), the value is field-value bytes without leading or trailing SP/HTAB, and exactly `name: value` CRLF was written at `pos`, nothing else changed |
+| `write_head_with_spec`, `write_fields_spec`, `write_head_with_total` | `H1Fields.lean` | `write_head_with` (the open head, the first `n` of four extra fields through `write_field`, the final CRLF) never panics; on `Some(p)` every field written passed `write_field`'s checks and `out` starts with exactly `Spec.renderHeadWith` of those fields, `p` bytes long |
 | `dec_digits_spec`, `put_W`, `put1_W`, `put_dec_W`, `put_reason_W` | `H1Proofs.lean` | the head writer's pieces write exactly their bytes after what is already written |
 | `parse_head_reads`, `parseHead_reads` | `H1Props.lean` | once `max_head` bytes are buffered, the result depends on them alone |
 | `parseHead_prefix`, `parse_head_prefix` | `H1Prefix.lean` | once the parser returns `Done` or `Reject` on a buffer, it returns the same on every longer buffer starting with it |
@@ -86,13 +87,14 @@ only), never both, and neither value may end in whitespace. Chunk sizes are
 | `no_smuggling`, `no_smuggling_valid` | `H1Smuggle.lean` | every parser in the lenient family `Interp` (which reads names with `H1Valid`, not the parser's `classify`) computes the same head length and framing on every head we accept, and that framing is `H1Valid.framing` |
 | `dechunk_valid`, `read_body_chunked_valid`, `recv_step_chunked_valid` | `H1Chunked.lean` | every chunked body `Spec.dechunk`, `read_body` or `recv_step` accepts is an `H1Valid.ValidChunked` (RFC 9112 §7.1 with 1 to 8 hex digits, no extensions or trailers, payload at most `max_body`, its own hex values): the received bytes `[start, used)` are that body and `rx[start..end]` its payload |
 
-Not proven: that every valid head within the limits is accepted
-or every valid chunked body decoded (completeness); the caller's
-`read` into `rx[filled..]` and `filled += n` (the theorems assume a read
-changes nothing below `filled`); the loop in `h5i-app-embedded` that calls
-`write_field` for each extra field; that `wants_close` finds exactly the
-`close` options (tested); anything about time. Check with `cargo app check crates/h5i-app-h1` (no `sorry`,
-`native_decide` or axioms beyond Lean's three).
+Not proven: that every valid head within the limits is accepted, or every
+valid chunked body decoded (completeness); that `wants_close` finds exactly the
+`close` options (tested); anything about time. The theorems assume a read
+changes nothing below `filled`: `h5i-app-embedded` passes only
+`rx[filled..]` to the read, and a count past the end makes
+`filled > rx.len()`, which `recv_step` answers with 500. Check with
+`cargo app check crates/h5i-app-h1` (no `sorry`, `native_decide` or axioms
+beyond Lean's three).
 
 Tests: unit tests in `src/tests.rs`; `tests/differential.rs` compares
 `parse_head` with `httparse` on 9,000 generated, mutated and random inputs

@@ -2532,4 +2532,61 @@ def write_field
       else ok (none, out)
   else ok (none, out)
 
+/-- [h5i_app_h1::field_if]:
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 1305:0-1310:1 -/
+def field_if
+  (out : Slice Std.U8) (pos : Std.Usize)
+  (f : ((Slice Std.U8) × (Slice Std.U8))) (cond : Bool) :
+  Result ((Option Std.Usize) × (Slice Std.U8))
+  := do
+  let (s, s1) := f
+  if cond
+  then write_field out pos s s1
+  else ok (some pos, out)
+
+/-- [h5i_app_h1::write_fields]:
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 1287:0-1302:1
+    Visibility: public -/
+def write_fields
+  (out : Slice Std.U8) (pos : Std.Usize)
+  (fields1 : Array ((Slice Std.U8) × (Slice Std.U8)) 4#usize) (n : Std.Usize)
+  :
+  Result ((Option Std.Usize) × (Slice Std.U8))
+  := do
+  let (s, s1) ← Array.index_usize fields1 0#usize
+  let (s2, s3) ← Array.index_usize fields1 1#usize
+  let (s4, s5) ← Array.index_usize fields1 2#usize
+  let (s6, s7) ← Array.index_usize fields1 3#usize
+  let (o, out1) ← field_if out pos (s, s1) (n > 0#usize)
+  match o with
+  | none => ok (none, out1)
+  | some a =>
+    let (o1, out2) ← field_if out1 a (s2, s3) (n > 1#usize)
+    match o1 with
+    | none => ok (none, out2)
+    | some a1 =>
+      let (o2, out3) ← field_if out2 a1 (s4, s5) (n > 2#usize)
+      match o2 with
+      | none => ok (none, out3)
+      | some a2 => field_if out3 a2 (s6, s7) (n > 3#usize)
+
+/-- [h5i_app_h1::write_head_with]:
+    Source: 'crates/h5i-app-h1/src/lib.rs', lines 1316:0-1334:1
+    Visibility: public -/
+def write_head_with
+  (out : Slice Std.U8) (status : Std.U16) (content_type : Slice Std.U8)
+  (body_len : Std.U32) (close : Bool)
+  (fields1 : Array ((Slice Std.U8) × (Slice Std.U8)) 4#usize) (n : Std.Usize)
+  :
+  Result ((Option Std.Usize) × (Slice Std.U8))
+  := do
+  let (o, out1) ← write_head_open out status content_type body_len close
+  match o with
+  | none => ok (none, out1)
+  | some a =>
+    let (o1, out2) ← write_fields out1 a fields1 n
+    match o1 with
+    | none => ok (none, out2)
+    | some a1 => end_head out2 a1
+
 end h5i_app_h1

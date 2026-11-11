@@ -1274,5 +1274,64 @@ pub fn end_head(out: &mut [u8], pos: usize) -> Option<usize> {
     put(out, pos, b"\r\n")
 }
 
+/// Extra fields [`write_head_with`] takes at most.
+pub const MAX_EXTRA_FIELDS: usize = 4;
+
+/// An extra response field: `(name, value)`.
+pub type Field<'a> = (&'a [u8], &'a [u8]);
+
+/// [`write_field`] for each of the first `n` of `fields` (all of them if
+/// `n > MAX_EXTRA_FIELDS`), in order, from `pos`; `None` as soon as one is
+/// refused or does not fit. (No loop: Aeneas cannot index an array of
+/// borrowed slices.)
+pub fn write_fields(out: &mut [u8], pos: usize, fields: [Field<'_>; MAX_EXTRA_FIELDS], n: usize) -> Option<usize> {
+    let [f0, f1, f2, f3] = fields;
+    let at = match field_if(out, pos, f0, n > 0) {
+        None => return None,
+        Some(a) => a,
+    };
+    let at = match field_if(out, at, f1, n > 1) {
+        None => return None,
+        Some(a) => a,
+    };
+    let at = match field_if(out, at, f2, n > 2) {
+        None => return None,
+        Some(a) => a,
+    };
+    field_if(out, at, f3, n > 3)
+}
+
+/// [`write_field`] of `f` if `cond`, else nothing.
+fn field_if(out: &mut [u8], pos: usize, f: Field<'_>, cond: bool) -> Option<usize> {
+    if !cond {
+        return Some(pos);
+    }
+    write_field(out, pos, f.0, f.1)
+}
+
+/// A whole response head with the first `n` of `fields` as extra fields
+/// (all of them if `n > MAX_EXTRA_FIELDS`):
+/// [`write_head_open`], then [`write_fields`], then [`end_head`]. `None` if
+/// any of them refuses.
+pub fn write_head_with(
+    out: &mut [u8],
+    status: u16,
+    content_type: &[u8],
+    body_len: u32,
+    close: bool,
+    fields: [Field<'_>; MAX_EXTRA_FIELDS],
+    n: usize,
+) -> Option<usize> {
+    let at = match write_head_open(out, status, content_type, body_len, close) {
+        None => return None,
+        Some(a) => a,
+    };
+    let at = match write_fields(out, at, fields, n) {
+        None => return None,
+        Some(a) => a,
+    };
+    end_head(out, at)
+}
+
 #[cfg(test)]
 mod tests;

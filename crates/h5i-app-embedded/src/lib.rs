@@ -181,7 +181,7 @@ impl<'r> Request<'r> {
 }
 
 /// Extra response fields a handler may add ([`Response::header`]).
-pub const MAX_FIELDS: usize = 4;
+pub const MAX_FIELDS: usize = h1::MAX_EXTRA_FIELDS;
 /// Bytes [`Response::header_copy`] may copy, over all its fields.
 pub const INLINE_VALUE: usize = 64;
 
@@ -297,13 +297,17 @@ impl Response {
         self.nfields as usize <= MAX_FIELDS
     }
 
-    /// The extra fields that fit, in order.
-    pub fn fields(&self) -> impl Iterator<Item = (&'static [u8], &[u8])> + '_ {
+    /// The extra fields that fit, in order: the first `n` of the array.
+    pub fn fields(&self) -> ([h1::Field<'_>; MAX_FIELDS], usize) {
         let n = (self.nfields as usize).min(MAX_FIELDS);
-        self.fields[..n].iter().map(move |&(name, v)| match v {
-            Value::Static(b) => (name, b),
-            Value::Inline(s, l) => (name, &self.inline[s as usize..s as usize + l as usize]),
-        })
+        let mut out: [h1::Field<'_>; MAX_FIELDS] = [(b"", b""); MAX_FIELDS];
+        for (o, &(name, v)) in out.iter_mut().zip(&self.fields[..n]) {
+            *o = match v {
+                Value::Static(b) => (name, b),
+                Value::Inline(s, l) => (name, &self.inline[s as usize..s as usize + l as usize]),
+            };
+        }
+        (out, n)
     }
 }
 
@@ -554,11 +558,15 @@ async fn read_request<IO: Read>(
         st = s;
         match a {
             Action::NeedRead => {
+                // The read gets only `rx[filled..]`, so it cannot change
+                // the bytes `recv_step` has seen. A count past the end
+                // (a broken driver) makes `filled > rx.len()`, which
+                // `recv_step` answers with 500.
                 let n = io.read(&mut rx[*filled..]).await?;
                 if n == 0 {
                     eof = true;
                 } else {
-                    *filled += n;
+                    *filled = filled.saturating_add(n);
                 }
             }
             a => return Ok(a),
@@ -573,9 +581,9 @@ pub fn wants_close(req: &Request<'_>) -> bool {
     h1::wants_close(req.raw, &req.head)
 }
 
-/// The head of `resp` in `head`: the verified writer's status line and
-/// framing fields, then each extra field through the verified
-/// `write_field`. `None` if anything was refused or did not fit.
+/// The head of `resp` in `head`, by the verified `write_head_with`: status
+/// line, framing fields, the extra fields, CRLF. `None` if anything was
+/// refused or did not fit.
 fn write_response_head(head: &mut [u8], resp: &Response, body_len: u32) -> Option<usize> {
     if resp.status < 200 {
         return None;
@@ -583,11 +591,8 @@ fn write_response_head(head: &mut [u8], resp: &Response, body_len: u32) -> Optio
     if !resp.fields_fit() {
         return None;
     }
-    let mut at = h1::write_head_open(head, resp.status, resp.content_type, body_len, resp.close)?;
-    for (name, value) in resp.fields() {
-        at = h1::write_field(head, at, name, value)?;
-    }
-    h1::end_head(head, at)
+    let (fields, n) = resp.fields();
+    h1::write_head_with(head, resp.status, resp.content_type, body_len, resp.close, fields, n)
 }
 
 /// Write `resp`, whose body is at `tx[room..]`; whether the connection

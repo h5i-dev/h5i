@@ -301,6 +301,25 @@ fn extra_fields() {
     let ob = write_head_open(&mut b, 200, b"text/plain", 5, true).unwrap();
     let nb = end_head(&mut b, ob).unwrap();
     assert_eq!(&a[..na], &b[..nb]);
+    // `write_head_with` writes the same as the three steps.
+    let mut c = [0u8; 256];
+    let e: Field = (b"", b"");
+    let fs: [Field; MAX_EXTRA_FIELDS] =
+        [(b"WWW-Authenticate", b"Bearer realm=\"d\""), (b"Cache-Control", b"no-store"), (b"Upgrade", b"h2c"), e];
+    let nc = write_head_with(&mut c, 401, b"", 0, false, fs, 2).unwrap();
+    assert_eq!(&c[..nc], &out[..n]);
+    let nd = write_head_with(&mut c, 200, b"text/plain", 5, true, fs, 0).unwrap();
+    assert_eq!(&c[..nd], &a[..na]);
+    // A refused field (the third is `Upgrade`) or one that does not fit
+    // refuses the head; fields past `n` are not looked at.
+    assert_eq!(write_head_with(&mut c, 401, b"", 0, false, fs, 3), None);
+    assert_eq!(write_head_with(&mut c[..n - 1], 401, b"", 0, false, fs, 2), None);
+    assert_eq!(write_fields(&mut c, 7, fs, 0), Some(7));
+    let all: [Field; MAX_EXTRA_FIELDS] = [(b"A", b"1"), (b"B", b""), (b"C", b"x y"), (b"D", b"4")];
+    let k = write_fields(&mut c, 0, all, 4).unwrap();
+    assert_eq!(&c[..k], b"A: 1\r\nB: \r\nC: x y\r\nD: 4\r\n");
+    // `n` past the array: all four.
+    assert_eq!(write_fields(&mut c, 0, all, 9), Some(k));
 }
 
 #[test]
