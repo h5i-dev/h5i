@@ -1,0 +1,36 @@
+[package]
+name = "thermostat-xiao-rp2040"
+description = "The thermostat on a bare Seeed XIAO RP2040: HTTP over USB CDC-ACM, the on-die temperature sensor, the RGB LED as outputs"
+edition = "2024"
+license = "Apache-2.0"
+version = "0.1.0"
+publish = false
+
+# Its own workspace: it builds only for thumbv6m-none-eabi (.cargo/config.toml).
+[workspace]
+
+[dependencies]
+thermostat-app = { path = "../app" }
+thermostat-kernel = { path = "../kernel" }
+h5i-app-embedded = { path = "../../../../crates/h5i-app-embedded" }
+cortex-m-rt = "0.7"
+embassy-executor = { version = "0.10", features = ["platform-cortex-m", "executor-thread"] }
+embassy-rp = { version = "0.10", features = ["rp2040", "rt", "time-driver", "critical-section-impl"] }
+embassy-time = "0.5"
+embassy-usb = "0.6"
+embedded-io-async = "0.7"
+panic-halt = "1"
+static_cell = "2"
+# Cortex-M0+ has no atomic CAS; static_cell needs it, so emulate it with critical sections.
+portable-atomic = { version = "1", features = ["critical-section"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+debug = true
+codegen-units = 1
+panic = "abort"
+
+[profile.dev]
+opt-level = "s"
+panic = "abort"

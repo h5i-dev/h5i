@@ -2,12 +2,15 @@
 
 An async, `no_std`, heap-free HTTP/1.1 server for h5i-app kernels on
 microcontrollers. It is the trusted shell around the verified
-[`h5i-app-h1`](../h5i-app-h1) core. The receive loop is h1's `recv_step`
-(head, body framing, chunked bodies decoded in place, 400/413/431) and
-`carry` (where the next pipelined request starts); the shell only reads into
-`rx[filled..]` when asked and adds the count to `filled`. It routes, and
-writes response heads with `write_head_with` (status line, framing fields,
-the extra fields through `write_field`, CRLF).
+[`h5i-app-h1`](../h5i-app-h1) core.
+
+The receive loop is h1's `recv_step` and `carry`. `recv_step` parses the
+head, applies the body framing, decodes chunked bodies in place and answers
+400, 413 or 431; `carry` finds where the next pipelined request starts. In
+that loop the shell only reads: when asked, it reads into `rx[filled..]` and
+adds the count to `filled`. Outside it, the shell routes and writes response heads with
+`write_head_with` (status line, framing fields, the extra fields through
+`write_field`, CRLF).
 
 ```rust
 let k = Calls::<Thermostat, Wire, App>::new();
@@ -33,20 +36,21 @@ serve(&Config::default(), &router, &app, &mut rx, &mut tx, &mut io, &bound).awai
   goes through the verified `write_field`, which refuses framing names
   (`Content-Length`, `Transfer-Encoding`, `Connection`, `Content-Type`,
   `Trailer`, `Upgrade`), non-token names and values with controls. A refused
-  field is an empty 500 that closes.
+  field turns the response into an empty 500 and closes the connection.
 - `form`: query and form pairs, percent-decoding, decimal parsing.
 - `json`: `Writer` writes through `h5i-app-json`'s proven slice writer;
   `Object` reads one flat object strictly (no nesting, no duplicate keys,
   valid escapes and UTF-8).
 - `kernel` binds an h5i-app `Kernel`. `Calls::call` binds each route to one
   command decoder, so a path produces only its own decoder's commands.
-  `DeviceEngine` holds one tenant's snapshot and runs commands as
+- `DeviceEngine` holds one tenant's snapshot and runs commands the way
   `MemoryEngine::execute_at` does (stamp, `transition`, `apply`), one write
-  at a time; a write is saved to the engine's `Store` before it is visible,
-  and a failed save changes nothing (503). Device tasks see every commit
-  through `DeviceEngine::changed` and run commands of their own with
-  `execute`. `PskAuth` checks a bearer key in constant time; use it only on
-  a link nobody else can read.
+  at a time. The engine saves a write to its `Store` before anyone can see
+  it; if the save fails, nothing changes and the client gets 503. Device
+  tasks see every commit through `DeviceEngine::changed` and run their own
+  commands with `execute`.
+- `PskAuth` checks a bearer key in constant time. Use it only on a link
+  nobody else can read.
 - `hmac` (feature `hmac`): `HmacAuth` verifies HMAC-SHA256 signatures bound
   to a per-boot id and a strictly increasing counter, so the key never
   crosses the link and a captured request cannot be replayed. It gives no
@@ -57,23 +61,25 @@ serve(&Config::default(), &router, &app, &mut rx, &mut tx, &mut io, &bound).awai
 - `tcp` (feature `embassy-net`): `serve_tcp` accepts and serves connections
   on one embassy-net port; run several for concurrent connections. The
   firmware picks embassy-net's IP and medium features.
-- `link` frames a byte link that has no connections (a UART shared through
-  a TCP bridge): `FLAG 'O'/'C' id` markers and escaped data, `serve_link`
-  serving each connection with a fresh buffer under a time bound, and a new
-  connection aborting the old one. Its host side is
-  `scripts/embedded/uart-gateway.py`.
-- A HEAD request runs the GET handler without sending the body; 1xx, 204
-  and 304 get no `Content-Length` and no body; any `Connection: close` token
-  closes.
+- `link` frames a byte link that has no connections, such as a UART shared
+  through a TCP bridge. `FLAG 'O'/'C' id` markers open and close each
+  connection, and the data between them is escaped. `serve_link` gives each
+  connection a fresh buffer and a time bound, and a new connection aborts
+  the old one. The host side is `scripts/embedded/uart-gateway.py`.
+- A HEAD request runs the GET handler and sends no body. Responses with
+  status 1xx, 204 or 304 carry no `Content-Length` and no body. Any
+  `Connection: close` token closes the connection.
 
-Memory per connection is `rx + tx` plus the handler's future: fixed at
-compile time. The receive buffer bounds the parser's limits, so a whole
-request fits.
+Memory per connection is `rx + tx` plus the handler's future, all fixed at
+compile time. The receive buffer caps the parser's limits, so a whole
+request always fits.
 
-Trusted, tested (`src/tests.rs`: pipelining, the same streams split into
-random reads, a smuggling corpus, oversized
-heads, truncation, slow clients, header refusals, route binding, signed and
-replayed requests, proptest fuzzing; `store`: power cuts at every byte;
-`json`: agreement with serde_json; `tcp`: two embassy-net stacks over an
-in-memory link). The examples in [`examples/embedded`](../../examples/embedded)
-run it on a host and in Renode.
+This crate is trusted, not proven, so it relies on tests. `src/tests.rs`
+covers pipelining, the same streams split into random reads, a smuggling
+corpus, oversized heads, truncation, slow clients, header refusals, route
+binding, signed and replayed requests, and proptest fuzzing. The `store`
+tests cut power at every byte, the `json` tests compare against serde_json,
+and the `tcp` test joins two embassy-net stacks over an in-memory link.
+
+The examples in [`examples/embedded`](../../examples/embedded) run the
+server on a host and in Renode.
