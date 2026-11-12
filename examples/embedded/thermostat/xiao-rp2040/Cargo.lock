@@ -680,11 +680,11 @@ dependencies = [
 
 [[package]]
 name = "h5i-app-core"
-version = "0.5.4"
+version = "0.5.5"
 
 [[package]]
 name = "h5i-app-embedded"
-version = "0.5.4"
+version = "0.5.5"
 dependencies = [
  "critical-section",
  "embassy-sync",
@@ -699,11 +699,11 @@ dependencies = [
 
 [[package]]
 name = "h5i-app-h1"
-version = "0.5.4"
+version = "0.5.5"
 
 [[package]]
 name = "h5i-app-json"
-version = "0.5.4"
+version = "0.5.5"
 
 [[package]]
 name = "half"

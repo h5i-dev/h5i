@@ -39,7 +39,7 @@ npx skills add h5i-dev/h5i
 
 ```toml
 [dependencies]
-h5i-app = { version = "0.5.4", features = ["http", "postgres"] }
+h5i-app = { version = "0.5.5", features = ["http", "postgres"] }
 ```
 
 <p align="center">
