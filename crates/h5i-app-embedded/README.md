@@ -2,7 +2,7 @@
 
 An async, `no_std`, heap-free HTTP/1.1 server for h5i-app kernels on
 microcontrollers. It is the trusted shell around the verified
-[`h5i-app-h1`](../h5i-app-h1) core.
+[`h5i-app-h1`](https://github.com/h5i-dev/h5i/tree/main/crates/h5i-app-h1) core.
 
 The receive loop is h1's `recv_step` and `carry`. `recv_step` parses the
 head, applies the body framing, decodes chunked bodies in place and answers
@@ -147,5 +147,5 @@ The `store` tests cut power at every byte, the `json` tests compare against
 serde_json, and the `tcp` test joins two embassy-net stacks over an
 in-memory link.
 
-The examples in [`examples/embedded`](../../examples/embedded) run the
+The examples in [`examples/embedded`](https://github.com/h5i-dev/h5i/tree/main/examples/embedded) run the
 server on a host and in Renode.
