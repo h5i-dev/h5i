@@ -3,5 +3,5 @@
 # thumbv7em-none-eabihf and is a workspace of its own (thermostat/firmware).
 [workspace]
 members = ["thermostat/kernel", "thermostat/app", "thermostat/host"]
-exclude = ["thermostat/firmware"]
+exclude = ["thermostat/firmware", "thermostat/xiao-rp2040"]
 resolver = "3"

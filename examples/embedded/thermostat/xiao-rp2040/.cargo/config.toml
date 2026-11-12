@@ -1,0 +1,8 @@
+[build]
+target = "thumbv6m-none-eabi"
+
+[target.thumbv6m-none-eabi]
+# Hold BOOT while plugging in, then `cargo run --release` copies a UF2 to the RPI-RP2 drive.
+runner = "elf2uf2-rs -d"
+# link.x is cortex-m-rt's script; link-rp.x (embassy-rp) places the second-stage bootloader.
+rustflags = ["-C", "link-arg=--nmagic", "-C", "link-arg=-Tlink.x", "-C", "link-arg=-Tlink-rp.x"]
