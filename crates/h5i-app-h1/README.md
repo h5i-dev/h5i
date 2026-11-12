@@ -27,22 +27,31 @@ loop {
 }
 ```
 
-`recv_step` is the receive loop without its I/O: it parses the head with
-`parse_head`, then reads the body with `read_body`, and says when to read
-more; `carry` moves the bytes after a request to the start of the buffer;
-`fit_limits` cuts the limits so a whole request fits; `must_close` decides
-keep-alive. `chunk_step` decodes a `chunked` body one byte at a time with a four-integer
-state. `read_body` finds where the body and the message end in the receive
-buffer, decoding a chunked body in place; call it again with its state after
-appending bytes. `write_head` writes `HTTP/1.1 <status> <reason>`, `Content-Type`,
-`Content-Length` (always from the given length) and `Connection: close`.
-`write_head_open`, `write_field` and `end_head` write the same head with
-extra fields between the framing fields and the blank line.
-`h5i-app-embedded` is the async server built on it.
+The crate does no I/O. The caller reads, and the crate says what the bytes
+mean:
+
+- `recv_step` is one turn of the receive loop. It parses the head with
+  `parse_head`, reads the body with `read_body`, and asks for another read
+  when it needs more bytes.
+- `read_body` finds where the body and the message end in the receive
+  buffer and decodes a chunked body in place. After appending bytes, call it
+  again with the state it returned.
+- `chunk_step` decodes a `chunked` body one byte at a time. Its state is four
+  integers.
+- `carry` moves the bytes after a request to the start of the buffer, where
+  the next request begins.
+- `fit_limits` lowers the limits until a whole request fits in the buffer.
+- `must_close` decides whether the connection stays open.
+- `write_head` writes `HTTP/1.1 <status> <reason>`, `Content-Type`,
+  `Content-Length` (always from the given length) and `Connection: close`.
+  `write_head_open`, `write_field` and `end_head` write the same head with
+  extra fields between the framing fields and the blank line.
+
+`h5i-app-embedded` is the async server built on this crate.
 
 ## Accepted grammar
 
-A subset of HTTP/1.1. Some valid requests are rejected: absolute-form,
+A subset of HTTP/1.1. The parser rejects some valid requests: absolute-form,
 authority-form and asterisk-form targets, empty lines before the request
 line, obs-fold, chunk extensions, trailer fields, `Transfer-Encoding` other
 than exactly `chunked`, and `Content-Length` lists.
@@ -87,16 +96,25 @@ only), never both, and neither value may end in whitespace. Chunk sizes are
 | `no_smuggling`, `no_smuggling_valid` | `H1Smuggle.lean` | every parser in the lenient family `Interp` (which reads names with `H1Valid`, not the parser's `classify`) computes the same head length and framing on every head we accept, and that framing is `H1Valid.framing` |
 | `dechunk_valid`, `read_body_chunked_valid`, `recv_step_chunked_valid` | `H1Chunked.lean` | every chunked body `Spec.dechunk`, `read_body` or `recv_step` accepts is an `H1Valid.ValidChunked` (RFC 9112 §7.1 with 1 to 8 hex digits, no extensions or trailers, payload at most `max_body`, its own hex values): the received bytes `[start, used)` are that body and `rx[start..end]` its payload |
 
-Not proven: that every valid head within the limits is accepted, or every
-valid chunked body decoded (completeness); that `wants_close` finds exactly the
-`close` options (tested); anything about time. The theorems assume a read
-changes nothing below `filled`: `h5i-app-embedded` passes only
-`rx[filled..]` to the read, and a count past the end makes
-`filled > rx.len()`, which `recv_step` answers with 500. Check with
-`cargo app check crates/h5i-app-h1` (no `sorry`, `native_decide` or axioms
-beyond Lean's three).
+Not proven:
 
-Tests: unit tests in `src/tests.rs`; `tests/differential.rs` compares
-`parse_head` with `httparse` on 9,000 generated, mutated and random inputs
-(where we are stricter, by an independent target and `Host` grammar) and
-checks the well-formedness properties at runtime.
+- completeness, meaning that every valid head within the limits is accepted
+  and every valid chunked body is decoded;
+- that `wants_close` finds exactly the `close` options (this is tested);
+- anything about time.
+
+The theorems assume a read changes nothing below `filled`.
+`h5i-app-embedded` passes only `rx[filled..]` to the read. A read that
+reports more bytes than it was given makes `filled > rx.len()`, and
+`recv_step` answers that with 500.
+
+To check the proofs, run `cargo app check crates/h5i-app-h1`. It confirms
+there is no `sorry`, no `native_decide`, and no axiom beyond Lean's three.
+
+The unit tests are in `src/tests.rs`. `tests/differential.rs` runs
+`parse_head` and `httparse` on 9,000 generated, mutated and random inputs.
+Where both accept, they must agree on every part of the head, and `parse_head`
+may not accept anything `httparse` refuses. Where only `httparse` accepts,
+the input must break a rule we chose on purpose (`stricter_by_design`): its
+own grammar for the target and `Host`, the framing policy, or CRLF-only line
+ends. The test also checks the well-formedness properties at runtime.
