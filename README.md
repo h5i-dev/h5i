@@ -30,6 +30,7 @@ npx skills add h5i-dev/h5i
 [`h5i-app`](crates/h5i-app/README.md) is a composable, Axum-based Rust web framework built around a verifiable application kernel.
 
 - **Kernel-based architecture**: Separate application logic from infrastructure to verify and optimize core behavior.
+- **Axum-compatible deployment**: Deploy applications to platforms supporting Axum, including Cloudflare Workers, Vercel, and Fly.io.
 - **Formal verification**: Translate Rust application logic into Lean 4 using [Aeneas](https://github.com/AeneasVerif/aeneas) and prove their properties.
 - **Automatic specification generation**: Generate Lean 4 specifications and proofs for common patterns, including database schemas, authorization, and storage operations.
 - **Multi-target execution**: Run application kernels across different execution environments:
