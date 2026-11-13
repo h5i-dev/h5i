@@ -135,11 +135,11 @@ impl Out<'_> {
 
     fn order_by(&mut self, t: &Table, alias: usize, desc: bool) {
         self.lit(" ORDER BY ");
-        for i in 0..t.key_len as usize {
+        for (i, c) in t.columns.iter().take(t.key_len as usize).enumerate() {
             if i > 0 {
                 self.lit(", ");
             }
-            self.col(alias, &t.columns[i].name.clone());
+            self.col(alias, &c.name.clone());
             if desc {
                 self.lit(" DESC");
             }
@@ -232,11 +232,11 @@ pub fn compile_read_with_mode(tables: &Vec<Table>, tenant: i64, q: &Read, count:
         out.lit("SELECT * FROM (");
         out.select(q.table, &q.pred, &q.window, &all, 0, false)?;
         out.lit(") AS w ORDER BY ");
-        for i in 0..t.key_len as usize {
+        for (i, c) in t.columns.iter().take(t.key_len as usize).enumerate() {
             if i > 0 {
                 out.lit(", ");
             }
-            push_name(&mut out.text, &t.columns[i].name);
+            push_name(&mut out.text, &c.name);
         }
     } else {
         out.select(q.table, &q.pred, &q.window, &all, 0, t.key_len > 0)?;

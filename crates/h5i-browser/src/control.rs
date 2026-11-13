@@ -1039,10 +1039,7 @@ fn control_verb_inner(session: &mut Session, request: &Value, verb: Verb) -> (Va
                     {
                         return false;
                     }
-                    if denied_only && row.allowed {
-                        return false;
-                    }
-                    true
+                    !(denied_only && row.allowed)
                 });
             }
             // Last, so a limit means "the newest N of what I asked for" rather
