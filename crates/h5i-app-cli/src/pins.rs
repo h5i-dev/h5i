@@ -49,7 +49,27 @@ mod tests {
         walk(&root.join("crates"), &mut out);
         walk(&root.join("examples/app"), &mut out);
         walk(&root.join("examples/embedded"), &mut out);
+        // The repository-root package, which republishes the crates' proof
+        // libraries for Reservoir.
+        out.push(root);
         out
+    }
+
+    /// The root package (what Reservoir lists) builds every crate's proof
+    /// project, so a new one is not left out of it.
+    #[test]
+    fn root_package_has_every_crate_proof_project() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let lakefile = std::fs::read_to_string(root.join("lakefile.lean")).unwrap();
+        for e in std::fs::read_dir(root.join("crates")).unwrap().flatten() {
+            if e.path().join("proofs/lakefile.lean").is_file() {
+                let dir = format!("crates/{}/proofs", e.file_name().to_string_lossy());
+                assert!(
+                    lakefile.contains(&format!("srcDir := \"{dir}\"")),
+                    "the root lakefile.lean has no library for {dir}"
+                );
+            }
+        }
     }
 
     /// Every proof project in the repository uses the pinned toolchain, so
