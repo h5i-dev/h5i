@@ -266,6 +266,7 @@ NAV = '''<nav>
     <li><a href="/guides/">Guides</a></li>
     <li><a href="/manual/">Manual</a></li>
     <li><a href="/blog/">Blog</a></li>
+    <li><a href="/showcase/">Showcase</a></li>
     <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &rarr;</a></li>
   </ul>
 </nav>'''

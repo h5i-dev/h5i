@@ -18,6 +18,7 @@ ROOT = Path(__file__).parent
 sys.path.insert(0, str(ROOT))
 from guide_hubs import GUIDES
 from blog_hubs import BLOG
+import showcase_page
 
 # When the documentation rewrite published this set of pages. A real
 # publication date, so it is genuinely a constant.
@@ -39,23 +40,24 @@ PUBLISHED = "2026-08-21"
 # without its date. Changing a page's content and forgetting the date is a
 # build error, not a silent regression.
 PAGE_HISTORY = {
-    "": ("2026-11-09", "812bd1dc91c2f488"),
-    "features/": ("2026-10-28", "abd7bfe210c0a19f"),
-    "manual/": ("2026-11-08", "83d7c05d30fa46cc"),
+    "": ("2026-11-14", "9f457cd5a610b44f"),
+    "features/": ("2026-11-14", "e93b77a6e31134ef"),
+    "manual/": ("2026-11-14", "4bdbb79f32ea904b"),
     "pitch/": ("2026-11-10", "e14cdcbdaf5cf917"),
     "demo/": ("2026-10-22", "9dae5fe7a3dbf01b"),
-    "guides/": ("2026-10-23", "7c6c8d7fc6200fbc"),
-    "guides/build-and-verify-a-web-app/": ("2026-10-28", "840ac8fc36b965d2"),
-    "guides/red-team-a-web-app/": ("2026-10-21", "3af532e9ff5592f3"),
-    "guides/advanced-web-security-testing/": ("2026-10-21", "ee29cf39a56e07d5"),
-    "guides/security-regression-testing/": ("2026-10-21", "b7a8f9ea68eea371"),
-    "guides/sandboxed-agent-workflows/": ("2026-10-21", "98e554bde6b6bd58"),
-    "blog/": ("2026-10-21", "6b670194b9694f37"),
-    "blog/building-a-verifiable-web-framework/": ("2026-10-28", "d0cd32a9a8d35f52"),
-    "blog/finding-bugs-verifying-rust-oss/": ("2026-10-21", "ee2d74b97bf0df5f"),
-    "blog/ai-powered-web-security-testing/": ("2026-10-21", "a380de1c91db2206"),
-    "blog/sandboxing-ai-agents/": ("2026-10-21", "2b9ca59124b152ef"),
-    "blog/auditing-agent-workflows/": ("2026-10-21", "969ae1325375f6d0"),
+    "guides/": ("2026-11-14", "4639eb50174b3f11"),
+    "guides/build-and-verify-a-web-app/": ("2026-11-14", "6a36fe7dc2915dee"),
+    "guides/red-team-a-web-app/": ("2026-11-14", "04539ec2e85001b1"),
+    "guides/advanced-web-security-testing/": ("2026-11-14", "1a26fa7d6616ac80"),
+    "guides/security-regression-testing/": ("2026-11-14", "22c4634d56ebf90d"),
+    "guides/sandboxed-agent-workflows/": ("2026-11-14", "aa7cb8297a27c772"),
+    "showcase/": ("2026-11-14", "2d98224f5e49aed1"),
+    "blog/": ("2026-11-14", "68815f1592df03ed"),
+    "blog/building-a-verifiable-web-framework/": ("2026-11-14", "96413827121891ce"),
+    "blog/finding-bugs-verifying-rust-oss/": ("2026-11-14", "ebaa33e5de8e1728"),
+    "blog/ai-powered-web-security-testing/": ("2026-11-14", "d1ed85bb89d9376d"),
+    "blog/sandboxing-ai-agents/": ("2026-11-14", "73de6cd364c2c612"),
+    "blog/auditing-agent-workflows/": ("2026-11-14", "2dd6026bfed937ff"),
 }
 
 # The pages this script does not write. They are fingerprinted off disk.
@@ -121,13 +123,14 @@ NAV = """<nav class="blog-nav">
   <ul class="nav-links">
     <li><a href="/features/">Features</a></li><li><a href="/guides/">Guides</a></li>
     <li><a href="/manual/">Manual</a></li><li><a href="/blog/">Blog</a></li>
+    <li><a href="/showcase/">Showcase</a></li>
     <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &rarr;</a></li>
   </ul>
 </nav>"""
 
 FOOTER = """<footer class="blog-footer"><div class="blog-footer-inner">
   <div class="brand">h5i<span class="red"> / high-five</span></div>
-  <nav class="links"><a href="/">Home</a><a href="/guides/">Guides</a><a href="/blog/">Blog</a><a href="/manual/">Manual</a><a href="https://github.com/h5i-dev/h5i">GitHub</a></nav>
+  <nav class="links"><a href="/">Home</a><a href="/guides/">Guides</a><a href="/blog/">Blog</a><a href="/manual/">Manual</a><a href="/showcase/">Showcase</a><a href="https://github.com/h5i-dev/h5i">GitHub</a></nav>
   <div class="legal">Apache 2.0 &middot; Built with Rust</div>
 </div></footer>
 <script src="/_static/blog.js" defer></script><script src="/_static/highlight.js" defer></script>"""
@@ -376,6 +379,11 @@ def build():
             out.mkdir(exist_ok=True)
             (out / "index.html").write_text(redirect_page(f"/{section}/{new}/"))
 
+    (ROOT / "showcase").mkdir(exist_ok=True)
+    generated["showcase/"] = showcase_page.render(
+        (ROOT / "SHOWCASE.md").read_text(), head, NAV, FOOTER, modified("showcase/"))
+    (ROOT / "showcase" / "index.html").write_text(generated["showcase/"])
+
     for old, target in TOP_REDIRECTS.items():
         out = ROOT / old
         out.mkdir(exist_ok=True)
@@ -386,7 +394,7 @@ def build():
     verify_dates(generated)
 
     core = [("", "1.0"), ("features/", "0.9"), ("manual/", "0.9"),
-            ("guides/", "0.8"), ("blog/", "0.8"), ("pitch/", "0.6"), ("demo/", "0.6")]
+            ("guides/", "0.8"), ("blog/", "0.8"), ("showcase/", "0.7"), ("pitch/", "0.6"), ("demo/", "0.6")]
     urls = [(path, priority, modified(path)) for path, priority in core]
     urls += [(f"{item['section']}/{item['slug']}/", "0.7", modified(f"{item['section']}/{item['slug']}/"))
              for item in ARTICLES]
@@ -417,6 +425,7 @@ def build():
 - [Features](https://h5i.dev/features/): Overview of the framework and development tools.
 - [Guides](https://h5i.dev/guides/): Five task workflows, from Rust app development to sandboxed agent work.
 - [Manual](https://h5i.dev/manual/): Commands, configuration, policies, and limitations.
+- [Showcase](https://h5i.dev/showcase/): Apps, benchmarks, and community tools built with h5i.
 
 ## 1. Verifiable Web Framework
 
