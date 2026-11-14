@@ -11,6 +11,7 @@
 - [Features](https://h5i.dev/features/): Overview of the framework and development tools.
 - [Guides](https://h5i.dev/guides/): Five task workflows, from Rust app development to sandboxed agent work.
 - [Manual](https://h5i.dev/manual/): Commands, configuration, policies, and limitations.
+- [Showcase](https://h5i.dev/showcase/): Apps, benchmarks, and community tools built with h5i.
 
 ## 1. Verifiable Web Framework
 
