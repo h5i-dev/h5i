@@ -206,17 +206,17 @@
   font-family: var(--disp); font-weight: 800; font-size: clamp(160px, 22vw, 320px);
   letter-spacing: -0.07em; line-height: 1; color: transparent; -webkit-text-stroke: 1px rgba(255,255,255,0.22);
 }
-.sc-cta-copy { position: relative; padding: 60px var(--gut); border-right: 1px solid rgba(255,255,255,0.25); }
+.sc-cta-copy { position: relative; display: flex; flex-direction: column; justify-content: center; padding: 40px var(--gut); border-right: 1px solid rgba(255,255,255,0.25); }
 .sc-cta .sc-kicker { color: #fff; opacity: 0.85; }
 .sc-cta h2 {
   font-family: var(--disp); font-weight: 700;
-  font-size: clamp(32px, 3.8vw, 52px); line-height: 1; letter-spacing: -0.035em; margin-top: 16px;
+  font-size: clamp(32px, 3.8vw, 52px); line-height: 1; letter-spacing: -0.035em;
 }
 .sc-cta p { margin-top: 20px; max-width: 46ch; font-size: 15.5px; line-height: 1.65; color: rgba(255,255,255,0.92); }
 .sc-cta .sc-cta-btn { background: #0a0a09; border-color: #0a0a09; color: #fff; }
 .sc-cta .sc-cta-btn:hover { background: #fff; border-color: #fff; color: var(--spot-solid); }
-.sc-steps { position: relative; list-style: none; align-self: center; padding: 48px var(--gut); }
-.sc-steps li { display: grid; grid-template-columns: 54px 1fr; gap: 16px; padding: 22px 0; border-bottom: 1px solid rgba(255,255,255,0.25); }
+.sc-steps { position: relative; list-style: none; align-self: center; padding: 28px var(--gut); }
+.sc-steps li { display: grid; grid-template-columns: 54px 1fr; gap: 16px; padding: 16px 0; border-bottom: 1px solid rgba(255,255,255,0.25); }
 .sc-steps li:last-child { border-bottom: 0; }
 .sc-step-n { font-family: var(--mono); font-size: 13px; letter-spacing: 0.1em; opacity: 0.8; padding-top: 4px; }
 .sc-steps h3 { font-family: var(--disp); font-weight: 600; font-size: 18px; letter-spacing: -0.01em; }
@@ -241,7 +241,7 @@
   .sc-hero { min-height: 0; }
   .sc-hero-copy { border-right: 0; border-bottom: 1px solid var(--line2); padding: 56px var(--gut) 44px; }
   .sc-term { margin: 28px var(--gut); transform: none; }
-  .sc-cta-copy { border-right: 0; border-bottom: 1px solid rgba(255,255,255,0.25); padding: 56px var(--gut) 44px; }
+  .sc-cta-copy { border-right: 0; border-bottom: 1px solid rgba(255,255,255,0.25); padding: 40px var(--gut) 32px; }
 }
 @media (max-width: 640px) {
   :root { --gut: 16px; }

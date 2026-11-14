@@ -233,9 +233,9 @@ def render(text, head, nav, footer, modified):
 <div class="sc-hero-copy">
 <div class="post-eyebrow">Showcase / {total} entries</div>
 <h1>Built with h5i<span class="sc-dot">.</span></h1>
-<p class="sc-deck">Verified web apps, reproducible benchmarks, and tools built by the community. Everything here started as one line in <a href="https://github.com/h5i-dev/h5i/blob/main/docs/SHOWCASE.md"><code>SHOWCASE.md</code></a>. The next line could be yours.</p>
+<p class="sc-deck">We are looking for people building cool things with h5i. Tell us what you are making and how we can help.</p>
 <div class="hero-actions"><a class="btn btn-primary" href="{APPLY_URL}">Join the Early Builder Program &rarr;</a>
-<a class="btn btn-ghost" href="{EDIT_URL}">Add your project</a></div>
+<a class="btn btn-ghost" href="{EDIT_URL}">Submit your project</a></div>
 </div>
 {window()}
 </section>
@@ -244,9 +244,7 @@ def render(text, head, nav, footer, modified):
 {bands}
 <section class="sc-cta" id="early-builders">
 <div class="sc-cta-copy" data-reveal>
-<div class="sc-kicker">Early Builder Program</div>
-<h2>Build on h5i.<br>Ship it here.</h2>
-<p>We are looking for people building real things with h5i-app, boxes, and the red-teaming tools. Tell us what you are making and how we can help.</p>
+<h2>Early Builder Program</h2>
 <div class="hero-actions"><a class="btn btn-primary sc-cta-btn" href="{APPLY_URL}">Apply now &rarr;</a></div>
 </div>
 <ol class="sc-steps" data-reveal>
