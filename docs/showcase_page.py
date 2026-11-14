@@ -245,6 +245,7 @@ def render(text, head, nav, footer, modified):
 <section class="sc-cta" id="early-builders">
 <div class="sc-cta-copy" data-reveal>
 <h2>Early Builder Program</h2>
+<p>Early Builders get featured on the h5i site, priority on GitHub issues, and direct help from the h5i team.</p>
 <div class="hero-actions"><a class="btn btn-primary sc-cta-btn" href="{APPLY_URL}">Apply now &rarr;</a></div>
 </div>
 <ol class="sc-steps" data-reveal>
