@@ -48,6 +48,26 @@ pub const PAGES: &[Page] = &[
         path: "references/project.md",
         text: include_str!("../../../skills/h5i/references/project.md"),
     },
+    Page {
+        path: "references/app.md",
+        text: include_str!("../../../skills/h5i/references/app.md"),
+    },
+    Page {
+        path: "references/test.md",
+        text: include_str!("../../../skills/h5i/references/test.md"),
+    },
+    Page {
+        path: "references/impactful-bug-bounty.md",
+        text: include_str!("../../../skills/h5i/references/impactful-bug-bounty.md"),
+    },
+    Page {
+        path: "references/impact-hypotheses.md",
+        text: include_str!("../../../skills/h5i/references/impact-hypotheses.md"),
+    },
+    Page {
+        path: "references/impact-research-patterns.md",
+        text: include_str!("../../../skills/h5i/references/impact-research-patterns.md"),
+    },
 ];
 
 /// The name the skill installs under.
@@ -129,6 +149,17 @@ mod tests {
     fn every_page_has_content() {
         for p in PAGES {
             assert!(!p.text.trim().is_empty(), "{} is empty", p.path);
+        }
+    }
+
+    #[test]
+    fn every_file_in_the_skill_directory_is_embedded() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills/h5i");
+        for path in crate::speckit::tests::files_under(&root) {
+            assert!(
+                PAGES.iter().any(|p| p.path == path),
+                "skills/h5i/{path} is not in PAGES"
+            );
         }
     }
 

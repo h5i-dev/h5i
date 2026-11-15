@@ -14,57 +14,57 @@
   ],
   "nodes": [
     {
-      "id": "g-edit-own",
+      "id": "auth-01",
       "kind": "guarantee",
-      "title": "Only the author changes a post",
+      "title": "AUTH-01: Only the author changes a post",
       "description": "Every post write made by an accepted command is either a new post by the caller under the next id, or new text for a post the caller already authored. Another user's edit request writes nothing."
     },
     {
-      "id": "g-delete-rights",
+      "id": "auth-02",
       "kind": "guarantee",
-      "title": "Only the author or a moderator deletes a post",
+      "title": "AUTH-02: Only the author or a moderator deletes a post",
       "description": "An accepted delete removes an existing post, and the caller is that post's author or a moderator in the state before the command."
     },
     {
-      "id": "g-appoint",
+      "id": "auth-03",
       "kind": "guarantee",
-      "title": "Moderators are appointed by moderators",
+      "title": "AUTH-03: Moderators are appointed by moderators",
       "description": "A moderator can appoint anyone. A user who is not a moderator can only appoint themselves, and only while the board has no moderator at all."
     },
     {
-      "id": "g-demote-rights",
+      "id": "auth-04",
       "kind": "guarantee",
-      "title": "Only moderators remove moderators",
+      "title": "AUTH-04: Only moderators remove moderators",
       "description": "An accepted demotion is made by a moderator, removes a current moderator, and leaves at least one other moderator in place."
     },
     {
-      "id": "g-last-mod",
+      "id": "inv-01",
       "kind": "guarantee",
-      "title": "The last moderator cannot be removed",
+      "title": "INV-01: The last moderator cannot be removed",
       "description": "Once a board has a moderator, every accepted command leaves it with at least one, for states where the invariant holds."
     },
     {
-      "id": "g-author-fixed",
+      "id": "inv-02",
       "kind": "guarantee",
-      "title": "A post's author never changes",
+      "title": "INV-02: A post's author never changes",
       "description": "Across any accepted command, a post that keeps its id keeps its author. Edits change only the text."
     },
     {
-      "id": "g-unique-ids",
+      "id": "inv-03",
       "kind": "guarantee",
-      "title": "Post ids are unique and below the counter",
+      "title": "INV-03: Post ids are unique and below the counter",
       "description": "In every reachable board no two posts share an id, and every post id is smaller than the next id the counter will hand out."
     },
     {
-      "id": "g-valid-text",
+      "id": "inv-04",
       "kind": "guarantee",
-      "title": "Stored posts have 1 to 280 bytes",
+      "title": "INV-04: Stored posts have 1 to 280 bytes",
       "description": "In every reachable board every post's text is nonempty and at most 280 bytes. Empty or oversized text is never stored."
     },
     {
-      "id": "g-unique-mods",
+      "id": "inv-05",
       "kind": "guarantee",
-      "title": "No duplicate moderator entries",
+      "title": "INV-05: No duplicate moderator entries",
       "description": "In every reachable board each user appears at most once in the moderator table."
     },
     {
@@ -950,253 +950,253 @@
   ],
   "edges": [
     {
-      "from": "g-edit-own",
+      "from": "auth-01",
       "to": "t-authorized-reachable",
       "kind": "proved by",
       "view": "proof"
     },
     {
-      "from": "g-edit-own",
+      "from": "auth-01",
       "to": "t-authorized",
       "kind": "proved by",
       "view": "proof"
     },
     {
-      "from": "g-edit-own",
+      "from": "auth-01",
       "to": "t-edit-spec",
       "kind": "command lemma",
       "view": "proof"
     },
     {
-      "from": "g-edit-own",
+      "from": "auth-01",
       "to": "s-allowed",
       "kind": "stated over",
       "view": "proof"
     },
     {
-      "from": "g-edit-own",
+      "from": "auth-01",
       "to": "a-reachable",
       "kind": "assumes",
       "view": "proof"
     },
     {
-      "from": "g-edit-own",
+      "from": "auth-01",
       "to": "b-auth",
       "kind": "caller identity from",
       "view": "proof"
     },
     {
-      "from": "g-edit-own",
+      "from": "auth-01",
       "to": "b-extraction",
       "kind": "about extracted code",
       "view": "proof"
     },
     {
-      "from": "g-delete-rights",
+      "from": "auth-02",
       "to": "t-authorized-reachable",
       "kind": "proved by",
       "view": "proof"
     },
     {
-      "from": "g-delete-rights",
+      "from": "auth-02",
       "to": "s-ismod",
       "kind": "moderator test",
       "view": "proof"
     },
     {
-      "from": "g-delete-rights",
+      "from": "auth-02",
       "to": "t-delete-spec",
       "kind": "command lemma",
       "view": "proof"
     },
     {
-      "from": "g-delete-rights",
+      "from": "auth-02",
       "to": "t-bob-cannot-delete",
       "kind": "illustrated by",
       "view": "proof"
     },
     {
-      "from": "g-delete-rights",
+      "from": "auth-02",
       "to": "s-allowed",
       "kind": "stated over",
       "view": "proof"
     },
     {
-      "from": "g-delete-rights",
+      "from": "auth-02",
       "to": "a-reachable",
       "kind": "assumes",
       "view": "proof"
     },
     {
-      "from": "g-delete-rights",
+      "from": "auth-02",
       "to": "b-auth",
       "kind": "caller identity from",
       "view": "proof"
     },
     {
-      "from": "g-appoint",
+      "from": "auth-03",
       "to": "t-authorized-reachable",
       "kind": "proved by",
       "view": "proof"
     },
     {
-      "from": "g-appoint",
+      "from": "auth-03",
       "to": "t-promote-spec",
       "kind": "command lemma",
       "view": "proof"
     },
     {
-      "from": "g-appoint",
+      "from": "auth-03",
       "to": "s-allowed",
       "kind": "stated over",
       "view": "proof"
     },
     {
-      "from": "g-appoint",
+      "from": "auth-03",
       "to": "a-reachable",
       "kind": "assumes",
       "view": "proof"
     },
     {
-      "from": "g-appoint",
+      "from": "auth-03",
       "to": "b-auth",
       "kind": "caller identity from",
       "view": "proof"
     },
     {
-      "from": "g-demote-rights",
+      "from": "auth-04",
       "to": "t-authorized-reachable",
       "kind": "proved by",
       "view": "proof"
     },
     {
-      "from": "g-demote-rights",
+      "from": "auth-04",
       "to": "t-demote-spec",
       "kind": "command lemma",
       "view": "proof"
     },
     {
-      "from": "g-demote-rights",
+      "from": "auth-04",
       "to": "t-other-mod",
       "kind": "bridged by",
       "view": "proof"
     },
     {
-      "from": "g-demote-rights",
+      "from": "auth-04",
       "to": "s-allowed",
       "kind": "stated over",
       "view": "proof"
     },
     {
-      "from": "g-demote-rights",
+      "from": "auth-04",
       "to": "a-reachable",
       "kind": "assumes",
       "view": "proof"
     },
     {
-      "from": "g-last-mod",
+      "from": "inv-01",
       "to": "t-moderator-kept",
       "kind": "proved by",
       "view": "proof"
     },
     {
-      "from": "g-last-mod",
+      "from": "inv-01",
       "to": "t-last-mod-stays",
       "kind": "illustrated by",
       "view": "proof"
     },
     {
-      "from": "g-last-mod",
+      "from": "inv-01",
       "to": "a-inv-pre",
       "kind": "assumes",
       "view": "proof"
     },
     {
-      "from": "g-last-mod",
+      "from": "inv-01",
       "to": "a-mod-present",
       "kind": "assumes",
       "view": "proof"
     },
     {
-      "from": "g-last-mod",
+      "from": "inv-01",
       "to": "a-reachable",
       "kind": "invariant discharged for",
       "view": "proof"
     },
     {
-      "from": "g-author-fixed",
+      "from": "inv-02",
       "to": "t-author-kept",
       "kind": "proved by",
       "view": "proof"
     },
     {
-      "from": "g-author-fixed",
+      "from": "inv-02",
       "to": "a-inv-pre",
       "kind": "assumes",
       "view": "proof"
     },
     {
-      "from": "g-author-fixed",
+      "from": "inv-02",
       "to": "a-reachable",
       "kind": "invariant discharged for",
       "view": "proof"
     },
     {
-      "from": "g-unique-ids",
+      "from": "inv-03",
       "to": "t-reachable-inv",
       "kind": "proved by",
       "view": "proof"
     },
     {
-      "from": "g-unique-ids",
+      "from": "inv-03",
       "to": "t-init-inv",
       "kind": "base case",
       "view": "proof"
     },
     {
-      "from": "g-unique-ids",
+      "from": "inv-03",
       "to": "s-inv",
       "kind": "stated over",
       "view": "proof"
     },
     {
-      "from": "g-unique-ids",
+      "from": "inv-03",
       "to": "a-reachable",
       "kind": "assumes",
       "view": "proof"
     },
     {
-      "from": "g-valid-text",
+      "from": "inv-04",
       "to": "t-reachable-inv",
       "kind": "proved by",
       "view": "proof"
     },
     {
-      "from": "g-valid-text",
+      "from": "inv-04",
       "to": "s-textok",
       "kind": "stated over",
       "view": "proof"
     },
     {
-      "from": "g-valid-text",
+      "from": "inv-04",
       "to": "a-reachable",
       "kind": "assumes",
       "view": "proof"
     },
     {
-      "from": "g-unique-mods",
+      "from": "inv-05",
       "to": "t-reachable-inv",
       "kind": "proved by",
       "view": "proof"
     },
     {
-      "from": "g-unique-mods",
+      "from": "inv-05",
       "to": "s-inv",
       "kind": "stated over",
       "view": "proof"
     },
     {
-      "from": "g-unique-mods",
+      "from": "inv-05",
       "to": "a-reachable",
       "kind": "assumes",
       "view": "proof"

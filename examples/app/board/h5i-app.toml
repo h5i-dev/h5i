@@ -7,14 +7,62 @@ include = ["h5i_app_sql"]
 
 [check]
 # Must exist and use only the standard axioms (every theorem in a hand-written
-# module is gated as well).
-theorems = ["board_kernel.Storage.db_inv"]
+# module is gated as well): the Proof Map theorems of specs/001-board/plan.md,
+# and the storage invariant.
+theorems = [
+    "board_kernel.Theorems.moderator_kept",       # INV-01
+    "board_kernel.Theorems.author_kept",          # INV-02
+    "board_kernel.Theorems.reachable_inv",        # INV-03, INV-04, INV-05
+    "board_kernel.Theorems.authorized_reachable", # AUTH-01 to AUTH-04
+    "board_kernel.Storage.db_inv",
+]
 
 [obligations]
 # `check` requires exactly `H5iAppLib.Obligation.PanicFree board_kernel.transition`.
 panic-free = "board_kernel.Theorems.panic_free"
 
+# One per requirement ID of specs/001-board/spec.md (see the plan's Proof Map).
 [[mutant]]
-name = "remove_last_moderator"
+name = "inv_01_remove_last_moderator"
 old = "s.moderators.len() <= 1"
 new = "s.moderators.len() < 1"
+
+[[mutant]]
+name = "inv_02_publish_over_post_0"
+old = "let id = s.counter.next_id;"
+new = "let id = 0;"
+
+[[mutant]]
+name = "inv_03_counter_not_advanced"
+old = "Counter { next_id: id + 1 }"
+new = "Counter { next_id: id }"
+
+[[mutant]]
+name = "inv_04_empty_text"
+old = "t.len() > 0 && t.len() <= MAX_TEXT"
+new = "t.len() <= MAX_TEXT"
+
+[[mutant]]
+name = "inv_05_moderator_appended"
+old = "Write::PutModerator(m) => Moderator::put(&mut s.moderators, m),"
+new = "Write::PutModerator(m) => s.moderators.push(m),"
+
+[[mutant]]
+name = "auth_01_edit_any_post"
+old = "if p.author != user {"
+new = "if false {"
+
+[[mutant]]
+name = "auth_02_delete_any_post"
+old = "if p.author == user || is_moderator(&s.moderators, user) {"
+new = "if true {"
+
+[[mutant]]
+name = "auth_03_self_appoint_any_time"
+old = "let bootstrap = s.moderators.len() == 0 && target == user;"
+new = "let bootstrap = target == user;"
+
+[[mutant]]
+name = "auth_04_demote_by_anyone"
+old = "if !is_moderator(&s.moderators, user) {"
+new = "if false {"

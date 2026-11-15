@@ -1,0 +1,64 @@
+schema_version: "1.0"
+
+preset:
+  id: "h5i"
+  name: "h5i verified kernel"
+  version: "0.1.0"
+  description: "Adds h5i-app proof obligations to Spec Kit: requirement IDs map to Lean theorems, mutants and h5i-app.ui.json nodes."
+  author: "h5i-dev"
+  repository: "https://github.com/h5i-dev/h5i"
+  license: "Apache-2.0"
+
+requires:
+  speckit_version: ">=0.9.0"
+
+provides:
+  templates:
+    - type: "template"
+      name: "constitution-template"
+      file: "templates/constitution-addendum.md"
+      description: "Kernel separation, proof gate and mutant principles"
+      strategy: "append"
+
+    - type: "template"
+      name: "spec-template"
+      file: "templates/spec-addendum.md"
+      description: "Invariant (INV-*) and authorization (AUTH-*) requirements"
+      strategy: "append"
+
+    - type: "template"
+      name: "plan-template"
+      file: "templates/plan-addendum.md"
+      description: "Kernel boundary, proof map, mutants and trust boundary"
+      strategy: "append"
+
+    - type: "template"
+      name: "tasks-template"
+      file: "templates/tasks-addendum.md"
+      description: "Proof and mutation tasks per requirement ID"
+      strategy: "append"
+
+    - type: "command"
+      name: "speckit.plan"
+      file: "commands/speckit.plan.md"
+      description: "Fill the proof map from the spec's INV/AUTH IDs"
+      strategy: "append"
+
+    - type: "command"
+      name: "speckit.implement"
+      file: "commands/speckit.implement.md"
+      description: "Finish only after the h5i proof and mutation gates"
+      strategy: "append"
+
+    - type: "command"
+      name: "speckit.h5i.trace"
+      file: "commands/speckit.h5i.trace.md"
+      description: "Check every INV/AUTH ID against theorems, mutants and h5i-app.ui.json"
+      strategy: "replace"
+
+tags:
+  - "h5i"
+  - "lean"
+  - "formal-verification"
+  - "rust"
+  - "traceability"

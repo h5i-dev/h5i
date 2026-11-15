@@ -31,6 +31,7 @@ pub mod message_view;
 pub mod project;
 pub mod session_view;
 pub mod skill;
+pub mod speckit;
 pub mod source;
 pub mod storage;
 pub mod termview;
