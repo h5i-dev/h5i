@@ -301,6 +301,21 @@ state on its own.
 Those assumptions, and everything outside the kernel, are tested against the
 running application, which the next part covers.
 
+### Spec Kit
+
+[`presets/speckit/`](../presets/speckit/) is a
+[Spec Kit](https://github.com/github/spec-kit) preset for writing an h5i-app
+feature from a spec. The spec states each invariant and authorization rule
+with an ID (`INV-01`, `AUTH-01`) and a counterexample. The plan maps each ID to
+a theorem in `[check].theorems`, a `[[mutant]]`, and a guarantee node in
+`h5i-app.ui.json`. Implementation ends with `h5i app prove` and `h5i app
+mutate`, and `/speckit.h5i.trace` reports, per ID, what the latest run records
+show. Spec Kit runs separately; `h5i` does not call it.
+
+```bash
+specify preset add --dev path/to/h5i/presets/speckit
+```
+
 ---
 
 ## The security workflow

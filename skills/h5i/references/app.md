@@ -83,6 +83,15 @@ HTTP/JSON integration, PostgreSQL semantics and engine behavior, deployment,
 and the Charon/Aeneas/Lean toolchain need separate scrutiny. Optional GPU
 execution does not inherit a kernel proof automatically.
 
+## Work from a Spec Kit spec
+
+If the project uses Spec Kit with the h5i preset (`.specify/presets/h5i/`),
+the spec lists `INV-*` and `AUTH-*` rules and the plan's Proof Map names a
+theorem, mutant and `h5i-app.ui.json` node for each. Keep those names in
+sync when you change a proof or mutant, and run the trace command after
+`prove` and `mutate`. Install with `specify preset add --dev
+presets/speckit` from this repository.
+
 ## Gate changes in CI
 
 For an application project, run Rust builds and tests, `h5i app lint`,

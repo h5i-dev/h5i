@@ -116,7 +116,7 @@
       <p class="crumbs"><a href="/">h5i</a><i>/</i><a href="/guides/">docs</a><i>/</i><span>manual</span></p>
       <p class="post-eyebrow">CLI reference</p>
       <h1>h5i Manual</h1>
-      <p class="manual-meta"><span>Updated <time datetime="2026-11-14">2026-11-14</time></span><i>|</i><span>55 min read</span><i>|</i><span class="ok">21 chapters</span></p>
+      <p class="manual-meta"><span>Updated <time datetime="2026-11-14">2026-11-14</time></span><i>|</i><span>56 min read</span><i>|</i><span class="ok">21 chapters</span></p>
       <details class="manual-mobile-toc"><summary>Chapters</summary>
 <div class="mn-group"><p class="mn-head">Start here</p>
 <a href="#what-h5i-is"><span class="mn-n">01</span><span>What h5i is</span></a>
@@ -503,6 +503,17 @@ and checks that the outputs agree, and a GPU batch never commits application
 state on its own.</p>
 <p>Those assumptions, and everything outside the kernel, are tested against the
 running application, which the next part covers.</p>
+<h3 id="spec-kit">Spec Kit</h3>
+<p><a href="https://github.com/h5i-dev/h5i/tree/main/presets/speckit/"><code>presets/speckit/</code></a> is a
+<a href="https://github.com/github/spec-kit">Spec Kit</a> preset for writing an h5i-app
+feature from a spec. The spec states each invariant and authorization rule
+with an ID (<code>INV-01</code>, <code>AUTH-01</code>) and a counterexample. The plan maps each ID to
+a theorem in <code>[check].theorems</code>, a <code>[[mutant]]</code>, and a guarantee node in
+<code>h5i-app.ui.json</code>. Implementation ends with <code>h5i app prove</code> and <code>h5i app
+mutate</code>, and <code>/speckit.h5i.trace</code> reports, per ID, what the latest run records
+show. Spec Kit runs separately; <code>h5i</code> does not call it.</p>
+<div class="codeblock"><div class="codeblock-head"><span>terminal</span><button class="copy-btn" type="button">Copy</button></div><pre><code class="language-bash">specify preset add --dev path/to/h5i/presets/speckit
+</code></pre></div>
 <hr />
 <h2 id="the-security-workflow" data-n="05">The security workflow</h2>
 <p>The proofs say what the kernel does; this part tests the running application
@@ -2254,6 +2265,7 @@ by <code>project</code> or <code>id</code>, never by name.</p>
 <a class="t3" href="#framework-proven-authorization">Framework-proven authorization</a>
 <a class="t3" href="#the-report">The report</a>
 <a class="t3" href="#what-the-proofs-cover-and-what-they-assume">What the proofs cover, and what they assume</a>
+<a class="t3" href="#spec-kit">Spec Kit</a>
 </div>
 <div class="ma-sec" data-sec="the-security-workflow"><a href="#the-security-workflow">The security workflow</a>
 </div>
@@ -2339,7 +2351,7 @@ by <code>project</code> or <code>id</code>, never by name.</p>
     <dl class="ma-meta">
       <div><dt>Updated</dt><dd>2026-11-14</dd></div>
       <div><dt>Chapters</dt><dd>21</dd></div>
-      <div><dt>Reading</dt><dd>55 min</dd></div>
+      <div><dt>Reading</dt><dd>56 min</dd></div>
       <div><dt>Flags</dt><dd><code>--help</code></dd></div>
       <div><dt>Source</dt><dd><a href="https://github.com/h5i-dev/h5i/blob/main/docs/MANUAL.md">MANUAL.md &#8599;</a></dd></div>
     </dl>
