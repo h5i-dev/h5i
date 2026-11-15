@@ -735,13 +735,29 @@ pub fn broken_declarations(log: &str, proofs: &Path) -> Vec<String> {
         let Ok(text) = std::fs::read_to_string(proofs.join(&c[1])) else { continue };
         let line: usize = c[2].parse().unwrap_or(1);
         let found = text.lines().take(line).collect::<Vec<_>>().into_iter().rev().find_map(declaration);
-        let file = Path::new(&c[1]).file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+        let file = spec_file(proofs, Path::new(&c[1]));
         let name = format!("{file}: {}", found.map_or_else(|| format!("line {line}"), |(_, n)| n.to_string()));
         if !out.contains(&name) {
             out.push(name);
         }
     }
     out
+}
+
+/// A Lean file as specs name it: its path inside `proofs`, `/`-separated,
+/// without `./` (Lake prints `././Proofs/T.lean`), so `Spec.lean` and
+/// `Model/Spec.lean` are told apart. A path outside `proofs` stays as given.
+fn spec_file(proofs: &Path, file: &Path) -> String {
+    let rel = file
+        .strip_prefix(proofs)
+        .ok()
+        .or_else(|| file.strip_prefix(proofs.canonicalize().ok()?).ok())
+        .unwrap_or(file);
+    rel.components()
+        .filter(|c| !matches!(c, std::path::Component::CurDir))
+        .map(|c| c.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 /// The specs in `proofs` (`theorem`, `lemma` and `h5i_authz` commands, in
@@ -767,7 +783,7 @@ pub fn specs(proofs: &Path) -> Vec<String> {
     let mut out = Vec::new();
     for f in files {
         let Ok(text) = std::fs::read_to_string(&f) else { continue };
-        let file = f.file_name().unwrap().to_string_lossy().into_owned();
+        let file = spec_file(proofs, &f);
         for (kind, name) in text.lines().filter_map(declaration) {
             let name = format!("{file}: {name}");
             if kind != "def" && kind != "instance" && !out.contains(&name) {
@@ -1686,11 +1702,20 @@ mod tests {
             "def helper := 1\n@[simp, grind] private theorem a : True := by\n  trivial\nlemma b : True := trivial\n",
         );
         w("generated/Authz.lean", "h5i_authz guarded\n");
+        // Same file name, same theorem name: two specs, not one.
+        w("Model/Theorems.lean", "theorem a : True := trivial\n");
         w(".lake/build/X.lean", "theorem hidden : True := trivial\n");
         let specs = specs(d.path());
-        assert_eq!(specs, ["Theorems.lean: a", "Theorems.lean: b", "Authz.lean: guarded"]);
-        let log = "error: Theorems.lean:3:2: unsolved goals\n";
-        assert_eq!(broken_declarations(log, d.path()), ["Theorems.lean: a"]);
+        assert_eq!(
+            specs,
+            ["Model/Theorems.lean: a", "Theorems.lean: a", "Theorems.lean: b", "generated/Authz.lean: guarded"]
+        );
+        // Lake's `././` prefix, and an absolute path, name the same spec.
+        let log = format!(
+            "error: ././Theorems.lean:3:2: unsolved goals\nerror: {}:1:0: x\n",
+            d.path().join("Model/Theorems.lean").display()
+        );
+        assert_eq!(broken_declarations(&log, d.path()), ["Theorems.lean: a", "Model/Theorems.lean: a"]);
     }
 
     #[test]
