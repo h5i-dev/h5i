@@ -215,7 +215,12 @@ swapped `&&` and `||`, dropped `!`, and `if` conditions forced to `true` or
 dropped, `visible` or `stored` made `true`, a comparison with the actor made
 `true`, the guard removed, every principal put in tenant 0, and the same
 changes made to a `schema!` policy's generator. Each caught mutant's line names
-the declarations whose proofs broke.
+the declarations whose proofs broke, and the run ends by listing the theorems
+no caught mutant broke: each is a lead (a vacuous or weak statement, or one no
+mutant aims at), not a failure. The copy reuses the original's Lake build
+(`proofs/.lake/build`) and a Cargo target directory per job under
+`target/h5i-app-mutate/` (removed by `cargo clean`), so a mutant rebuilds only
+what its change reaches; the kernel and its path crates are always rebuilt.
 
 ### Framework-proven authorization
 
@@ -280,6 +285,7 @@ targets = ["Theorems"]        # Lake targets a mutant must break (default: all)
 
 [[mutant]]
 name = "off_by_one"
+function = "transition"       # optional: `old` must occur once in this fn (or `Type::method`), not the whole file
 old = "if s.count >= s.limit {"
 new = "if s.count > s.limit {"
 ```

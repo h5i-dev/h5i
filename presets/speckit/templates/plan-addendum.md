@@ -49,9 +49,11 @@ status codes, storage engine]
 ### Mutants
 
 ```toml
-# Add to h5i-app.toml. `old` must occur exactly once in the kernel source.
+# Add to h5i-app.toml. `old` must occur exactly once in `function`
+# (`name`, or `Type::name` for a method); without `function`, once in the file.
 [[mutant]]
 name = "auth_01_drop_owner_check"
+function = "[the kernel function holding the check, e.g. transition]"
 old = "[the exact check, e.g. link.owner == actor.user]"
 new = "[the weakened check, e.g. true]"
 ```

@@ -327,7 +327,19 @@ pub fn mutate_project(p: &Project, args: &MutateArgs) -> Result<()> {
         bail!("{}: no mutants. Add [[mutant]] entries to h5i-app.toml, or pass --auto or --security", p.display());
     }
     let opts = mutate::Options { jobs: args.jobs, keep: args.keep, baseline: !args.no_baseline };
-    summarize(&mutate::run(p, mutants, &opts)?)
+    let results = mutate::run(p, mutants, &opts)?;
+    let unbroken = mutate::unbroken(p, &results);
+    if !unbroken.is_empty() {
+        eprintln!(
+            "\n{} spec(s) no caught mutant broke (vacuous or weak, or no mutant aims at them; \
+             a theorem importing a broken module is not built, so it is listed too):",
+            unbroken.len()
+        );
+        for s in &unbroken {
+            eprintln!("  unbroken: {s}");
+        }
+    }
+    summarize(&results)
 }
 
 /// Run `f` on every target project; keep going past a failure and report

@@ -95,6 +95,7 @@ pub fn on_path(prog: &str) -> Option<PathBuf> {
 pub struct Metadata {
     pub packages: Vec<Package>,
     pub workspace_root: PathBuf,
+    pub target_directory: PathBuf,
     pub resolve: Option<Resolve>,
 }
 

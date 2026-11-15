@@ -169,6 +169,11 @@ pub struct Mutant {
     /// The file to edit, relative to the manifest. Defaults to the extracted
     /// crate's `src/lib.rs`.
     pub file: Option<String>,
+    /// Only edit inside this function of `file`: `name` for a free function
+    /// or method, or `Type::name` for a method of `impl Type` (or `impl Trait
+    /// for Type`). Each `old` must then occur exactly once in that function,
+    /// not in the whole file.
+    pub function: Option<String>,
     /// One replacement: `old` must occur exactly once.
     pub old: Option<String>,
     pub new: Option<String>,
@@ -211,6 +216,10 @@ impl Mutant {
 pub struct Project {
     pub root: PathBuf,
     pub manifest: Manifest,
+    /// Where the kernel's Cargo builds go, as `CARGO_TARGET_DIR` (which
+    /// overrides the user's): set for a mutant's copy, so every build of it
+    /// lands in its job slot's directory. `None` builds where Cargo would.
+    pub cargo_target: Option<PathBuf>,
 }
 
 impl Project {
@@ -279,7 +288,7 @@ impl Project {
                 );
             }
         }
-        Ok(Project { root, manifest })
+        Ok(Project { root, manifest, cargo_target: None })
     }
 
     /// The project at `path`: a manifest file, or a directory at or below one.
