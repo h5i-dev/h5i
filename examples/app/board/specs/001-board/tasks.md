@@ -34,7 +34,7 @@ mutants and the ID-named nodes in `h5i-app.ui.json`.
 - [X] TV06 Add the Proof Map theorems to `[check].theorems` in `h5i-app.toml`
 - [X] TV07 Add the nine Proof Map mutants to `h5i-app.toml`
 - [X] TV08 Rename the guarantee nodes in `h5i-app.ui.json` to `inv-01` … `auth-04`
-- [ ] TV09 Run `h5i app prove` and `h5i app mutate`; every mutant caught
-- [ ] TV10 Run the h5i trace command (`/speckit.h5i.trace`); no gaps
+- [X] TV09 Run `h5i app prove` and `h5i app mutate`; every mutant caught
+- [X] TV10 Run the h5i trace command (`/speckit.h5i.trace`); no gaps
 
 **Checkpoint**: Every requirement ID has a passing theorem and a caught mutant.

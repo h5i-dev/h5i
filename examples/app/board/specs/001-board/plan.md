@@ -179,8 +179,14 @@ new = "if false {"
 
 INV-05's mutant edits `apply_write`, not `transition`: the spec's
 `applyWrite` keeps moderator keys unique by construction, so the defect is a
-Rust `apply` that disagrees with it. `apply_spec` is the theorem that catches
-it.
+Rust `apply` that disagrees with it.
+
+`h5i app mutate` reports the first proof that breaks. For these mutants it is
+the per-command lemma (`publish_spec`, `delete_spec`, …) in `Commands.lean`,
+or `apply_write_spec` in `Apply.lean` for INV-05, because the Proof Map
+theorems are built on those lemmas. A caught mutant shows that the proofs
+constrain this behavior; it does not show which theorem of the Proof Map
+would fail on its own.
 
 ### Trust Boundary and Shell Tests
 
