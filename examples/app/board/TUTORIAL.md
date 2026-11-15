@@ -24,6 +24,7 @@ ids, hold in every state the board can reach, however many commands run.
 | `proofs/Apply.lean` | the proof that committing a write set does what the specification says |
 | `proofs/Storage.lean` | the proof that SQL writes and loads hold that same state |
 | `proofs/Scenario.lean` | a concrete run that meets the theorems' hypotheses |
+| `specs/001-board/` | the same rules as a Spec Kit spec, plan and tasks, with IDs |
 
 ## Running the application
 
@@ -304,21 +305,40 @@ h5i ui
 
 Open **Apps** and select this project. Some places to start:
 
-- Click **Only the author or a moderator deletes a post**. It leads to
+- Click **AUTH-02: Only the author or a moderator deletes a post**. It leads to
   `authorized_reachable` and the `allowed` policy, to the `Reachable`
   assumption, and to the authenticated caller, which no theorem can vouch for.
   `bob_cannot_delete` hangs off it as a concrete refusal.
-- Click **The last moderator cannot be removed**. `moderator_kept` assumes
+- Click **INV-01: The last moderator cannot be removed**. `moderator_kept` assumes
   `Inv` and an existing moderator, and the graph shows the `demote` check that
-  the manifest's `remove_last_moderator` mutant weakens.
-- Click **PostgreSQL data keeps the invariants** for `db_inv`, the theorem
-  the manifest requires, and the schema and engine conditions it relies on.
+  the manifest's `inv_01_remove_last_moderator` mutant weakens.
+- Click **PostgreSQL data keeps the invariants** for `db_inv`, one of the
+  theorems the manifest requires, and the schema and engine conditions it relies on.
 - Switch to the application flow lens to follow a request from `POST /rpc`
   through the token check, JSON decoding and the engine's transaction to
   `transition`, the command functions and the store.
 
 The map is an authored explanation, not evidence. Whether each theorem is
 proven, and what it depends on, comes from the latest check record.
+
+## The rules as a Spec Kit spec
+
+`specs/001-board/` states the board's rules in the format of the h5i preset
+for [Spec Kit](https://github.com/github/spec-kit): five invariants (`INV-01`
+to `INV-05`) and four authorization rules (`AUTH-01` to `AUTH-04`) in
+`spec.md`, each with the case that would break it. The Proof Map in `plan.md`
+names, for each ID, the theorem above that states it, a mutant in
+`h5i-app.toml` that breaks it, and the guarantee node in `h5i-app.ui.json`
+with the same name (`auth-02`).
+
+```
+h5i app prove examples/app/board
+h5i app mutate examples/app/board
+```
+
+Every mutant should be reported as caught. The spec was written after the
+board, so it shows the format rather than how the board was designed. To
+write a new application this way, see `presets/speckit/README.md`.
 
 ## Exercises
 
