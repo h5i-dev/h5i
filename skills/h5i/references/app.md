@@ -89,8 +89,8 @@ If the project uses Spec Kit with the h5i preset (`.specify/presets/h5i/`),
 the spec lists `INV-*` and `AUTH-*` rules and the plan's Proof Map names a
 theorem, mutant and `h5i-app.ui.json` node for each. Keep those names in
 sync when you change a proof or mutant, and run the trace command after
-`prove` and `mutate`. Install with `specify preset add --dev
-presets/speckit` from this repository.
+`prove` and `mutate`. To add the preset to a Spec Kit project, run `h5i skill
+speckit`, then `specify preset add --dev ./h5i-speckit-preset`.
 
 ## Gate changes in CI
 

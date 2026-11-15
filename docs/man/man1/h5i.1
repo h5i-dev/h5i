@@ -2707,7 +2707,7 @@ Write here instead of the default target
 \fB\-h\fR, \fB\-\-help\fR
 Print help
 .SH "H5I SKILL SHOW"
-Print a page to stdout: the skill itself, or one reference (`boxes`, `policy`, `export`, `troubleshooting`)
+Print a page to stdout: the skill itself, or one reference (`app`, `test`, `websec`, `policy`, ...)
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
@@ -2730,6 +2730,21 @@ Print where `install` would write
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I SKILL SPECKIT"
+Write the Spec Kit preset for h5i-app features. Install it in a Spec Kit project with `specify preset add --dev <dir>`
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBspeckit\fR [\fB\-\-target\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-target\fR \fI<TARGET>\fR
+Write here instead of `./h5i\-speckit\-preset`
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help

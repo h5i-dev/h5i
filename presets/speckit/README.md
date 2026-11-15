@@ -11,11 +11,15 @@ itself does not depend on Spec Kit.
 ```bash
 specify init my-app --integration claude
 cd my-app
-specify preset add --dev /path/to/h5i/presets/speckit
+h5i skill speckit                              # writes ./h5i-speckit-preset
+specify preset add --dev ./h5i-speckit-preset
 ```
 
-Requires Spec Kit 0.9.0 or later. `--dev` copies the files; reinstall after
-editing them (`specify preset remove h5i`, then `add` again).
+The h5i binary carries this directory, so the preset matches the installed
+`h5i app`. Its version is set to the h5i version on export. Requires Spec Kit
+0.9.0 or later. `--dev` copies the files; after upgrading h5i, export again,
+then `specify preset remove h5i` and `add` again. From a checkout of this
+repository, `specify preset add --dev presets/speckit` also works.
 
 ## What it changes
 

@@ -313,8 +313,12 @@ mutate`, and `/speckit.h5i.trace` reports, per ID, what the latest run records
 show. Spec Kit runs separately; `h5i` does not call it.
 
 ```bash
-specify preset add --dev path/to/h5i/presets/speckit
+h5i skill speckit                              # writes ./h5i-speckit-preset
+specify preset add --dev ./h5i-speckit-preset
 ```
+
+The exported `preset.yml` carries the h5i version, so `specify preset list`
+shows which release it came from.
 
 ---
 
@@ -1552,6 +1556,7 @@ document flags the installed binary lacks.
 h5i skill install [--target <dir>]   # write it out
 h5i skill show [<page>]              # print SKILL.md or one reference page
 h5i skill path                       # where an install would write
+h5i skill speckit [--target <dir>]   # write the Spec Kit preset
 ```
 
 This is also how the in-box agent gets the skill: nothing is baked into an
