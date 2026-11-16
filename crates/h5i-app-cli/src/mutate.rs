@@ -1667,7 +1667,15 @@ mod tests {
         let other = std::fs::File::open(slot.join("h5i-app-mutate.lock")).unwrap();
         assert!(other.try_lock().is_err());
         drop(s);
-        assert!(other.try_lock().is_ok());
+        // A child another test forks before its exec briefly shares the
+        // dropped descriptor, and with it the flock: retry for a while.
+        let freed = (0..200).any(|_| {
+            other.try_lock().is_ok() || {
+                std::thread::sleep(std::time::Duration::from_millis(25));
+                false
+            }
+        });
+        assert!(freed, "the slot's lock outlived its sandbox");
     }
 
     #[test]
