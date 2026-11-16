@@ -7,6 +7,17 @@
 //! resolve, under a fresh Cargo workspace. The copy's Lake project shares the
 //! original's packages (read-only), so a mutant rebuilds only the kernel's
 //! extraction and the proofs above it.
+//!
+//! Two caches make that cheap. The copy starts from the original's Lake build
+//! (`proofs/.lake/build`, copied, not linked, since a mutant overwrites it):
+//! Lake rebuilds a module only when its inputs' hashes change, so hand-written
+//! modules the re-extraction does not touch are not rebuilt. And each job
+//! slot keeps one Cargo target directory across mutants and runs (under the
+//! original's `target/h5i-app-mutate/`), so registry dependencies compile once.
+//! A mutant holds its slot's lock for its whole run, and its copied crates'
+//! fingerprints are deleted first, so they are always rebuilt: a previous
+//! mutant's build (this run's or a concurrent one's) is never taken for this
+//! one's, whatever the timestamps say.
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -33,8 +44,9 @@ pub struct Mutant {
 
 #[derive(Clone, Debug)]
 pub enum Change {
-    /// Declared in the manifest: each `old` occurs exactly once.
-    Replace(Vec<Edit>),
+    /// Declared in the manifest: each `old` occurs exactly once, in the file
+    /// or, given `function`, in that function's source.
+    Replace { edits: Vec<Edit>, function: Option<String> },
     /// Generated: replace bytes `start..end`, which must read `was`.
     Splice {
         start: usize,
@@ -50,14 +62,22 @@ pub enum Change {
 impl Mutant {
     pub fn apply(&self, src: &str) -> Result<String> {
         match &self.change {
-            Change::Replace(edits) => {
+            Change::Replace { edits, function } => {
                 let mut s = src.to_string();
                 for e in edits {
-                    let n = s.matches(&e.old).count();
+                    // Re-located per edit: an earlier edit moves the bytes.
+                    let (start, end) = match function {
+                        Some(f) => function_span(&s, f)?,
+                        None => (0, s.len()),
+                    };
+                    let scope = &s[start..end];
+                    let n = scope.matches(&e.old).count();
                     if n != 1 {
-                        bail!("pattern occurs {n} times, not once: {:?}", trunc(&e.old));
+                        let within = function.as_ref().map_or(String::new(), |f| format!(" in `{f}`"));
+                        bail!("pattern occurs {n} times{within}, not once: {:?}", trunc(&e.old));
                     }
-                    s = s.replacen(&e.old, &e.new, 1);
+                    let at = start + scope.find(&e.old).unwrap();
+                    s = format!("{}{}{}", &s[..at], e.new, &s[at + e.old.len()..]);
                 }
                 Ok(s)
             }
@@ -74,6 +94,79 @@ impl Mutant {
             }
             Change::NotRun { why } => bail!("not run: {why}"),
         }
+    }
+}
+
+/// The byte range of function `name` in `src`, from `fn` to its closing
+/// brace: a free function or method called `name`, or with `Type::name` a
+/// method in an `impl` for `Type`. Test code counts too: a mutant names its
+/// function on purpose.
+fn function_span(src: &str, name: &str) -> Result<(usize, usize)> {
+    let ast = syn::parse_file(src).context("parsing the file to find the mutant's function")?;
+    let (ty, fun) = match name.rsplit_once("::") {
+        Some((t, f)) => (Some(t.rsplit("::").next().unwrap_or(t)), f),
+        None => (None, name),
+    };
+    let mut v = FnSpans { src, lines: line_starts(src), self_ty: None, found: Vec::new() };
+    v.visit_file(&ast);
+    let hits: Vec<_> = v
+        .found
+        .into_iter()
+        .filter(|(t, f, _, _)| f == fun && ty.is_none_or(|ty| t.as_deref() == Some(ty)))
+        .collect();
+    match hits.as_slice() {
+        [(_, _, s, e)] => Ok((*s, *e)),
+        [] => bail!("no function `{name}` in the file"),
+        _ => bail!("{} functions named `{name}` in the file; name one as `Type::{fun}`", hits.len()),
+    }
+}
+
+/// Every function's span: (impl's self type, name, start, end).
+struct FnSpans<'a> {
+    src: &'a str,
+    lines: Vec<usize>,
+    self_ty: Option<String>,
+    found: Vec<(Option<String>, String, usize, usize)>,
+}
+
+impl FnSpans<'_> {
+    fn add(&mut self, name: &syn::Ident, from: &impl ToTokens, to: &impl ToTokens) {
+        let at = |t: &dyn Fn() -> proc_macro2::TokenStream, last: bool| {
+            let ts: Vec<_> = t().into_iter().collect();
+            let tok = if last { ts.last() } else { ts.first() }?;
+            let lc = if last { tok.span().end() } else { tok.span().start() };
+            let start = *self.lines.get(lc.line.checked_sub(1)?)?;
+            let line = &self.src[start..];
+            Some(start + line.char_indices().nth(lc.column).map_or(line.len(), |(i, _)| i))
+        };
+        if let (Some(s), Some(e)) = (at(&|| from.to_token_stream(), false), at(&|| to.to_token_stream(), true)) {
+            self.found.push((self.self_ty.clone(), name.to_string(), s, e));
+        }
+    }
+}
+
+impl<'ast> Visit<'ast> for FnSpans<'_> {
+    fn visit_item_impl(&mut self, i: &'ast syn::ItemImpl) {
+        let ty = match &*i.self_ty {
+            syn::Type::Path(p) => p.path.segments.last().map(|s| s.ident.to_string()),
+            _ => None,
+        };
+        let saved = std::mem::replace(&mut self.self_ty, ty);
+        syn::visit::visit_item_impl(self, i);
+        self.self_ty = saved;
+    }
+
+    fn visit_item_fn(&mut self, f: &'ast syn::ItemFn) {
+        // A nested function is no method of the enclosing impl.
+        let saved = self.self_ty.take();
+        self.add(&f.sig.ident, &f.sig, &f.block);
+        syn::visit::visit_item_fn(self, f);
+        self.self_ty = saved;
+    }
+
+    fn visit_impl_item_fn(&mut self, f: &'ast syn::ImplItemFn) {
+        self.add(&f.sig.ident, &f.sig, &f.block);
+        syn::visit::visit_impl_item_fn(self, f);
     }
 }
 
@@ -108,7 +201,7 @@ pub fn declared(p: &Project) -> Result<Vec<Mutant>> {
                 name: m.name.clone(),
                 what: None,
                 file,
-                change: Change::Replace(m.edits()?),
+                change: Change::Replace { edits: m.edits()?, function: m.function.clone() },
             })
         })
         .collect()
@@ -518,7 +611,7 @@ fn declared_edit(name: &str, what: &str, file: PathBuf, old: &str, new: &str) ->
         name: name.into(),
         what: Some(what.into()),
         file,
-        change: Change::Replace(vec![Edit { old: old.into(), new: new.into() }]),
+        change: Change::Replace { edits: vec![Edit { old: old.into(), new: new.into() }], function: None },
     }
 }
 
@@ -613,6 +706,24 @@ impl<'ast> Visit<'ast> for PolicyFinder<'_> {
     }
 }
 
+/// The declaration a line of Lean starts, if any: its keyword and name.
+/// Attributes and modifiers (`@[simp] private theorem t`) are skipped.
+fn declaration(line: &str) -> Option<(&str, &str)> {
+    let mut w = line.split_whitespace().peekable();
+    if w.peek()?.starts_with("@[") {
+        // `@[simp, grind]` may span words.
+        while !w.next()?.ends_with(']') {}
+    }
+    let mut first = w.next()?;
+    while matches!(first, "private" | "protected" | "noncomputable" | "nonrec" | "partial" | "unsafe") {
+        first = w.next()?;
+    }
+    match first {
+        "theorem" | "lemma" | "def" | "instance" | "h5i_authz" => Some((first, w.next()?)),
+        _ => None,
+    }
+}
+
 /// The declarations a failed build reported errors in: each `error:
 /// <file>.lean:<line>:` line of `log` as `<file>: <name>`, the `theorem`,
 /// `def` or `h5i_authz` command at or above that line of the proofs' file.
@@ -623,24 +734,77 @@ pub fn broken_declarations(log: &str, proofs: &Path) -> Vec<String> {
     for c in ERR.captures_iter(log) {
         let Ok(text) = std::fs::read_to_string(proofs.join(&c[1])) else { continue };
         let line: usize = c[2].parse().unwrap_or(1);
-        let found = text.lines().take(line).collect::<Vec<_>>().into_iter().rev().find_map(|l| {
-            let mut w = l.split_whitespace();
-            let mut first = w.next()?;
-            if first.starts_with("@[") {
-                first = w.next()?;
-            }
-            match first {
-                "theorem" | "lemma" | "def" | "instance" | "h5i_authz" => w.next().map(str::to_string),
-                _ => None,
-            }
-        });
-        let file = Path::new(&c[1]).file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
-        let name = format!("{file}: {}", found.unwrap_or_else(|| format!("line {line}")));
+        let found = text.lines().take(line).collect::<Vec<_>>().into_iter().rev().find_map(declaration);
+        let file = spec_file(proofs, Path::new(&c[1]));
+        let name = format!("{file}: {}", found.map_or_else(|| format!("line {line}"), |(_, n)| n.to_string()));
         if !out.contains(&name) {
             out.push(name);
         }
     }
     out
+}
+
+/// A Lean file as specs name it: its path inside `proofs`, `/`-separated,
+/// without `./` (Lake prints `././Proofs/T.lean`), so `Spec.lean` and
+/// `Model/Spec.lean` are told apart. A path outside `proofs` stays as given.
+fn spec_file(proofs: &Path, file: &Path) -> String {
+    let rel = file
+        .strip_prefix(proofs)
+        .ok()
+        .or_else(|| file.strip_prefix(proofs.canonicalize().ok()?).ok())
+        .unwrap_or(file);
+    rel.components()
+        .filter(|c| !matches!(c, std::path::Component::CurDir))
+        .map(|c| c.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// The specs in `proofs` (`theorem`, `lemma` and `h5i_authz` commands, in
+/// every `.lean` file outside `.lake`), named as [`broken_declarations`]
+/// names them.
+pub fn specs(proofs: &Path) -> Vec<String> {
+    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        for e in rd.flatten() {
+            let path = e.path();
+            if path.is_dir() {
+                if e.file_name() != ".lake" {
+                    walk(&path, out);
+                }
+            } else if path.extension().is_some_and(|x| x == "lean") {
+                out.push(path);
+            }
+        }
+    }
+    let mut files = Vec::new();
+    walk(proofs, &mut files);
+    files.sort();
+    let mut out = Vec::new();
+    for f in files {
+        let Ok(text) = std::fs::read_to_string(&f) else { continue };
+        let file = spec_file(proofs, &f);
+        for (kind, name) in text.lines().filter_map(declaration) {
+            let name = format!("{file}: {name}");
+            if kind != "def" && kind != "instance" && !out.contains(&name) {
+                out.push(name);
+            }
+        }
+    }
+    out
+}
+
+/// The specs of `p` that no caught mutant broke. Each is a lead, not a
+/// verdict: the statement may be vacuous or not constrain what the kernel
+/// computes, or simply no mutant aimed at it. A theorem in a module that
+/// imports a broken one is not built, so it is never seen breaking either.
+pub fn unbroken(p: &Project, outcomes: &[Outcome]) -> Vec<String> {
+    if !outcomes.iter().any(|o| o.verdict == Verdict::Caught) {
+        return Vec::new();
+    }
+    let broken: std::collections::HashSet<&str> =
+        outcomes.iter().flat_map(|o| o.broke.iter().map(String::as_str)).collect();
+    specs(&p.proofs()).into_iter().filter(|s| !broken.contains(s.as_str())).collect()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -675,12 +839,14 @@ struct Sandbox {
     _tmp: tempfile::TempDir,
     project: Project,
     log: PathBuf,
+    /// The job slot's lock, held until the mutant's verdict.
+    _slot: std::fs::File,
 }
 
 /// Lay out a copy of `p` in a temporary directory: the kernel's path crates
 /// at their relative places under a fresh workspace, the manifest and the
 /// proofs, with the Lake packages and path requires pointing at the original.
-fn sandbox(p: &Project, name: &str) -> Result<Sandbox> {
+fn sandbox(p: &Project, name: &str, slot: usize) -> Result<Sandbox> {
     let krate = p.krate().context("no [extract] crate")?;
     let meta = util::metadata(&krate, true)?;
     let kernel = meta.package_at(&krate)?;
@@ -714,6 +880,17 @@ fn sandbox(p: &Project, name: &str) -> Result<Sandbox> {
         std::fs::copy(&lock, tmp.path().join("Cargo.lock"))?;
     }
     std::fs::write(tmp.path().join("Cargo.toml"), ws.render(&members)?)?;
+    // One target directory per job slot, so two mutants never wait on one
+    // another's build lock. Held exclusively: another `h5i app mutate` on the
+    // same project waits for the slot rather than building in it at once.
+    // The copied crates' fingerprints go, so Cargo rebuilds them even when
+    // their timestamps are no newer than the last build in the slot.
+    let target = meta.target_directory.join("h5i-app-mutate").join(format!("slot-{slot}"));
+    std::fs::create_dir_all(&target)?;
+    let lock = std::fs::File::create(target.join("h5i-app-mutate.lock"))?;
+    lock.lock().with_context(|| format!("locking {}", target.display()))?;
+    let names: Vec<&str> = locals.iter().map(|q| q.name.as_str()).collect();
+    forget_fingerprints(&target, &names, 4)?;
 
     std::fs::create_dir_all(at(&p.root))?;
     std::fs::copy(
@@ -733,15 +910,56 @@ fn sandbox(p: &Project, name: &str) -> Result<Sandbox> {
     }
     std::fs::create_dir_all(copy.join(".lake"))?;
     util::symlink(&packages.canonicalize()?, &copy.join(".lake/packages"))?;
+    // The original's build, as a cache: Lake rebuilds what the mutant's
+    // re-extraction changed and what imports it. Absent (or stale), Lake
+    // builds as it would have.
+    let build = proofs.join(".lake/build");
+    if build.is_dir() {
+        util::copy_tree(&build, &copy.join(".lake/build"))?;
+    }
     absolute_path_requires(&proofs, &copy)?;
 
-    let project = Project::load(&at(&p.root).join(crate::manifest::FILE))?;
+    let mut project = Project::load(&at(&p.root).join(crate::manifest::FILE))?;
+    project.cargo_target = Some(target);
     let log = tmp.path().join("log.txt");
     Ok(Sandbox {
         _tmp: tmp,
         project,
         log,
+        _slot: lock,
     })
+}
+
+/// Delete the fingerprints of packages `names` in every `.fingerprint`
+/// directory of a Cargo target directory (`<profile>/`, `<triple>/<profile>/`,
+/// or deeper, as Charon lays its builds out), down to `depth` levels. Cargo
+/// then rebuilds those packages and nothing else.
+fn forget_fingerprints(dir: &Path, names: &[&str], depth: usize) -> Result<()> {
+    let Ok(rd) = std::fs::read_dir(dir) else { return Ok(()) };
+    for e in rd.flatten() {
+        if !e.file_type()?.is_dir() {
+            continue;
+        }
+        let path = e.path();
+        if e.file_name() == ".fingerprint" {
+            for f in std::fs::read_dir(&path)?.flatten() {
+                let file = f.file_name();
+                let file = file.to_string_lossy();
+                // `<package>-<hash>`: the package name may itself hold `-`.
+                let ours = names.iter().any(|n| {
+                    file.strip_prefix(n)
+                        .and_then(|r| r.strip_prefix('-'))
+                        .is_some_and(|h| !h.is_empty() && h.chars().all(|c| c.is_ascii_hexdigit()))
+                });
+                if ours {
+                    std::fs::remove_dir_all(f.path())?;
+                }
+            }
+        } else if depth > 0 {
+            forget_fingerprints(&path, names, depth - 1)?;
+        }
+    }
+    Ok(())
 }
 
 /// The directory the copy mirrors: the deepest common ancestor of the
@@ -900,6 +1118,7 @@ fn absolute_path_requires(orig: &Path, copy: &Path) -> Result<()> {
 fn evaluate(
     p: &Project,
     m: Option<&Mutant>,
+    slot: usize,
     targets: &[String],
     keep: bool,
     observe: &mut impl FnMut(h5i_app_report::Stage) -> Result<()>,
@@ -910,7 +1129,7 @@ fn evaluate(
     if let Some(Mutant { change: Change::NotRun { .. }, .. }) = m {
         return Ok((Verdict::ByDesign, None, Vec::new()));
     }
-    let sb = measured("sandbox", None, observe, || sandbox(p, name))?;
+    let sb = measured("sandbox", None, observe, || sandbox(p, name, slot))?;
     let out = Out::Log(sb.log.clone());
     let verdict = (|| -> Result<Verdict> {
         if let Some(m) = m {
@@ -927,12 +1146,11 @@ fn evaluate(
         }
         let krate = sb.project.krate().unwrap();
         if !measured_status("rust_check", &sb.log, observe, || {
-            util::status(
-                Command::new("cargo")
-                    .args(["check", "--release", "-q"])
-                    .current_dir(&krate),
-                &out,
-            )
+            let mut cargo = Command::new("cargo");
+            if let Some(t) = &sb.project.cargo_target {
+                cargo.env("CARGO_TARGET_DIR", t);
+            }
+            util::status(cargo.args(["check", "--release", "-q"]).current_dir(&krate), &out)
         })? {
             return Ok(Verdict::Invalid("rust"));
         }
@@ -1144,7 +1362,7 @@ pub fn run(p: &Project, mutants: Vec<Mutant>, opts: &Options) -> Result<Vec<Outc
     });
     for m in &mutants {
         let edits = match &m.change {
-            Change::Replace(es) => es
+            Change::Replace { edits: es, .. } => es
                 .iter()
                 .map(|e| RecordedEdit {
                     before: e.old.clone(),
@@ -1171,7 +1389,7 @@ pub fn run(p: &Project, mutants: Vec<Mutant>, opts: &Options) -> Result<Vec<Outc
     if opts.baseline {
         eprint!("{:<48} ", "baseline (the unmodified kernel, copied)");
         let t = Instant::now();
-        let baseline = evaluate(p, None, targets, opts.keep, &mut |stage| {
+        let baseline = evaluate(p, None, 0, targets, opts.keep, &mut |stage| {
             record_stage(&record, 0, stage)
         });
         let (v, kept, _) = match baseline {
@@ -1210,7 +1428,7 @@ pub fn run(p: &Project, mutants: Vec<Mutant>, opts: &Options) -> Result<Vec<Outc
     let results = Arc::new(Mutex::new(Vec::new()));
     let recording_errors = Arc::new(Mutex::new(Vec::new()));
     std::thread::scope(|s| {
-        for _ in 0..opts.jobs.max(1) {
+        for slot in 0..opts.jobs.max(1) {
             let (queue, results) = (queue.clone(), results.clone());
             let (record, recording_errors) = (record.clone(), recording_errors.clone());
             s.spawn(move || {
@@ -1219,7 +1437,7 @@ pub fn run(p: &Project, mutants: Vec<Mutant>, opts: &Options) -> Result<Vec<Outc
                         break;
                     };
                     let t = Instant::now();
-                    let (v, kept, broke) = match evaluate(p, Some(&m), targets, opts.keep, &mut |stage| {
+                    let (v, kept, broke) = match evaluate(p, Some(&m), slot, targets, opts.keep, &mut |stage| {
                         let result = record_stage(&record, i + 1, stage);
                         if let Err(e) = &result {
                             recording_errors.lock().unwrap().push(e.to_string());
@@ -1429,15 +1647,75 @@ mod tests {
         w("k/src/lib.rs", "pub fn f() {}\n");
         w("k/h5i-app.toml", "[extract]\ncrate = \".\"\n");
         std::fs::create_dir_all(d.path().join("k/proofs/.lake/packages")).unwrap();
+        w("k/proofs/.lake/build/lib/lean/K.olean", "olean");
         let p = Project::load(&d.path().join("k/h5i-app.toml")).unwrap();
-        let s = sandbox(&p, "root-crate").unwrap();
+        let s = sandbox(&p, "root-crate", 3).unwrap();
         let copy = &s.project.root;
         let own = std::fs::read_to_string(copy.join("Cargo.toml")).unwrap();
         assert!(own.contains("name = \"k\""), "{own}");
         let ws = std::fs::read_to_string(copy.parent().unwrap().join("Cargo.toml")).unwrap();
         assert!(ws.contains("members = [\"k\"]") && ws.contains("edition = \"2024\""), "{ws}");
         assert!(copy.join("proofs/.lake/packages").exists());
+        // The Lake build is copied as a cache; Cargo builds in the slot's
+        // target directory, under the original's.
+        assert_eq!(std::fs::read_to_string(copy.join("proofs/.lake/build/lib/lean/K.olean")).unwrap(), "olean");
         util::metadata(copy, false).unwrap().package_at(copy).unwrap();
+        let orig = util::metadata(&d.path().join("k"), false).unwrap().target_directory;
+        let slot = orig.join("h5i-app-mutate/slot-3");
+        assert_eq!(s.project.cargo_target.as_deref(), Some(slot.as_path()));
+        // The slot is held: a second copy in it waits (here: cannot lock).
+        let other = std::fs::File::open(slot.join("h5i-app-mutate.lock")).unwrap();
+        assert!(other.try_lock().is_err());
+        drop(s);
+        assert!(other.try_lock().is_ok());
+    }
+
+    #[test]
+    fn only_the_copied_crates_fingerprints_are_forgotten() {
+        let d = tempfile::tempdir().unwrap();
+        for f in [
+            "release/.fingerprint/k-0123abcd",
+            "release/.fingerprint/k-extra-0123abcd",
+            "release/.fingerprint/serde-0123abcd",
+            "x86_64-unknown-linux-gnu/debug/.fingerprint/k-ffff",
+        ] {
+            std::fs::create_dir_all(d.path().join(f)).unwrap();
+        }
+        forget_fingerprints(d.path(), &["k"], 4).unwrap();
+        let left = |f: &str| d.path().join(f).exists();
+        assert!(!left("release/.fingerprint/k-0123abcd"));
+        assert!(!left("x86_64-unknown-linux-gnu/debug/.fingerprint/k-ffff"));
+        assert!(left("release/.fingerprint/k-extra-0123abcd"));
+        assert!(left("release/.fingerprint/serde-0123abcd"));
+    }
+
+    #[test]
+    fn specs_are_named_as_broken_declarations_name_them() {
+        let d = tempfile::tempdir().unwrap();
+        let w = |f: &str, t: &str| {
+            let p = d.path().join(f);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, t).unwrap();
+        };
+        w(
+            "Theorems.lean",
+            "def helper := 1\n@[simp, grind] private theorem a : True := by\n  trivial\nlemma b : True := trivial\n",
+        );
+        w("generated/Authz.lean", "h5i_authz guarded\n");
+        // Same file name, same theorem name: two specs, not one.
+        w("Model/Theorems.lean", "theorem a : True := trivial\n");
+        w(".lake/build/X.lean", "theorem hidden : True := trivial\n");
+        let specs = specs(d.path());
+        assert_eq!(
+            specs,
+            ["Model/Theorems.lean: a", "Theorems.lean: a", "Theorems.lean: b", "generated/Authz.lean: guarded"]
+        );
+        // Lake's `././` prefix, and an absolute path, name the same spec.
+        let log = format!(
+            "error: ././Theorems.lean:3:2: unsolved goals\nerror: {}:1:0: x\n",
+            d.path().join("Model/Theorems.lean").display()
+        );
+        assert_eq!(broken_declarations(&log, d.path()), ["Theorems.lean: a", "Model/Theorems.lean: a"]);
     }
 
     #[test]
@@ -1446,12 +1724,42 @@ mod tests {
             name: "x".into(),
             what: None,
             file: "a.rs".into(),
-            change: Change::Replace(vec![Edit {
-                old: "a".into(),
-                new: "b".into(),
-            }]),
+            change: Change::Replace {
+                edits: vec![Edit {
+                    old: "a".into(),
+                    new: "b".into(),
+                }],
+                function: None,
+            },
         };
         assert!(m.apply("aa").is_err());
         assert_eq!(m.apply("xa").unwrap(), "xb");
+    }
+
+    #[test]
+    fn replacements_can_be_scoped_to_a_function() {
+        let src = "fn f(x: u64) -> bool { x > 0 }\n\
+                   struct A;\nimpl A { fn g(&self, x: u64) -> bool { x > 0 } }\n\
+                   struct B;\nimpl Tr for B { fn g(&self, x: u64) -> bool { x > 0 } }\n";
+        let m = |function: Option<&str>| Mutant {
+            name: "x".into(),
+            what: None,
+            file: "a.rs".into(),
+            change: Change::Replace {
+                edits: vec![Edit { old: "x > 0".into(), new: "x >= 0".into() }],
+                function: function.map(Into::into),
+            },
+        };
+        // Three in the file; one in each function.
+        assert!(m(None).apply(src).is_err());
+        let f = m(Some("f")).apply(src).unwrap();
+        assert!(f.starts_with("fn f(x: u64) -> bool { x >= 0 }"));
+        assert_eq!(f.matches("x > 0").count(), 2);
+        // `g` is ambiguous; `B::g` is the trait impl's.
+        assert!(m(Some("g")).apply(src).unwrap_err().to_string().contains("2 functions named `g`"));
+        let b = m(Some("B::g")).apply(src).unwrap();
+        assert!(b.contains("impl A { fn g(&self, x: u64) -> bool { x > 0 } }"));
+        assert!(b.contains("impl Tr for B { fn g(&self, x: u64) -> bool { x >= 0 } }"));
+        assert!(m(Some("h")).apply(src).is_err());
     }
 }

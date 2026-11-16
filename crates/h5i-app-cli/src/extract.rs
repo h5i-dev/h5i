@@ -111,6 +111,9 @@ fn extract_into(p: &Project, dest: &Path, schema_lean: bool, out: &Out) -> Resul
     let tmp = tempfile::tempdir()?;
     let llbc = tmp.path().join(format!("{id}.llbc"));
     let mut charon = Command::new("charon");
+    if let Some(t) = &p.cargo_target {
+        charon.env("CARGO_TARGET_DIR", t);
+    }
     charon
         .current_dir(&krate)
         .args(["cargo", "--preset=aeneas"]);
@@ -162,7 +165,7 @@ fn extract_into(p: &Project, dest: &Path, schema_lean: bool, out: &Out) -> Resul
     }
     // `Schema.lean` first: the storage proof is read off it.
     if ex.schema && schema_lean {
-        bless_schema(&krate, out)?;
+        bless_schema(&krate, p.cargo_target.as_deref(), out)?;
     }
     authz_lean(&p.manifest.authz.guarded, p.manifest.authz.storage.as_deref(), ex.std_specs, &module, &id, dest)?;
     out.note(&format!(
@@ -178,9 +181,13 @@ fn extract_into(p: &Project, dest: &Path, schema_lean: bool, out: &Out) -> Resul
 /// so run it with `H5I_APP_BLESS=1`. Without a `lean` path the test does not
 /// exist and nothing is written. Release, so a checkout that guards against
 /// debug builds (scripts/no-debug-guard.sh) can run it.
-fn bless_schema(krate: &Path, out: &Out) -> Result<()> {
+fn bless_schema(krate: &Path, target: Option<&Path>, out: &Out) -> Result<()> {
+    let mut cargo = Command::new("cargo");
+    if let Some(t) = target {
+        cargo.env("CARGO_TARGET_DIR", t);
+    }
     util::run(
-        Command::new("cargo")
+        cargo
             .current_dir(krate)
             .env("H5I_APP_BLESS", "1")
             .args(["test", "--release", "--lib", "--", "h5i_app_lean_schema_is_current"]),
