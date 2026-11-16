@@ -157,6 +157,9 @@ def ffmpeg():
 
 
 def main():
+    if "--cover-only" in sys.argv:
+        embed_cover(os.path.join(OUT, "h5i-demo.mp4"), os.path.join(OUT, "poster.png"))
+        return
     if opt("--still"):
         ts = [float(s) for s in opt("--still").split(",")]
         for s in ts:
@@ -182,6 +185,19 @@ def main():
     print("wrote", out)
     poster = os.path.join(OUT, "poster.png")
     frame(int(round(13.0 * FPS)) + 1).save(poster)
+    embed_cover(out, poster)
+
+
+def embed_cover(mp4, png):
+    """Attach the poster as the MP4's cover art, without re-encoding."""
+    jpg = os.path.join(OUT, "cover.jpg")
+    Image.open(png).convert("RGB").save(jpg, quality=90)
+    tmp = mp4 + ".tmp.mp4"
+    subprocess.run([ffmpeg(), "-y", "-loglevel", "error", "-i", mp4, "-i", jpg,
+                    "-map", "0", "-map", "1", "-c", "copy", "-c:v:1", "mjpeg",
+                    "-disposition:v:1", "attached_pic", "-movflags", "+faststart", tmp], check=True)
+    os.replace(tmp, mp4)
+    print("cover attached to", mp4)
 
 
 if __name__ == "__main__":
