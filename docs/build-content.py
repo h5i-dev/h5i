@@ -40,11 +40,11 @@ PUBLISHED = "2026-08-21"
 # without its date. Changing a page's content and forgetting the date is a
 # build error, not a silent regression.
 PAGE_HISTORY = {
-    "": ("2026-11-14", "f745e886cd871201"),
+    "": ("2026-11-16", "81e30043bca30219"),
     "features/": ("2026-11-14", "e93b77a6e31134ef"),
     "manual/": ("2026-11-16", "b0a57169c0811b93"),
     "pitch/": ("2026-11-10", "e14cdcbdaf5cf917"),
-    "demo/": ("2026-10-22", "9dae5fe7a3dbf01b"),
+    "demo/": ("2026-11-16", "749f71030e07b58c"),
     "guides/": ("2026-11-14", "4639eb50174b3f11"),
     "guides/build-and-verify-a-web-app/": ("2026-11-14", "6a36fe7dc2915dee"),
     "guides/red-team-a-web-app/": ("2026-11-14", "04539ec2e85001b1"),
