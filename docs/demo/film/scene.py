@@ -339,113 +339,15 @@ M_CITY = window_mat()
 # ---------------------------------------------------------------- characters
 
 
-def hooded_figure(name, origin, mat, lean=0.0):
-    """A seated figure in a hoodie, facing +Y, built with a skin modifier.
+import character  # noqa: E402
 
-    Returns (body, hood_group, hands). The body's origin is the pelvis, so
-    rotating it on X leans the figure. Coordinates are relative to origin.
-    """
-    ox, oy, oz = origin
-    # skeleton: (position, radius x, radius y)
-    pts = {
-        "pelvis": ((0, -0.55, 0.56), 0.17, 0.13),
-        "spine": ((0, -0.53, 0.82), 0.18, 0.12),
-        "chest": ((0, -0.49, 1.06), 0.20, 0.13),
-        "neck": ((0, -0.46, 1.22), 0.08, 0.08),
-        "lsh": ((-0.21, -0.48, 1.14), 0.075, 0.075),
-        "rsh": ((0.21, -0.48, 1.14), 0.075, 0.075),
-        "lel": ((-0.26, -0.32, 0.9), 0.06, 0.06),
-        "rel": ((0.26, -0.32, 0.9), 0.06, 0.06),
-        "lwr": ((-0.13, 0.02, 0.82), 0.048, 0.048),
-        "rwr": ((0.13, 0.02, 0.82), 0.048, 0.048),
-        "lhip": ((-0.1, -0.5, 0.52), 0.085, 0.085),
-        "rhip": ((0.1, -0.5, 0.52), 0.085, 0.085),
-        "lkn": ((-0.13, -0.08, 0.52), 0.07, 0.07),
-        "rkn": ((0.13, -0.08, 0.52), 0.07, 0.07),
-        "lft": ((-0.14, -0.06, 0.08), 0.055, 0.055),
-        "rft": ((0.14, -0.06, 0.08), 0.055, 0.055),
-    }
-    edges = [("pelvis", "spine"), ("spine", "chest"), ("chest", "neck"), ("chest", "lsh"), ("chest", "rsh"),
-             ("lsh", "lel"), ("rsh", "rel"), ("lel", "lwr"), ("rel", "rwr"), ("pelvis", "lhip"),
-             ("pelvis", "rhip"), ("lhip", "lkn"), ("rhip", "rkn"), ("lkn", "lft"), ("rkn", "rft")]
-    keys = list(pts)
-    pel = Vector(pts["pelvis"][0])
-    verts = [tuple(Vector(pts[k][0]) - pel) for k in keys]
-    me = bpy.data.meshes.new(name)
-    me.from_pydata(verts, [(keys.index(a), keys.index(b)) for a, b in edges], [])
-    body = link(bpy.data.objects.new(name, me))
-    body.location = (ox + pel.x, oy + pel.y, oz + pel.z)
-    sk = body.modifiers.new("skin", "SKIN")
-    sk.use_smooth_shade = True
-    for i, k in enumerate(keys):
-        me.skin_vertices[0].data[i].radius = (pts[k][1], pts[k][2])
-    me.skin_vertices[0].data[0].use_root = True
-    ss = body.modifiers.new("subsurf", "SUBSURF")
-    ss.levels = ss.render_levels = 2
-    body.data.materials.append(mat)
+BUNDLE = os.environ.get("H5I_FILM_HUMAN", os.path.join(OUT, "human_base_meshes_bundle.blend"))
+M_PANTS = fabric("pants", (0.03, 0.03, 0.036))
+M_SHOE = principled("shoe", (0.02, 0.02, 0.022), rough=0.5)
 
-    def rel(p):
-        return tuple(Vector(p) - pel)
 
-    # hood: a sphere with the front opened, thickened
-    bm = bmesh.new()
-    bmesh.ops.create_uvsphere(bm, u_segments=40, v_segments=24, radius=0.15)
-    face_dir = Vector((0, 1, -0.05)).normalized()
-    kill = [f for f in bm.faces if f.calc_center_median().normalized().dot(face_dir) > 0.45]
-    bmesh.ops.delete(bm, geom=kill, context="FACES")
-    for v in bm.verts:
-        n = v.co.normalized()
-        # a soft peak over the brow, and the hood draping onto the back
-        v.co += Vector((0, 0.035, 0.02)) * max(0.0, n.z) * max(0.0, n.y + 0.3)
-        v.co.z -= 0.09 * max(0.0, -n.y) * max(0.0, -n.z) ** 0.7
-        v.co.y -= 0.03 * max(0.0, -n.y) * max(0.0, -n.z)
-    hood = mesh_obj(name + "_hood", bm, mat)
-    hood.scale = (1.0, 1.12, 1.18)
-    hood.parent = body
-    hood.location = rel((0, -0.42, 1.36))
-    sol = hood.modifiers.new("solid", "SOLIDIFY")
-    sol.thickness = 0.022
-    sol.offset = 1
-    ss = hood.modifiers.new("subsurf", "SUBSURF")
-    ss.levels = ss.render_levels = 2
-    for p in hood.data.polygons:
-        p.use_smooth = True
-    # the face stays in shadow: an unlit head inside the hood
-    head = sphere(name + "_head", 0.115, (0, 0, -0.01), M_VOID, scale=(1, 1.05, 1.15))
-    head.parent = hood
-    head.scale = (1 / 1.0 * 1.0, 1.05 / 1.12, 1.15 / 1.18)
-    # hood collar where it meets the shoulders
-    collar = sphere(name + "_collar", 0.17, rel((0, -0.45, 1.2)), mat, scale=(1.15, 0.95, 0.45))
-    collar.parent = body
-    # drawstrings
-    for sx in (-0.045, 0.045):
-        s = cylinder(name + "_string", 0.005, 0.16, rel((sx, -0.335, 1.14)), M_STRING, seg=8)
-        s.parent = body
-        s.rotation_euler = (math.radians(-12), 0, 0)
-    # rib cuffs at the wrists and the hem, so it reads as a hoodie
-    for sx in (-1, 1):
-        wr = Vector(pts["lwr" if sx < 0 else "rwr"][0])
-        el = Vector(pts["lel" if sx < 0 else "rel"][0])
-        dirv = (wr - el).normalized()
-        bm = bmesh.new()
-        bmesh.ops.create_cone(bm, cap_ends=False, segments=24, radius1=0.05, radius2=0.047, depth=0.045)
-        cuff = mesh_obj(name + "_cuff", bm, mat)
-        cuff.location = rel(wr - dirv * 0.03)
-        cuff.rotation_euler = dirv.to_track_quat("Z", "Y").to_euler()
-        cuff.parent = body
-        so = cuff.modifiers.new("solid", "SOLIDIFY")
-        so.thickness = 0.01
-        for p in cuff.data.polygons:
-            p.use_smooth = True
-    hem = sphere(name + "_hem", 0.2, rel((0, -0.54, 0.62)), mat, scale=(1.0, 0.78, 0.22))
-    hem.parent = body
-    hands = []
-    for sx in (-1, 1):
-        h = sphere(name + "_hand", 0.045, rel((sx * 0.11, 0.09, 0.80)), M_SKIN_GLOVE, scale=(0.95, 1.5, 0.55))
-        h.parent = body
-        hands.append(h)
-    body.rotation_euler = (lean, 0, 0)
-    return body, hood, hands
+def dress(hoodie):
+    return {"hoodie": hoodie, "pants": M_PANTS, "glove": M_SKIN_GLOVE, "shoe": M_SHOE, "void": M_VOID}
 
 
 # ---------------------------------------------------------------- set 1: engineer (x=0)
@@ -468,13 +370,13 @@ for x in (-0.75, 0.75):
     for y in (-0.12, 0.56):
         box("desk_leg", (0.04, 0.04, 0.72), (x, y, 0.36), M_METAL)
 # chair
-box("chair_seat", (0.5, 0.48, 0.07), (0, -0.55, 0.45), M_BLACK, bevel=0.02)
-box("chair_back", (0.46, 0.06, 0.6), (0, -0.82, 0.86), M_BLACK, bevel=0.03)
-cylinder("chair_post", 0.03, 0.4, (0, -0.55, 0.22), M_METAL)
+box("chair_seat", (0.5, 0.48, 0.07), (0, -0.47, 0.46), M_BLACK, bevel=0.02)
+box("chair_back", (0.46, 0.06, 0.6), (0, -0.74, 0.86), M_BLACK, bevel=0.03)
+cylinder("chair_post", 0.03, 0.4, (0, -0.47, 0.22), M_METAL)
 # mug
-cylinder("mug", 0.04, 0.1, (-0.5, 0.2, 0.81), M_MUG)
+cylinder("mug", 0.04, 0.1, (-0.45, 0.05, 0.81), M_MUG)
 # laptop: base, hinge at y=0.40, lid open ~108 degrees
-LAP = Vector((0.0, 0.24, 0.76))
+LAP = Vector((0.0, 0.02, 0.76))
 box("laptop_base", (0.34, 0.235, 0.014), LAP + Vector((0, 0.0, 0.007)), M_METAL, bevel=0.004)
 box("keyboard", (0.29, 0.1, 0.002), LAP + Vector((0, 0.03, 0.015)), M_BLACK)
 lid = box("laptop_lid", (0.34, 0.008, 0.225), (0, 0, 0), M_BLACK, bevel=0.003)
@@ -493,7 +395,7 @@ screen_light.parent = lid_pivot
 screen_light.location = (0, -0.02, 0.115)
 screen_light.rotation_euler = (math.radians(90), 0, 0)  # area lights emit along -Z; turn to -Y
 
-ENG, ENG_HOOD, ENG_HANDS = hooded_figure("engineer", (0, 0, 0), M_HOODIE)
+ENG = character.Figure("engineer", (0, 0, 0), dress(M_HOODIE), M_HOODIE, BUNDLE)
 # rim light (h5i orange) from behind-right, cool fill from the window
 area_light("rim", (1.4, 1.2, 1.9), look_rot((1.4, 1.2, 1.9), (0, -0.45, 1.2)), 1.2, ORANGE, 70)
 area_light("window_fill", (0, 1.7, 1.6), look_rot((0, 1.7, 1.6), (0, -0.4, 1.0)), 2.5, (0.4, 0.55, 1.0), 25)
@@ -507,9 +409,9 @@ box("h_wall", (8, 0.1, 3.2), HX + Vector((0, 1.3, 1.6)), M_WALL)
 box("h_desk", (1.9, 0.8, 0.04), HX + Vector((0, 0.3, 0.74)), M_BLACK, bevel=0.006)
 for x in (-0.9, 0.9):
     box("h_leg", (0.05, 0.7, 0.04), HX + Vector((x, 0.3, 0.36)), M_METAL).rotation_euler = (0, math.radians(90), 0)
-box("h_chair", (0.5, 0.48, 0.07), HX + Vector((0, -0.55, 0.45)), M_BLACK, bevel=0.02)
-box("h_chair_back", (0.46, 0.06, 0.62), HX + Vector((0, -0.82, 0.86)), M_BLACK, bevel=0.03)
-box("h_keyboard", (0.42, 0.14, 0.02), HX + Vector((0, 0.08, 0.77)), M_BLACK, bevel=0.004)
+box("h_chair", (0.5, 0.48, 0.07), HX + Vector((0, -0.45, 0.46)), M_BLACK, bevel=0.02)
+box("h_chair_back", (0.46, 0.06, 0.62), HX + Vector((0, -0.72, 0.86)), M_BLACK, bevel=0.03)
+box("h_keyboard", (0.42, 0.14, 0.02), HX + Vector((0, 0.03, 0.77)), M_BLACK, bevel=0.004)
 
 M_HACK, IMG_HACK = screen_mat("hack_screen", os.path.join(OUT, "hacker", "0001.png"), 1.5)
 M_SIDE, IMG_SIDE = screen_mat("side_screen", os.path.join(OUT, "hackside", "0001.png"), 1.2)
@@ -530,7 +432,7 @@ for name, x, yaw, mat in [("mon_main", 0.0, 0.0, M_HACK), ("mon_left", -0.72, 28
     l.parent = piv
     l.location = (0, -0.03, 0)
 
-HACKER, HACK_HOOD, HACK_HANDS = hooded_figure("hacker", tuple(HX), M_HOODIE_RED, lean=math.radians(8))
+HACKER = character.Figure("hacker", tuple(HX), dress(M_HOODIE_RED), M_HOODIE_RED, BUNDLE)
 area_light("h_red_rim", HX + Vector((-1.5, 1.0, 2.0)), look_rot(HX + Vector((-1.5, 1.0, 2.0)), HX + Vector((0, -0.45, 1.2))), 1.2, RED, 140)
 area_light("h_red_top", HX + Vector((0.8, -0.3, 2.6)), look_rot(HX + Vector((0.8, -0.3, 2.6)), HX + Vector((0, -0.4, 1.0))), 1.0, (1.0, 0.15, 0.1), 40)
 # a red warning strip on the wall
@@ -705,13 +607,13 @@ CAM = {
         (5.0, P(-1.55, -1.85, 1.5), P(0.05, 0.12, 0.98), 35, 2.2, P(0, -0.45, 1.2)),
     ],
     "laptop_code": [
-        (5.0, P(0.40, -0.66, 1.38), SCREEN_C, 55, 2.8, SCREEN_C),
-        (14.0, P(0.22, -0.24, 1.12), SCREEN_C, 55, 2.8, SCREEN_C),
+        (5.0, P(0.42, -0.80, 1.42), SCREEN_C, 55, 2.8, SCREEN_C),
+        (14.0, P(0.30, -0.40, 1.16), SCREEN_C, 55, 2.8, SCREEN_C),
     ],
     "hacker": [
         (14.0, HX + P(1.9, -2.3, 1.35), HX + P(0, 0.2, 1.05), 40, 2.0, HX + P(0, -0.45, 1.2)),
-        (16.2, HX + P(0.55, -1.05, 1.4), MON_C, 60, 2.4, MON_C),
-        (21.0, HX + P(0.38, -0.75, 1.33), MON_C, 60, 2.4, MON_C),
+        (16.2, HX + P(0.78, -1.0, 1.45), MON_C, 60, 2.4, MON_C),
+        (21.0, HX + P(0.62, -0.72, 1.38), MON_C, 60, 2.4, MON_C),
     ],
     "network": [
         (21.0, NX + P(-6.4, -3.0, 0.6), NX + P(-4.5, 0.5, 0.2), 32, 4.0, NX + P(-5.5, 0.6, 0.5)),
@@ -720,13 +622,13 @@ CAM = {
         (31.0, NX + P(1.2, -4.0, 0.9), NX + P(-0.2, 0, 0), 32, 5.6, NX),
     ],
     "hacker_fail": [
-        (31.0, HX + P(0.3, -0.62, 1.3), MON_C, 60, 2.4, MON_C),
-        (33.6, HX + P(0.32, -0.7, 1.32), MON_C, 60, 2.4, MON_C),
+        (31.0, HX + P(0.55, -0.62, 1.35), MON_C, 60, 2.4, MON_C),
+        (33.6, HX + P(0.58, -0.7, 1.37), MON_C, 60, 2.4, MON_C),
         (36.0, HX + P(1.6, -2.1, 1.45), HX + P(0, 0.0, 1.05), 40, 2.0, HX + P(0, -0.5, 1.2)),
     ],
     "engineer_calm": [
-        (36.0, P(-0.42, -0.70, 1.40), SCREEN_C, 55, 2.8, SCREEN_C),
-        (41.0, P(-0.26, -0.36, 1.18), SCREEN_C, 55, 2.8, SCREEN_C),
+        (36.0, P(-0.44, -0.82, 1.42), SCREEN_C, 55, 2.8, SCREEN_C),
+        (41.0, P(-0.30, -0.42, 1.18), SCREEN_C, 55, 2.8, SCREEN_C),
     ],
     "endcard": [
         (41.0, P(-1.4, -1.7, 1.45), P(0.05, 0.12, 0.98), 35, 2.2, P(0, -0.45, 1.2)),
@@ -776,18 +678,64 @@ def typing_amount(t, spans):
     return max((ramp(t, a - 0.2, a) * (1 - ramp(t, b, b + 0.3)) for a, b in spans), default=0.0)
 
 
-def animate_figure(body, hood, hands, t, typing, base_lean, phase):
-    breathe = 0.006 * math.sin(t * 1.6 + phase)
-    body.scale = (1 + breathe * 0.5, 1 + breathe, 1)
-    hood.rotation_euler = (0.04 * math.sin(t * 0.5 + phase) + 0.03, 0.03 * math.sin(t * 0.37 + phase), 0.05 * math.sin(t * 0.29 + phase))
-    for i, h in enumerate(hands):
-        base = h.get("base")
-        if base is None:
-            h["base"] = tuple(h.location)
-            base = h["base"]
-        tap = max(0.0, math.sin(t * (19 + 3 * i) + i * 1.7)) ** 3 * 0.012 * typing
-        slide = 0.006 * math.sin(t * 3.1 + i) * typing
-        h.location = (base[0] + slide, base[1], base[2] + tap)
+def seated(base, t, typing, lean, phase, tap=0.010, look=None):
+    """Joint targets for a seated typist; base is the point under the pelvis."""
+    V = Vector
+    P = base + V((0, 0, 0.58))
+    # breathing and a slow idle sway
+    sway = V((0.006 * math.sin(t * 0.41 + phase), 0, 0.004 * math.sin(t * 1.6 + phase)))
+    up = V((0, math.sin(lean), math.cos(lean)))
+    chest = P + up * 0.485 + sway
+    neck = chest + (up + V((0, 0.25, 0))).normalized() * 0.085
+    j = {"pelvis": P, "chest": chest, "neck": neck,
+         "head_dir": (look - neck) if look is not None else V((0, 1, -0.4))}
+    for s, sx, ph in (("L", -1, 0.0), ("R", 1, 1.9)):
+        j["shoulder." + s] = chest + V((sx * 0.17, 0.0, -0.06))
+        hit = max(0.0, math.sin(t * (17 + 4 * ph) + ph + phase)) ** 3
+        j["wrist." + s] = base + V((sx * 0.12 + 0.012 * math.sin(t * 3.1 + ph) * typing,
+                                    0.36, 0.80 + tap * hit * typing))
+        j["hand_dir." + s] = V((-sx * 0.15, 1, -0.2))
+        j["elbow_pole." + s] = P + V((sx * 0.6, -0.4, 0.2))
+        j["hip." + s] = P + V((sx * 0.09, 0, -0.01))
+        j["ankle." + s] = base + V((sx * 0.13, 0.42, 0.10))
+        j["toe." + s] = base + V((sx * 0.14, 0.58, 0.02))
+        j["knee_pole." + s] = P + V((sx * 0.05, 1, 0.3))
+    return j
+
+
+ENG_BASE = Vector((0, -0.43, 0))
+HACK_BASE = HX + Vector((0, -0.40, 0))
+
+
+def pose_engineer(t):
+    typing = typing_amount(t, ENG_TYPING)
+    # the nod when the proof goes green, then leaning back after the deploy
+    nod = math.sin(math.pi * ramp(t, 12.6, 13.5)) * 0.18
+    back = ramp(t, 39.0, 40.4)
+    lean = math.radians(9) * (1 - back) - math.radians(7) * back
+    look = SCREEN_C + Vector((0, 0, -0.4 * nod + 0.12 * back))
+    j = seated(ENG_BASE, t, typing, lean, 0.0, look=look)
+    for s, sx in (("L", -1), ("R", 1)):
+        rest = ENG_BASE + Vector((sx * 0.14, 0.22, 0.78))
+        j["wrist." + s] = j["wrist." + s].lerp(rest, back)
+    ENG.pose(j)
+
+
+def pose_hacker(t):
+    typing = typing_amount(t, HACK_TYPING)
+    give_up = ramp(t, 33.9, 34.9)
+    lean = math.radians(20) * (1 - give_up) - math.radians(10) * give_up
+    look = MON_C + Vector((0, 0, 0.9 * give_up))
+    j = seated(HACK_BASE, t, typing, lean, 1.3, tap=0.02, look=look)
+    if give_up > 0:
+        # hands go up to the hood
+        head = j["neck"] + Vector((0, 0.02, 0.12))
+        for s, sx in (("L", -1), ("R", 1)):
+            j["wrist." + s] = j["wrist." + s].lerp(head + Vector((sx * 0.14, -0.02, 0.02)), give_up)
+            j["hand_dir." + s] = j["hand_dir." + s].lerp(Vector((-sx * 0.6, 0.3, 0.8)), give_up)
+            j["palm." + s] = Vector((0, 0, -1)).lerp(Vector((-sx, 0, 0)), give_up)
+            j["elbow_pole." + s] = j["elbow_pole." + s].lerp(j["chest"] + Vector((sx * 0.8, 0.6, 0.0)), give_up)
+    HACKER.pose(j)
 
 
 def update_network(t):
@@ -878,15 +826,8 @@ def update(f):
     sc.frame_set(f)
     camera_at(t)
     set_screens(f)
-    animate_figure(ENG, ENG_HOOD, ENG_HANDS, t, typing_amount(t, ENG_TYPING), 0.0, 0.0)
-    lean = math.radians(8) - math.radians(20) * ramp(t, 33.9, 35.0)
-    HACKER.rotation_euler = (lean, 0, 0)
-    animate_figure(HACKER, HACK_HOOD, HACK_HANDS, t, typing_amount(t, HACK_TYPING), lean, 1.3)
-    if t > 33.9:  # hands come off the keyboard as the attacker leans back
-        k = ramp(t, 33.9, 35.0)
-        for h in HACK_HANDS:
-            b = h["base"]
-            h.location = (b[0] * (1 + 0.4 * k), b[1] - 0.18 * k, b[2] - 0.12 * k)
+    pose_engineer(t)
+    pose_hacker(t)
     update_network(t)
 
 

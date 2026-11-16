@@ -78,12 +78,15 @@ def caption(img, t):
                 continue
             layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
             d = ImageDraw.Draw(layer)
-            tw = d.textlength(text, font=CAP)
+            f = CAP
+            while d.textlength(text, font=f) > W - 260 and f.size > 34:
+                f = font("SpaceGrotesk-400", f.size - 2)  # long captions shrink to fit
+            tw = d.textlength(text, font=f)
             x, y = (W - tw) / 2, H - 150 + (1 - k) * 10
             pad = 26
             d.rounded_rectangle([x - pad, y - 16, x + tw + pad, y + 70], radius=12, fill=(0, 0, 0, int(150 * k)))
             d.rectangle([x - pad, y - 16, x - pad + 5, y + 70], fill=(*ACCENT, int(255 * k)))
-            d.text((x, y), text, font=CAP, fill=(240, 240, 244, int(255 * k)))
+            d.text((x, y + (CAP.size - f.size) * 0.6), text, font=f, fill=(240, 240, 244, int(255 * k)))
             img = Image.alpha_composite(img.convert("RGBA"), layer).convert("RGB")
     return img
 

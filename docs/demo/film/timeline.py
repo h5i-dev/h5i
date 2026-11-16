@@ -25,11 +25,11 @@ NFRAMES = round(TOTAL * FPS)
 CAPTIONS = [
     (0.8, 4.6, "Every web app is a target."),
     (5.6, 9.4, "h5i extracts your Rust kernel into Lean 4…"),
-    (9.6, 13.7, "…and proves who may write what."),
+    (9.6, 13.7, "…and proves what it must do, such as no panics or unauthorized writes."),
     (14.6, 20.6, "Someone will try to break it."),
-    (21.6, 26.0, "Every write passes through the proven kernel."),
-    (26.2, 30.7, "Only the author or a moderator can delete a post. Proven."),
-    (31.6, 35.7, "No bypass to find: the rule holds for every input."),
+    (21.6, 26.0, "Every request runs through the proven kernel."),
+    (26.2, 30.7, "For example, only the author or a moderator can delete a post."),
+    (31.6, 35.7, "A proof mathematically guarantees the correctness of the implementation."),
     (36.6, 40.6, "Proven in Lean 4. Shipped as Rust."),
 ]
 

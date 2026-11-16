@@ -19,6 +19,17 @@ from fontTools.ttLib import TTFont
 t = TTFont('../assets/$f.woff2'); t.flavor = None; t.save('$OUT/fonts/$f.ttf')"
 done
 
+# Blender Studio's Human Base Meshes (CC0), the characters' bodies
+HBM="$OUT/human_base_meshes_bundle.blend"
+if [ ! -f "$HBM" ]; then
+  url=${H5I_FILM_HUMAN_URL:-https://mirror.freedif.org/blender/demo/asset-bundles/human-base-meshes/human-base-meshes-bundle-v1.4.1.zip}
+  curl -fL -o "$OUT/hbm.zip" "$url"
+  echo "811f43accbb31a88266d932f8f5563b2d13586fca0ba2693aad1f5fe582b3515  $OUT/hbm.zip" | sha256sum -c -
+  "$PY" -c "
+import zipfile; z = zipfile.ZipFile('$OUT/hbm.zip')
+open('$HBM', 'wb').write(z.read('human-base-meshes-bundle-v1.4.1/human_base_meshes_bundle.blend'))"
+fi
+
 "$PY" screens.py "$OUT"
 blender -b --factory-startup -P scene.py -- "$OUT" --dump-packets "$OUT/packets.json"
 # two processes keep the GPU busy while the other one syncs the scene
