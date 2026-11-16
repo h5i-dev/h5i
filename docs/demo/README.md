@@ -1,4 +1,4 @@
-# h5i demo film: Proven, not patched
+# h5i demo film: Build and Verify Your Web Apps
 
 A 48-second 3D film, rendered in Blender (EEVEE). A hooded engineer
 extracts the board app's Rust kernel into Lean 4 and proves its authorization
@@ -14,7 +14,7 @@ character has a visible face.
 | 0:21–0:31 | Network space. Requests hit a shield around the h5i kernel and shatter. The `authorized` theorem circles it. |
 | 0:31–0:36 | The attacker's screen: 4096 of 4096 requests refused, 0 bypasses. The attacker leans back. |
 | 0:36–0:41 | The engineer deploys: "Proven in Lean 4. Shipped as Rust." |
-| 0:41–0:48 | End card: Proven, not patched. `cargo add h5i-app`. |
+| 0:41–0:48 | End card: Build and Verify Your Web Apps. `cargo add h5i-app`. |
 
 ## What is real and what is illustrated
 

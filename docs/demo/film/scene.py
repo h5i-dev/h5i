@@ -597,35 +597,37 @@ shell = sphere("shell", 1.25, NX, fresnel_shell(), seg=64, rings=32)
 shell.color = (1, 1, 1, 0.4)
 
 # theorem text bent around a ring
-M_THEOREM = emissive("theorem", GREEN, 3.5)
-ring = link(bpy.data.objects.new("ring", bpy.data.curves.new("ring", "CURVE")))
-ring.data.dimensions = "3D"
-sp = ring.data.splines.new("BEZIER")
-sp.bezier_points.add(3)
-R = 2.25
-for i, bp in enumerate(sp.bezier_points):
-    a = -i * math.pi / 2  # clockwise, so the text reads left to right from outside
-    bp.co = (R * math.cos(a), R * math.sin(a), 0)
-    bp.handle_left_type = bp.handle_right_type = "AUTO"
-sp.use_cyclic_u = True
-ring.location = NX
+M_THEOREM = emissive("theorem", (1.0, 0.93, 0.82), 4.0)  # warm white: green on the green shield was hard to read
 theorem_txt = "theorem authorized : ∀ w ∈ ws, allowed s u w"
-_txt = text_obj("theorem_txt", theorem_txt, 0.16, M_THEOREM, SYMBOL_FONT, align="LEFT")
-_txt.data.align_y = "BOTTOM"
-_me = bpy.data.meshes.new_from_object(_txt.evaluated_get(bpy.context.evaluated_depsgraph_get()))
-_me.transform(Matrix.Rotation(math.radians(90), 4, "X"))  # glyphs stand up, facing -Y
-bpy.data.objects.remove(_txt)
-th = link(bpy.data.objects.new("theorem_ring", _me))
-th.data.materials.clear()
-th.data.materials.append(M_THEOREM)
+SYMBOL_BOLD = SYMBOL_FONT.replace("DejaVuSansMono.ttf", "DejaVuSansMono-Bold.ttf")
+# A banner that faces the camera, floating between it and the shield, above the
+# core. (Text bent around a ring read badly: the shield's green wires crossed it.)
+th = text_obj("theorem_banner", theorem_txt, 0.09, M_THEOREM,
+              SYMBOL_BOLD if os.path.exists(SYMBOL_BOLD) else SYMBOL_FONT)
 th.color = (1, 1, 1, 1)
-cm = th.modifiers.new("curve", "CURVE")
-cm.object = ring
-cm.deform_axis = "POS_X"
-th.parent = ring
-th.location = (0, 0, 0)
-th.rotation_euler = (0, 0, 0)
-ring_tilt = Euler((math.radians(-6), math.radians(4), 0))
+
+
+def band_mat():
+    """An opaque dark plate behind the theorem, so the wires do not cross it."""
+    m, nt, out = nodes_mat("band")
+    d = nt.nodes.new("ShaderNodeEmission")
+    d.inputs["Color"].default_value = (0.01, 0.03, 0.025, 1)
+    d.inputs["Strength"].default_value = 1.0
+    nt.links.new(d.outputs[0], out.inputs[0])
+    return m
+
+
+_dg = bpy.context.evaluated_depsgraph_get()
+_bb = [Vector(c) for c in th.evaluated_get(_dg).bound_box]
+_x0, _x1 = min(c.x for c in _bb) - 0.07, max(c.x for c in _bb) + 0.07
+_y0, _y1 = min(c.y for c in _bb) - 0.045, max(c.y for c in _bb) + 0.045
+_bm = bpy.data.meshes.new("theorem_band")
+_bm.from_pydata([(_x0, _y0, -0.004), (_x1, _y0, -0.004), (_x1, _y1, -0.004), (_x0, _y1, -0.004)], [], [(0, 1, 2, 3)])
+band = link(bpy.data.objects.new("theorem_band", _bm))
+band.data.materials.append(band_mat())
+band.parent = th
+_edge = box("theorem_edge", (_x1 - _x0, 0.006, 0.006), ((_x0 + _x1) / 2, _y0, -0.002), emissive("edge", GREEN, 3.0, by_object=False))
+_edge.parent = th
 
 kernel_label = text_obj("kernel_label", "h5i kernel", 0.16, emissive("klabel", (1.0, 0.8, 0.7), 3.0, by_object=False),
                         os.path.join(FONT_DIR, "SpaceMono-700.ttf"))
@@ -846,11 +848,19 @@ def update_network(t):
     shield.color = (1, 1, 1, 0.45 + 1.4 * shield_pulse)
     shell.color = (1, 1, 1, 0.35 + 0.9 * shield_pulse)
     shield.rotation_euler = (0.1 * t, 0.0, 0.17 * t)
-    ring.rotation_euler = ring_tilt.copy()
-    th.location = (12.9 + (t - 27.0) * 0.1, 0, 0.5)
     # the theorem appears with the caption that states it
     th.hide_render = t < 25.9
-    th.color = (1, 1, 1, ramp(t, 25.9, 26.7))
+    for o in (band, _edge):
+        o.hide_render = th.hide_render
+    if not th.hide_render:
+        to_cam = (cam.location - NX)
+        to_cam.z = 0
+        to_cam.normalize()
+        th.location = NX + to_cam * 1.45 + Vector((0, 0, 0.85 + 0.03 * math.sin(t * 1.3)))
+        th.rotation_euler = cam.rotation_euler.copy()
+        k = ramp(t, 25.9, 26.5)
+        th.scale = (1, max(0.001, k), 1)
+        th.color = (1, 1, 1, k)
     core.color = (1, 1, 1, 1.0 + 0.15 * math.sin(t * 4))
     core.scale = (1 + 0.02 * math.sin(t * 4),) * 3
 

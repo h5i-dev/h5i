@@ -32,7 +32,7 @@ def font(name, size):
 
 
 CAP = font("SpaceGrotesk-400", 50)
-TITLE = font("SpaceGrotesk-400", 92)
+TITLE = font("SpaceGrotesk-400", 84)
 SUB = font("SpaceGrotesk-400", 40)
 MONO = font("SpaceMono-400", 38)
 SMALL = font("SpaceGrotesk-400", 30)
@@ -113,7 +113,7 @@ def endcard(img, t):
         m = Image.new("L", LOGO.size, 0)
         ImageDraw.Draw(m).rounded_rectangle([0, 0, *LOGO.size], radius=28, fill=int(255 * kl))
         layer.paste(LOGO, ((W - LOGO.width) // 2, 200), m)
-    center("Proven, not patched.", 400, TITLE, (240, 240, 244), END0 + 1.3)
+    center("Build and Verify Your Web Apps.", 400, TITLE, (240, 240, 244), END0 + 1.3)
     center("h5i — The Verifiable Web Framework for Rust", 530, SUB, (190, 190, 200), END0 + 1.8)
     kc = ramp(t, END0 + 2.4, END0 + 3.0)
     if kc > 0:
