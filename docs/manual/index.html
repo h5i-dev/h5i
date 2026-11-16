@@ -428,7 +428,12 @@ swapped <code>&amp;&amp;</code> and <code>||</code>, dropped <code>!</code>, and
 dropped, <code>visible</code> or <code>stored</code> made <code>true</code>, a comparison with the actor made
 <code>true</code>, the guard removed, every principal put in tenant 0, and the same
 changes made to a <code>schema!</code> policy's generator. Each caught mutant's line names
-the declarations whose proofs broke.</p>
+the declarations whose proofs broke, and the run ends by listing the theorems
+no caught mutant broke: each is a lead (a vacuous or weak statement, or one no
+mutant aims at), not a failure. The copy reuses the original's Lake build
+(<code>proofs/.lake/build</code>) and a Cargo target directory per job under
+<code>target/h5i-app-mutate/</code> (removed by <code>cargo clean</code>), so a mutant rebuilds only
+what its change reaches; the kernel and its path crates are always rebuilt.</p>
 <h3 id="framework-proven-authorization">Framework-proven authorization</h3>
 <p><code>[authz] guarded</code> opts a kernel into authorization the framework proves for it
 (<a href="https://github.com/h5i-dev/h5i/blob/main/docs/design/design-app-authz.md"><code>docs/design/design-app-authz.md</code></a>). The kernel
@@ -486,6 +491,7 @@ targets = [&quot;Theorems&quot;]        # Lake targets a mutant must break (defa
 
 [[mutant]]
 name = &quot;off_by_one&quot;
+function = &quot;transition&quot;       # optional: `old` must occur once in this fn (or `Type::method`), not the whole file
 old = &quot;if s.count &gt;= s.limit {&quot;
 new = &quot;if s.count &gt; s.limit {&quot;
 </code></pre></div>
