@@ -1278,7 +1278,7 @@
         </div>
       </div>
     </div>
-    <!-- The demo film. The iframe is created on the first play, so the page never pays for it unasked. -->
+    <!-- The demo film, hosted on YouTube. The iframe is created on the first play, so the page never pays for YouTube's player unasked. -->
     <figure class="cta-film browser-win">
       <div class="win-bar"><span class="win-tab on"><i class="fav"></i>h5i &#183; demo film</span><span class="win-plus">+</span><span class="win-ctl"><i></i><i></i><i></i></span></div>
       <div class="bw-url">
@@ -1324,13 +1324,18 @@
 document.querySelectorAll('.cta-film').forEach(function (fig) {
   var screen = fig.querySelector('.film-screen'), toggle = fig.querySelector('.film-toggle'), frame = null, playing = false;
   function show(on) { playing = on; toggle.innerHTML = on ? '&#10074;&#10074;' : '&#9654;'; toggle.setAttribute('aria-label', on ? 'Pause the demo film' : 'Play the demo film'); }
+  var YT = 'https://www.youtube-nocookie.com';
   function play() {
     if (!frame) {
       frame = document.createElement('iframe');
-      frame.src = '/demo/?embed'; frame.title = 'h5i demo film'; frame.allow = 'fullscreen; autoplay';
+      frame.src = YT + '/embed/I7m39qNO0G8?autoplay=1&rel=0&playsinline=1&enablejsapi=1&origin=' + encodeURIComponent(location.origin);
+      frame.title = 'h5i demo film'; frame.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
+      frame.allowFullscreen = true; frame.referrerPolicy = 'strict-origin-when-cross-origin';
       screen.innerHTML = ''; screen.appendChild(frame); show(true); return;
     }
-    frame.contentWindow.postMessage({ h5i: 'toggle' }, location.origin); show(!playing);
+    // YouTube's iframe API takes commands by postMessage when enablejsapi=1
+    frame.contentWindow.postMessage(JSON.stringify({ event: 'command', func: playing ? 'pauseVideo' : 'playVideo', args: [] }), YT);
+    show(!playing);
   }
   fig.querySelector('.film-poster').addEventListener('click', play);
   toggle.addEventListener('click', play);
