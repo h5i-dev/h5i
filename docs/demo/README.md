@@ -23,6 +23,13 @@ type and ends with their hands on their head.
 | 0:36–0:41 | The engineer deploys: "Proven in Lean 4. Shipped as Rust." |
 | 0:41–0:48 | End card: Build and Verify Your Web Apps. `cargo add h5i-app`. |
 
+The film is hosted on YouTube: <https://youtu.be/I7m39qNO0G8>. `index.html`
+and the front page show `assets/poster.jpg` and load the
+`youtube-nocookie.com` player only when someone clicks play. The MP4 itself is
+kept at `media/demo/h5i-demo.mp4`, outside `docs/` so Pages does not serve
+it. To change the film, rebuild it with `film/build.sh --publish` and upload
+the new MP4 to YouTube.
+
 ## What is real and what is illustrated
 
 The `delete` function, the `authorized` theorem, the `allowed` definition, and
@@ -53,7 +60,7 @@ app. The guides link to it, but the film does not use it.
 | Finish | `film/compose.py` | `out/h5i-demo.mp4`. It adds bloom, grain, captions, the end card and the audio |
 
 ```bash
-PY=/path/to/python film/build.sh --publish   # ~1 h on one GPU; copies MP4 + poster into assets/
+PY=/path/to/python film/build.sh --publish   # ~1 h on one GPU; copies the poster into assets/ and the MP4 into media/demo/
 blender -b --factory-startup -P film/scene.py -- out --stills 3,13,27 --pct 50   # quick 3D stills
 python film/compose.py out --still 13,44                                       # finished stills
 ```

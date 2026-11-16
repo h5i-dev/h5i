@@ -3,7 +3,11 @@
 #   fonts -> screen textures -> Blender (EEVEE) frames -> soundtrack -> MP4.
 #
 #   film/build.sh            # full build, ~1 hour on one GPU
-#   film/build.sh --publish  # also copy the MP4 and poster into assets/
+#   film/build.sh --publish  # also copy the poster into assets/ and the MP4 into media/demo/
+#
+# The site embeds the film from YouTube (https://youtu.be/I7m39qNO0G8).
+# --publish also copies the MP4 to media/demo/, outside docs/ so Pages does
+# not serve it; upload that file to YouTube to change the film.
 #
 # Needs: blender (5.x) on PATH and a Python with pillow, numpy, scipy,
 # fonttools, brotli and imageio-ffmpeg (set PY to choose it).
@@ -42,7 +46,7 @@ wait
 "$PY" compose.py "$OUT"
 
 if [ "${1:-}" = "--publish" ]; then
-  cp "$OUT/h5i-demo.mp4" ../assets/h5i-demo.mp4
+  cp "$OUT/h5i-demo.mp4" ../../../media/demo/h5i-demo.mp4
   "$PY" -c "
 from PIL import Image
 Image.open('$OUT/poster.png').convert('RGB').save('../assets/poster.jpg', quality=88)"
