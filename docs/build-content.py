@@ -51,7 +51,7 @@ PAGE_HISTORY = {
     "guides/advanced-web-security-testing/": ("2026-11-14", "1a26fa7d6616ac80"),
     "guides/security-regression-testing/": ("2026-11-14", "22c4634d56ebf90d"),
     "guides/sandboxed-agent-workflows/": ("2026-11-14", "aa7cb8297a27c772"),
-    "showcase/": ("2026-11-16", "decdc613405fde04"),
+    "showcase/": ("2026-11-17", "c3899ffc72cc4a5d"),
     "blog/": ("2026-11-14", "68815f1592df03ed"),
     "blog/building-a-verifiable-web-framework/": ("2026-11-14", "96413827121891ce"),
     "blog/finding-bugs-verifying-rust-oss/": ("2026-11-14", "ebaa33e5de8e1728"),
