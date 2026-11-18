@@ -594,6 +594,10 @@ def finish(scene, update, shots, fps, blur=True, shutter=0.25):
     for cam in bpy.data.cameras:
         cam.clip_end = 3000.0
         cam.clip_start = 0.05
+    # the rooms have many shadowed lights now; the default pool overflows
+    # during the opening's crane move
+    if hasattr(scene.eevee, "shadow_pool_size"):
+        scene.eevee.shadow_pool_size = "1024"
     state = {"frame": None}
 
     def render(f, path):
