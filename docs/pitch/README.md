@@ -1,14 +1,15 @@
 # h5i pitch deck
 
-The six-slide deck follows the docs' visual system: Archivo display type,
+The seven-slide deck follows the docs' visual system: Archivo display type,
 IBM Plex Mono labels, warm monochrome surfaces, square cells, hairline rules
 and red accents. `index.html` is the content source; `deck.css` and `deck.js`
 provide presentation, mobile reading, keyboard navigation and print layouts.
 Without JavaScript, every slide remains readable in order.
 
 The deck tells one story: h5i is a development platform for proving that
-the critical properties of web software are correct. Six slides: product,
-problem, solution, traction, business model, founder and ask. Do not frame
+the critical properties of web software are correct. Seven slides: product,
+problem, solution, multi-target execution, traction, business model, founder
+and ask. Do not frame
 formal verification as bug finding; it guarantees properties. The solution
 slide shows the framework's architecture, not a translation step: HTTP /
 Axum, then the Rust app kernel, then the database, with the Lean 4 proof
@@ -19,14 +20,30 @@ is not a checklist. One idea per slide, **20 to 30 words at most** (title and
 body; eyebrow and folio excluded). Say "formally verify", not
 "mathematically verify". No clipped "A. B." slogans and no noun phrases joined by a comma. The landing page does not link here on purpose.
 
-The cover shows stars, forks (80) and downloads in a right-hand column.
+The multi-target slide (4) is about embedded and edge devices only, with an
+inline SVG chip driving a robot as the figure. Two cards joined by an arrow: today, then with
+h5i. The first card gives the
+context: many devices embed a web server for setup and control
+(Mongoose, picoserve), so a web framework belongs there. Do not say devices
+are "often controlled over HTTP": real-time control loops are not, and
+picoserve is a small project, named as a Rust example and not as evidence of
+adoption. The server and GPU
+targets are deliberately left off because they do not match the title. Say "embedded and edge devices", not "microcontroller", and
+name concrete uses (sensor nodes, robot controllers). Those are use cases,
+not shipped examples; the folio names the one that exists. The folio also states
+the proof boundary: the HTTP/1.1 parser (`h5i-app-h1`) and the kernel are
+proved, the async shell (`h5i-app-embedded`) is trusted and tested. Its claims follow `examples/embedded/README.md`: the thermostat runs
+on an STM32F407 emulated in Renode, and firmware exists for the Seeed XIAO
+RP2040. Do not say it ran on hardware unless that README does.
+
+The cover shows stars, forks (82) and downloads in a right-hand column.
 The traction slide embeds the live star-history.com chart (dark theme), so
-the PDF render needs network access to include it. Beside it: 80 forks and
-20+ contributors (23 on GitHub, November 10, 2026). Do not say "active":
+the PDF render needs network access to include it. Beside it: 82 forks and
+20+ contributors (23 on GitHub, November 18, 2026). Do not say "active":
 only about ten committed in the last 90 days. The OS donut uses the same
-download run: Linux 2,323, macOS 885, Windows 689 of 3,897.
-Traction: 913 stars and 3,897 release downloads (Python wheels excluded, via
-`scripts/h5i-stat.sh`), both read from GitHub on November 9, 2026. The business model slide sells verification infrastructure, not a
+download run: Linux 2,717, macOS 941, Windows 744 of 4,402.
+Traction: 931 stars and 4,402 release downloads (Python wheels excluded, via
+`scripts/h5i-stat.sh`), both read from GitHub on November 18, 2026. The business model slide sells verification infrastructure, not a
 dashboard: free is the web framework, Lean 4 proofs and local CLI; paid
 (planned) is continuous verification, proof monitoring in CI/CD, and team
 collaboration with audit reports. It stacks the free and paid cards on the left and
@@ -43,7 +60,7 @@ proofs establish stated properties for all modeled inputs under explicit
 assumptions, and product boundaries follow `docs/design/design-app-trust.md`.
 Do not fill gaps with invented customer numbers, pricing or market statistics.
 
-The session capture on slide 5 used an isolated `H5I_BROWSER_HOME` and
+The session capture on slide 6 used an isolated `H5I_BROWSER_HOME` and
 `H5I_PROJECT_HOME`, plus a local HTTP demo with orders 1041/Alice and
 1042/Bob. Actual browser navigation, a replay changing the ID, and a finding
 populated the UI. It represents a demonstration, not customer evidence.
@@ -74,6 +91,6 @@ size, phone widths, keyboard/deep-link navigation and print output.
 ## Visuals
 
 Keep slides readable at a glance: short labels, cards and one code example at
-most. Content-heavy slides (4 and 5) carry the `top` class and start near the
+most. Content-heavy slides (5 and 6) carry the `top` class and start near the
 top; the others center vertically. Check every slide at 1280 × 720 for
 overflow past the folio, at phone widths, and in the PDF.

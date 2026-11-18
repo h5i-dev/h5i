@@ -359,6 +359,23 @@ figure { margin:0; }
 .arch .node.proof { color:var(--spot); }
 .arch > i { font-style:normal; text-align:center; font-size:32px; color:var(--spot); }
 .arch > i.up { padding:10px 0; }
+.target-row { display:grid; grid-template-columns:500px minmax(0,1fr); gap:36px; align-items:center; margin-top:32px; }
+.chip-fig { margin:0; }
+.chip-fig svg { display:block; width:100%; height:auto; }
+.chip-body { fill:var(--panel); stroke:var(--line); stroke-width:1.5; }
+.chip-pins path { stroke:#55524b; stroke-width:22; fill:none; }
+.chip-trace path { stroke:var(--line); stroke-width:2; fill:none; }
+.chip-dot { fill:var(--dim); }
+.bot rect { fill:var(--panel); stroke:#55524b; stroke-width:1.5; }
+.bot path { stroke:#55524b; stroke-width:2; fill:none; }
+.bot-eye { fill:var(--spot); }
+.bot-link { stroke:var(--spot); stroke-width:2; fill:none; }
+.chip-die { fill:#1d1210; stroke:var(--spot); stroke-width:2; }
+.chip-name { fill:var(--ink); font:650 56px var(--sans); font-stretch:70%; letter-spacing:-.04em; }
+.chip-proof { fill:var(--spot); font:500 12px var(--mono); letter-spacing:.12em; }
+.cards.target-stack { grid-template-columns:1fr; margin-top:0; gap:12px; }
+.cards.target-stack > div { padding:18px 24px; gap:8px; font-size:26px; }
+.cards.target-stack > i { font-style:normal; text-align:center; font-size:30px; line-height:1; color:var(--spot); }
 .proof-row > i { font-style:normal; align-self:center; text-align:center; font-size:28px; color:var(--spot); }
 .proof-row pre { margin:0; padding:12px 14px; font-size:12px; line-height:1.55; }
 .proof-row .guarantee-card { justify-content:flex-start; padding:42px 16px 12px; }
@@ -466,6 +483,9 @@ figure { margin:0; }
   .cover-stats dt { font-size:40px; }
   .traction-row { grid-template-columns:1fr; gap:20px; }
   .model-row { grid-template-columns:1fr; gap:16px; }
+  .target-row { grid-template-columns:1fr; gap:20px; }
+  .chip-fig svg { max-width:340px; }
+  .cards.target-stack > div { font-size:20px; }
   .session-ui-frame.model-ui { height:calc((100vw - 48px) * .54); }
   .session-ui-frame.model-ui iframe { transform:scale(var(--workspace-scale,.342)); }
   .arch { grid-template-columns:1fr; gap:8px; }
