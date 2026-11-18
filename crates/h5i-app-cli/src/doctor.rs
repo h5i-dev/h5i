@@ -48,7 +48,10 @@ fn same_commit(found: &str, pin: &str) -> bool {
     pin.starts_with(found) || found.starts_with(pin)
 }
 
-pub fn doctor(project: Option<&Project>) -> Result<()> {
+/// `this_rev`: the h5i revision whose Lean library this binary builds
+/// against (its release tag). `fix`: pin a project's library there when it
+/// lacks modules this h5i builds (`lib_pin::repin`).
+pub fn doctor(project: Option<&Project>, this_rev: &str, fix: bool) -> Result<()> {
     let mut r = Report::default();
     eprintln!("tools");
     match util::on_path("cargo") {
@@ -133,6 +136,7 @@ pub fn doctor(project: Option<&Project>) -> Result<()> {
         } else {
             crate::manifest::display_path(&pk.dir)
         };
+        check_lib(&mut r, &proofs, this_rev, fix)?;
         match pk.state() {
             crate::packages::State::Ready => r.ok("lake packages", &at),
             crate::packages::State::Incomplete => r.warn(
@@ -189,6 +193,40 @@ pub fn doctor(project: Option<&Project>) -> Result<()> {
     eprintln!("{} failed, {} warnings", r.failed, r.warned);
     if r.failed > 0 {
         bail!("doctor found {} problem(s)", r.failed);
+    }
+    Ok(())
+}
+
+/// The h5i Lean library the project pins: does it have the modules this h5i
+/// builds? With `fix`, move the pin to `this_rev` when it does not.
+fn check_lib(r: &mut Report, proofs: &Path, this_rev: &str, fix: bool) -> Result<()> {
+    let Some(pin) = crate::lib_pin::locate(proofs) else {
+        r.warn(crate::lib_pin::LIB, "lakefile.lean does not require the h5i Lean library");
+        return Ok(());
+    };
+    if pin.root.is_none() {
+        r.warn(
+            crate::lib_pin::LIB,
+            &format!("{}, not fetched yet; `h5i app check` fetches it", pin.describe()),
+        );
+        return Ok(());
+    }
+    let missing = pin.missing();
+    if missing.is_empty() {
+        r.ok(crate::lib_pin::LIB, &pin.describe());
+        return Ok(());
+    }
+    if !fix || pin.from_path {
+        r.fail(crate::lib_pin::LIB, &crate::lib_pin::advice(&pin, this_rev, &missing));
+        return Ok(());
+    }
+    let rev = crate::new::default_rev(this_rev);
+    eprintln!("  fix   {:<22} pinning the library at {rev} (was {})", crate::lib_pin::LIB, pin.describe());
+    crate::lib_pin::repin(proofs, &rev, &util::Out::Inherit)?;
+    match crate::lib_pin::locate(proofs) {
+        Some(after) if after.missing().is_empty() => r.ok(crate::lib_pin::LIB, &format!("{} (fixed)", after.describe())),
+        Some(after) => r.fail(crate::lib_pin::LIB, &crate::lib_pin::advice(&after, this_rev, &after.missing())),
+        None => r.fail(crate::lib_pin::LIB, "the require is gone after the fix"),
     }
     Ok(())
 }

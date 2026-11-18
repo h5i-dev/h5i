@@ -2669,10 +2669,13 @@ Check that Charon, Aeneas and Lean are installed at the versions this h5i extrac
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBdoctor\fR [\fB\-h\fR|\fB\-\-help\fR] [\fIPATH\fR] 
+\fBdoctor\fR [\fB\-\-fix\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATH\fR] 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
+.TP
+\fB\-\-fix\fR
+Fix what can be fixed in place: a project whose h5i Lean library predates modules this h5i builds is pinned at this h5i\*(Aqs release (`proofs/lakefile.lean`, then `lake update h5i_app_lib`)
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help

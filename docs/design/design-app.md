@@ -195,7 +195,7 @@ which theorems must exist (`[check]`), and which bugs the proofs must reject
 | `h5i app prove` | `extract`, then `check` |
 | `h5i app lint` | the authorization defaults above |
 | `h5i app mutate` | each mutant in a copy of the project, caught when the proofs fail; `--auto` adds syntax-generated mutants |
-| `h5i app doctor` | tools and project against the pins in `crates/h5i-app-cli/src/pins.rs` |
+| `h5i app doctor` | tools and project against the pins in `crates/h5i-app-cli/src/pins.rs`, and the project's `h5i_app_lib` against the library modules this h5i builds (`lib_pin.rs`); `--fix` pins an older library at this release |
 
 `cargo app-verify` runs `lint`, the Rust tests (PostgreSQL tests when
 `H5I_APP_TEST_DATABASE_URL` is set), `cargo deny` (only `h5i-app-pg` uses a
