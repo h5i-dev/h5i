@@ -395,6 +395,59 @@ screen_light.parent = lid_pivot
 screen_light.location = (0, -0.02, 0.115)
 screen_light.rotation_euler = (math.radians(90), 0, 0)  # area lights emit along -Z; turn to -Y
 
+# a XIAO RP2040 on a USB cable, left of the laptop: the same kind of kernel,
+# flashed to a microcontroller at the end (examples/embedded/thermostat)
+M_PCB = principled("pcb", (0.012, 0.03, 0.05), rough=0.35)
+M_GOLD = principled("gold", (0.85, 0.62, 0.3), rough=0.3, metal=1.0)
+M_CABLE = principled("cable", (0.02, 0.02, 0.022), rough=0.55)
+
+
+def led_mat(name, strength):
+    """Emission whose colour and strength come from the object's colour."""
+    m, nt, out = nodes_mat(name)
+    em = nt.nodes.new("ShaderNodeEmission")
+    info = nt.nodes.new("ShaderNodeObjectInfo")
+    mul = nt.nodes.new("ShaderNodeMath")
+    mul.operation = "MULTIPLY"
+    mul.inputs[1].default_value = strength
+    nt.links.new(info.outputs["Color"], em.inputs["Color"])
+    nt.links.new(info.outputs["Alpha"], mul.inputs[0])
+    nt.links.new(mul.outputs[0], em.inputs["Strength"])
+    nt.links.new(em.outputs[0], out.inputs[0])
+    return m
+
+
+BOARD = LAP + Vector((-0.275, 0.07, 0.0))
+BS = 1.25  # a little larger than life, so it reads at 55 mm
+box("xiao_pcb", (0.0175 * BS, 0.021 * BS, 0.0016), BOARD + Vector((0, 0, 0.0008)), M_PCB, bevel=0.0012)
+box("xiao_shield", (0.0125 * BS, 0.0125 * BS, 0.0022), BOARD + Vector((0, -0.002, 0.0027)), M_METAL, bevel=0.0006)
+box("xiao_usb", (0.009 * BS, 0.0075, 0.0032), BOARD + Vector((0, 0.0105 * BS, 0.0032)), M_METAL, bevel=0.0012)
+for side in (-1, 1):
+    for i in range(7):
+        box("xiao_pad", (0.0016, 0.0016, 0.0003),
+            BOARD + Vector((side * 0.0080 * BS, (-0.0090 + i * 0.00254) * BS, 0.0017)), M_GOLD)
+LED = box("xiao_led", (0.0028, 0.0028, 0.0016), BOARD + Vector((0.0045 * BS, 0.0080 * BS, 0.0024)),
+          led_mat("xiao_led", 40.0))
+LED.color = (0, 0, 0, 0)
+LED_LIGHT = point_light("xiao_glow", BOARD + Vector((0.0045 * BS, 0.0072 * BS, 0.03)), (0.3, 1.0, 0.6), 0.0, 0.01)
+# the cable leaves the USB-C end, curls on the desk and goes into the laptop's left side
+cd = bpy.data.curves.new("usb_cable", "CURVE")
+cd.dimensions = "3D"
+cd.bevel_depth = 0.0019
+cd.bevel_resolution = 4
+sp = cd.splines.new("BEZIER")
+pts = [BOARD + Vector((0, 0.0105 * BS + 0.004, 0.0032)),
+       BOARD + Vector((0.025, 0.06, 0.002)),
+       LAP + Vector((-0.20, 0.07, 0.002)),
+       LAP + Vector((-0.172, 0.05, 0.007))]
+sp.bezier_points.add(len(pts) - 1)
+for bp, co in zip(sp.bezier_points, pts):
+    bp.co = co
+    bp.handle_left_type = bp.handle_right_type = "AUTO"
+cable = link(bpy.data.objects.new("usb_cable", cd))
+cable.data.materials.append(M_CABLE)
+box("usb_plug", (0.008, 0.012, 0.005), LAP + Vector((-0.176, 0.05, 0.007)), M_BLACK, bevel=0.001)
+
 ENG = character.Figure("engineer", (0, 0, 0), dress(M_HOODIE), M_HOODIE, BUNDLE)
 # rim light (h5i orange) from behind-right, cool fill from the window
 area_light("rim", (1.4, 1.2, 1.9), look_rot((1.4, 1.2, 1.9), (0, -0.45, 1.2)), 1.2, ORANGE, 70)
@@ -599,6 +652,7 @@ def P(*v):
 
 SCREEN_C = LAP + Vector((0, 0.135, 0.12))  # roughly the laptop screen centre
 MON_C = HX + Vector((0, 0.55, 1.08))
+BOARD_C = BOARD + Vector((0, 0, 0.004))
 
 # shot -> list of keys (t, pos, look, lens, fstop, focus_point)
 CAM = {
@@ -628,10 +682,14 @@ CAM = {
     ],
     "engineer_calm": [
         (36.0, P(-0.44, -0.82, 1.42), SCREEN_C, 55, 2.8, SCREEN_C),
-        (41.0, P(-0.30, -0.42, 1.18), SCREEN_C, 55, 2.8, SCREEN_C),
+        (39.3, P(-0.34, -0.55, 1.26), SCREEN_C, 55, 2.8, SCREEN_C),
+        (40.4, P(-0.33, -0.50, 1.23), SCREEN_C, 55, 2.8, SCREEN_C),
+        # then down and left, to the microcontroller as it comes up
+        (41.7, P(-0.52, -0.20, 0.98), P(-0.20, 0.11, 0.785), 55, 3.2, BOARD_C),
+        (42.0, P(-0.53, -0.20, 0.975), P(-0.20, 0.11, 0.785), 55, 3.2, BOARD_C),
     ],
     "endcard": [
-        (41.0, P(-1.4, -1.7, 1.45), P(0.05, 0.12, 0.98), 35, 2.2, P(0, -0.45, 1.2)),
+        (42.0, P(-1.4, -1.7, 1.45), P(0.05, 0.12, 0.98), 35, 2.2, P(0, -0.45, 1.2)),
         (48.0, P(-2.6, -3.4, 2.1), P(0.05, 0.12, 0.98), 35, 2.2, P(0, -0.45, 1.2)),
     ],
 }
@@ -670,7 +728,7 @@ def camera_at(t):
 
 # ---------------------------------------------------------------- animation
 
-ENG_TYPING = [(0.6, 4.6), (6.0, 6.7), (9.7, 10.3), (37.0, 37.5)]
+ENG_TYPING = [(0.6, 4.6), (6.0, 6.7), (9.7, 10.3), (36.8, 37.3), (38.4, 39.3)]
 HACK_TYPING = [(14.5, 16.5), (16.9, 18.9), (19.1, 21.0)]
 
 
@@ -711,7 +769,7 @@ def pose_engineer(t):
     typing = typing_amount(t, ENG_TYPING)
     # the nod when the proof goes green, then leaning back after the deploy
     nod = math.sin(math.pi * ramp(t, 12.6, 13.5)) * 0.18
-    back = ramp(t, 39.0, 40.4)
+    back = ramp(t, 41.0, 42.4)
     lean = math.radians(9) * (1 - back) - math.radians(7) * back
     look = SCREEN_C + Vector((0, 0, -0.4 * nod + 0.12 * back))
     j = seated(ENG_BASE, t, typing, lean, 0.0, look=look)
@@ -821,8 +879,26 @@ def set_screens(f):
             img.reload()
 
 
+# the firmware is flashed at FLASH0 and serving from FLASH1 (see screens.py)
+FLASH0, FLASH1 = 39.56, 40.36
+
+
+def update_board(t):
+    if t < FLASH0:
+        col, k = (1.0, 1.0, 1.0), 0.0
+    elif t < FLASH1:
+        col, k = (1.0, 0.45, 0.15), 0.5 + 0.5 * (math.sin((t - FLASH0) * 40) > 0)  # flashing: fast orange
+    else:
+        col = (0.2, 1.0, 0.55)
+        k = ramp(t, FLASH1, FLASH1 + 0.15) * (0.85 + 0.15 * math.sin((t - FLASH1) * 3.0))
+    LED.color = (*col, k)
+    LED_LIGHT.data.color = col
+    LED_LIGHT.data.energy = 0.25 * k
+
+
 def update(f):
     t = (f - 1) / FPS
+    update_board(t)
     sc.frame_set(f)
     camera_at(t)
     set_screens(f)

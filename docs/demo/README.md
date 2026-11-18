@@ -20,7 +20,7 @@ type and ends with their hands on their head.
 | 0:14–0:21 | A red room. The attacker forges a session and an `X-Role` header, then fuzzes the route. Every response is 403. |
 | 0:21–0:31 | Network space. Requests hit a shield around the h5i kernel and shatter. The `authorized` theorem circles it. |
 | 0:31–0:36 | The attacker's screen: 4096 of 4096 requests refused, 0 bypasses. The attacker puts their hands on their head. |
-| 0:36–0:41 | The engineer deploys: "Proven in Lean 4. Shipped as Rust." |
+| 0:36–0:41 | The engineer deploys the board app, then flashes the thermostat example to the XIAO RP2040 on the desk. Its LED turns green: "Proven in Lean 4. Shipped as Rust, to servers and microcontrollers." |
 | 0:41–0:48 | End card: Build and Verify Your Web Apps. `cargo add h5i-app`. |
 
 The film is hosted on YouTube: <https://youtu.be/I7m39qNO0G8>. `index.html`
@@ -36,10 +36,17 @@ The `delete` function, the `authorized` theorem, the `allowed` definition, and
 the theorem names in the proof output are from `examples/app/board`. The
 `authorized` theorem states that every write the kernel makes for a
 successful command is `allowed`. For `DelPost`, `allowed` means the caller is
-the post's author or a moderator. The film claims only this rule.
+the post's author or a moderator. The film claims only this rule for the
+board app.
+
+The microcontroller in the last shot runs a different app,
+`examples/embedded/thermostat` (its `xiao-rp2040` firmware). Its `interlock`
+theorem says the heater is off at or above 35.0 °C in every reachable state.
+h5i also proves the HTTP/1.1 parser it is served through. The board's LED and
+the flashing output are illustrations.
 
 Everything else is scripted: the terminal output, the attacker, the fuzzer,
-its 4096 requests, and the deploy. The proof covers the kernel's writes. It
+its 4096 requests, the deploy and the flashing. The proof covers the kernel's writes. It
 does not cover HTTP routes that bypass the kernel. The page under the video
 says so.
 

@@ -15,8 +15,8 @@ SHOTS = [
     ("hacker", 14.0, 21.0),         # red room: the attack is typed
     ("network", 21.0, 31.0),        # requests hit the proof shield and shatter
     ("hacker_fail", 31.0, 36.0),    # the attacker's screen fills with 403s
-    ("engineer_calm", 36.0, 41.0),  # engineer ships the proven kernel
-    ("endcard", 41.0, 48.0),        # title card
+    ("engineer_calm", 36.0, 42.0),  # engineer ships the proven kernel
+    ("endcard", 42.0, 48.0),        # title card
 ]
 TOTAL = SHOTS[-1][2]
 NFRAMES = round(TOTAL * FPS)
@@ -30,7 +30,7 @@ CAPTIONS = [
     (21.6, 26.0, "Every request runs through the proven kernel."),
     (26.2, 30.7, "For example, only the author or a moderator can delete a post."),
     (31.6, 35.7, "A proof mathematically guarantees the correctness of the implementation."),
-    (36.6, 40.6, "Proven in Lean 4. Shipped as Rust."),
+    (36.6, 41.6, "Proven in Lean 4. Shipped as Rust, to servers and microcontrollers."),
 ]
 
 

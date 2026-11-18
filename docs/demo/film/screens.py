@@ -192,11 +192,17 @@ LAPTOP_TERM = [
         (2.5, [("  ✓ ", OK), ("reachable_inv", TEXT)]),
         (3.0, [("  PROVEN", OK), ("  17 theorems · 0 sorry", DIM)]),
     ]),
-    (37.0, "fly deploy", [
-        (0.5, [("  building ", DIM), ("board (release)", TEXT)]),
-        (1.0, [("  kernel  ", DIM), ("same Rust that Lean proved", TEXT)]),
-        (1.5, [("  ✓ ", OK), ("live at ", TEXT), ("board.example", ACCENT)]),
-]),
+    (36.8, "fly deploy", [
+        (0.3, [("  building ", DIM), ("board (release)", TEXT)]),
+        (0.6, [("  kernel  ", DIM), ("same Rust that Lean proved", TEXT)]),
+        (0.9, [("  ✓ ", OK), ("live at ", TEXT), ("board.example", ACCENT)]),
+    ]),
+    # the embedded example, examples/embedded/thermostat/xiao-rp2040
+    (38.4, "cargo run --release", [
+        (0.3, [("  flash  ", DIM), ("thermostat → XIAO RP2040", TEXT)]),
+        (0.7, [("  ✓ ", OK), ("interlock", ACCENT), ("  no heat ≥ 35 °C", REF)]),
+        (1.1, [("  ✓ ", OK), ("serving HTTP · no OS, no heap", TEXT)]),
+    ]),
 ]
 
 
@@ -292,7 +298,7 @@ def laptop(t):
         draw_text(d, bx + 30, by + 22, "✓ authorized", MONO_L, col)
         draw_text(d, bx + 32, by + 88, "proven in Lean 4 · kernel writes", MONO_S,
                   tuple(int(DIM[j] * k + 8 * (1 - k)) for j in range(3)))
-    return im, (round(t * FPS) if 0.6 <= t <= 14 or 36.5 <= t <= 41 else int(t > 14))
+    return im, (round(t * FPS) if 0.6 <= t <= 14 or 36.5 <= t <= 42 else int(t > 14))
 
 
 # --------------------------------------------------------------------------

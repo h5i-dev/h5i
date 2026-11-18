@@ -82,7 +82,7 @@ pad([33, 34], 14.0, 31.0, 0.16, bright=160, attack=1.0, release=0.8)    # low mi
 pad([45, 52, 57, 60, 64], 21.0, 31.0, 0.18, bright=1200, attack=0.3, release=0.6)
 pad([46, 53, 58, 61], 31.0, 36.0, 0.16, bright=380, attack=0.3, release=0.8)
 pad([45, 52, 57, 61, 64], 36.0, 48.0, 0.24, bright=900, attack=1.2, release=2.5)  # A major
-pad([33, 45], 41.0, 48.0, 0.18, bright=200, attack=0.6, release=2.0)
+pad([33, 45], 42.0, 48.0, 0.18, bright=200, attack=0.6, release=2.0)
 
 # pulse: a muted sub kick under the network sequence, accelerating
 beat = 21.0
@@ -113,7 +113,7 @@ def typing(a, b, rate, gain, bright, pan):
         tt += rng.exponential(1 / rate) + 0.03
 
 
-for a, b in [(0.6, 4.6), (6.0, 6.7), (9.7, 10.3), (37.0, 37.5)]:
+for a, b in [(0.6, 4.6), (6.0, 6.7), (9.7, 10.3), (36.8, 37.3), (38.4, 39.3)]:
     typing(a, b, 9, 0.5, 3500, -0.2)
 for a, b in [(14.5, 16.5), (16.9, 18.9), (19.1, 20.9)]:
     typing(a, b, 13, 0.7, 2600, 0.2)
@@ -141,7 +141,12 @@ for i, n in enumerate([69, 73, 76, 81]):
     add(bell(hz(n + 12), 2.5, 0.22), 12.6 + i * 0.09, 1.0, -0.3 + 0.2 * i)
 # deploy confirmation
 for i, n in enumerate([76, 81]):
-    add(bell(hz(n + 12), 2.0, 0.16), 38.95 + i * 0.1)
+    add(bell(hz(n + 12), 2.0, 0.16), 38.15 + i * 0.1)
+# the microcontroller: flash blips, then it comes up
+for i in range(4):
+    add(blip(1700, 0.08, 0.05), 39.56 + i * 0.2, 1.0, -0.35)
+for i, n in enumerate([81, 88]):
+    add(bell(hz(n + 12), 2.2, 0.15), 40.36 + i * 0.1, 1.0, -0.35)
 # attacker: refusal buzzes
 for at in (14.9 + 1.94, 17.3 + 2.2):
     add(blip(220, 0.35, 0.18), at, 1.0, 0.3)
@@ -187,9 +192,9 @@ add(impact(0.6), 33.6)
 # end card: a deep hit and a bright shimmer
 n = int(4 * SR)
 tt = np.arange(n) / SR
-add(np.sin(2 * np.pi * 41 * tt) * np.exp(-tt * 1.2) * 0.5, 42.3)
+add(np.sin(2 * np.pi * 41 * tt) * np.exp(-tt * 1.2) * 0.5, 43.3)
 for i, nn in enumerate([69, 76, 81, 85, 88]):
-    add(bell(hz(nn + 12), 3.5, 0.12), 42.3 + i * 0.06, 1.0, -0.4 + 0.2 * i)
+    add(bell(hz(nn + 12), 3.5, 0.12), 43.3 + i * 0.06, 1.0, -0.4 + 0.2 * i)
 
 # ------------------------------------------------------------------ master
 
