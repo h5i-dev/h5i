@@ -395,8 +395,8 @@ screen_light.parent = lid_pivot
 screen_light.location = (0, -0.02, 0.115)
 screen_light.rotation_euler = (math.radians(90), 0, 0)  # area lights emit along -Z; turn to -Y
 
-# a XIAO RP2040 on a USB cable, left of the laptop: the same kind of kernel,
-# flashed to a microcontroller at the end (examples/embedded/thermostat)
+# a XIAO RP2040 on a USB cable, left of the laptop (examples/embedded/thermostat):
+# a small detail, its LED turns green with the other devices at the end
 M_PCB = principled("pcb", (0.012, 0.03, 0.05), rough=0.35)
 M_GOLD = principled("gold", (0.85, 0.62, 0.3), rough=0.3, metal=1.0)
 M_CABLE = principled("cable", (0.02, 0.02, 0.022), rough=0.55)
@@ -530,7 +530,25 @@ def make_tag(text, size):
         edges.append(e)
     line = cylinder("tag_line", 0.0018, 1.0, (0, 0, 0), M_TAGLINE, seg=8)
     dot = sphere("tag_dot", 0.008, (0, 0, 0), M_TAGLINE, seg=12, rings=6)
-    tag = dict(text=tx, plate=plate, edges=edges, line=line, dot=dot, half=(y1 - y0) / 2)
+    # the proven mark for the ending: a check in a ring, left of the plate
+    r = (y1 - y0) * 0.5
+    badge = link(bpy.data.objects.new("tag_badge", None))
+    badge.parent = tx
+    badge.location = (x0 - r * 1.35, 0, 0)
+    disc = cylinder("badge_disc", r, 0.002, (0, 0, 0), M_PLATE, seg=32, rot=(0, 0, 0))
+    parent_to(disc, badge, (0, 0, -0.002))
+    bpy.ops.mesh.primitive_torus_add(major_radius=r, minor_radius=r * 0.09, major_segments=48, minor_segments=6)
+    ring = parent_to(bpy.context.active_object, badge, (0, 0, 0))
+    ring.data.materials.append(M_TAGLINE)
+    w = r * 0.17
+    short = parent_to(box("badge_tick", (r * 0.52, w, 0.002), (0, 0, 0), M_TAGLINE), badge,
+                      (-r * 0.275, -r * 0.14, 0.001))
+    short.rotation_euler = (0, 0, math.radians(137.6))
+    long_ = parent_to(box("badge_tick", (r * 0.9, w, 0.002), (0, 0, 0), M_TAGLINE), badge,
+                      (r * 0.175, r * 0.025, 0.001))
+    long_.rotation_euler = (0, 0, math.radians(49.8))
+    tag = dict(text=tx, plate=plate, edges=edges, line=line, dot=dot, half=(y1 - y0) / 2,
+               badge=badge, badge_parts=[disc, ring, short, long_])
     TAGS.append(tag)
     return tag
 
@@ -743,9 +761,9 @@ def P(*v):
     return Vector(v)
 
 
+CLOSE0 = 41.4  # the closing pull-back starts
 SCREEN_C = LAP + Vector((0, 0.135, 0.12))  # roughly the laptop screen centre
 MON_C = HX + Vector((0, 0.55, 1.08))
-BOARD_C = BOARD + Vector((0, 0, 0.004))
 
 # shot -> list of keys (t, pos, look, lens, fstop, focus_point)
 CAM = {
@@ -779,15 +797,19 @@ CAM = {
     ],
     "engineer_calm": [
         (39.0, P(-0.44, -0.82, 1.42), SCREEN_C, 55, 2.8, SCREEN_C),
-        (42.3, P(-0.34, -0.55, 1.26), SCREEN_C, 55, 2.8, SCREEN_C),
-        (43.4, P(-0.33, -0.50, 1.23), SCREEN_C, 55, 2.8, SCREEN_C),
-        # then down and left, to the microcontroller as it comes up
-        (44.7, P(-0.52, -0.20, 0.98), P(-0.20, 0.11, 0.785), 55, 3.2, BOARD_C),
-        (45.0, P(-0.53, -0.20, 0.975), P(-0.20, 0.11, 0.785), 55, 3.2, BOARD_C),
+        (CLOSE0, P(-0.34, -0.55, 1.26), SCREEN_C, 55, 2.8, SCREEN_C),
+    ],
+    # from CLOSE0, one crane move back out of the screen and up, until the
+    # whole room is in view: the bookend of the opening (a spline, see camera_at)
+    "closing": [
+        (CLOSE0, P(-0.34, -0.55, 1.26), SCREEN_C, 55, 2.8, SCREEN_C),
+        (42.6, P(-0.75, -1.35, 1.55), P(-0.25, 0.25, 0.95), 40, 3.2, P(-0.2, 0.1, 0.9)),
+        (44.2, P(-0.7, -2.9, 1.95), P(-0.95, 0.4, 0.6), 30, 4.0, P(-0.8, 0.2, 0.6)),
+        (46.0, P(-0.6, -3.3, 2.05), P(-0.95, 0.45, 0.6), 29, 4.0, P(-0.8, 0.2, 0.6)),
     ],
     "endcard": [
-        (45.0, P(-1.4, -1.7, 1.45), P(0.05, 0.12, 0.98), 35, 2.2, P(0, -0.45, 1.2)),
-        (51.0, P(-2.6, -3.4, 2.1), P(0.05, 0.12, 0.98), 35, 2.2, P(0, -0.45, 1.2)),
+        (46.0, P(-0.6, -3.3, 2.05), P(-0.95, 0.45, 0.6), 29, 4.0, P(-0.8, 0.2, 0.6)),
+        (51.0, P(-0.45, -3.9, 2.35), P(-0.95, 0.45, 0.6), 29, 4.0, P(-0.8, 0.2, 0.6)),
     ],
 }
 
@@ -813,7 +835,9 @@ def camera_at(t):
         if a <= t < b or (name == SHOTS[-1][0] and t >= a):
             keys = CAM[name]
             break
-    if name == "opening":
+    if name == "engineer_calm" and t >= CLOSE0:
+        name, keys = "closing", CAM["closing"]
+    if name in ("opening", "closing"):
         pos, look, lens, fstop, focus = camera_spline(keys, t)
         pos = pos + Vector((0.004 * math.sin(t * 0.9), 0.003 * math.sin(t * 1.3 + 1), 0.004 * math.sin(t * 0.7 + 2)))
         cam.location = pos
@@ -850,7 +874,7 @@ def camera_at(t):
 
 # ---------------------------------------------------------------- animation
 
-ENG_TYPING = [(3.6, 7.6), (9.0, 9.7), (12.7, 13.3), (39.8, 40.3), (41.4, 42.3)]
+ENG_TYPING = [(3.6, 7.6), (9.0, 9.7), (12.7, 13.3), (39.8, 40.3)]
 HACK_TYPING = [(17.5, 19.5), (19.9, 21.9), (22.1, 24.0)]
 
 
@@ -891,7 +915,7 @@ def pose_engineer(t):
     typing = typing_amount(t, ENG_TYPING)
     # the nod when the proof goes green, then leaning back after the deploy
     nod = math.sin(math.pi * ramp(t, 15.6, 16.5)) * 0.18
-    back = ramp(t, 44.0, 45.4)
+    back = ramp(t, 41.0, 42.6)
     lean = math.radians(9) * (1 - back) - math.radians(7) * back
     look = SCREEN_C + Vector((0, 0, -0.4 * nod + 0.12 * back))
     j = seated(ENG_BASE, t, typing, lean, 0.0, look=look)
@@ -1001,39 +1025,61 @@ def set_screens(f):
             img.reload()
 
 
-# the firmware is flashed at FLASH0 and serving from FLASH1 (see screens.py)
-FLASH0, FLASH1 = 42.56, 43.36
-
-
-def update_board(t):
-    if t < FLASH0:
-        col, k = (1.0, 1.0, 1.0), 0.0
-    elif t < FLASH1:
-        col, k = (1.0, 0.45, 0.15), 0.5 + 0.5 * (math.sin((t - FLASH0) * 40) > 0)  # flashing: fast orange
-    else:
-        col = (0.2, 1.0, 0.55)
-        k = ramp(t, FLASH1, FLASH1 + 0.15) * (0.85 + 0.15 * math.sin((t - FLASH1) * 3.0))
-    LED.color = (*col, k)
-    LED_LIGHT.data.color = col
-    LED_LIGHT.data.energy = 0.25 * k
-
-
 def vac_path(t):
-    """The vacuum crosses the floor during the opening, then parks."""
-    u = smooth(min(1.0, t / 6.0)) * 0.85 + 0.15 * min(1.0, t / 6.0)
-    a, c, b = Vector((-0.6, -0.85, 0)), Vector((-1.5, -0.95, 0)), Vector((-2.0, 0.3, 0))
+    """The vacuum crosses the floor in the opening, parks, and sets off again at the end."""
+    if t < 41.0:
+        u = smooth(min(1.0, t / 6.0)) * 0.85 + 0.15 * min(1.0, t / 6.0)
+        a, c, b = Vector((-0.6, -0.85, 0)), Vector((-1.5, -0.95, 0)), Vector((-2.0, 0.3, 0))
+    else:
+        x = min(1.0, (t - 41.0) / 8.0)
+        u = 0.5 * smooth(x) + 0.5 * x
+        a, c, b = Vector((-2.0, 0.3, 0)), Vector((-1.7, -0.45, 0)), Vector((-1.0, -0.2, 0))
     pos = (1 - u) ** 2 * a + 2 * (1 - u) * u * c + u * u * b
     d = 2 * (1 - u) * (c - a) + 2 * u * (b - c)
     return pos, math.atan2(d.y, d.x)
 
 
-TAG_AT = [  # (tag, appears, leaves, anchor, lift above the anchor); each leaves as the camera does
-    (TAG_VAC, 0.9, 4.3, lambda: vac.location + Vector((0, 0, 0.13)), Vector((0, 0, 0.26))),
-    (TAG_RACK, 1.9, 6.6, lambda: RACK + Vector((0, -0.12, 0.77)), Vector((0, 0, 0.24))),
-    (TAG_SPK, 3.0, 7.5, lambda: SPEAKER + Vector((0, 0, 0.18)), Vector((0, 0, 0.2))),
-    (TAG_LAP, 3.8, 7.5, lambda: LAP + Vector((-0.17, 0.19, 0.235)), Vector((-0.12, 0, 0.15))),
+ANCHORS = {
+    "vac": lambda: vac.location + Vector((0, 0, 0.13)),
+    "rack": lambda: RACK + Vector((0, -0.12, 0.77)),
+    "spk": lambda: SPEAKER + Vector((0, 0, 0.18)),
+    "lap": lambda: LAP + Vector((-0.17, 0.19, 0.235)),
+}
+# (tag, anchor, lift above the anchor, opening appears, opening leaves, closing appears,
+#  lift in the closing, where the speaker's tag sits higher to clear the laptop's)
+# In the opening each tag leaves as the camera does; in the closing they come
+# back, still red, and turn green with the proven mark as the wave reaches them.
+TAG_AT = [
+    (TAG_VAC, "vac", Vector((0, 0, 0.26)), 0.9, 4.3, 42.85, Vector((0, 0, 0.26))),
+    (TAG_RACK, "rack", Vector((0, 0, 0.24)), 1.9, 6.6, 42.75, Vector((0, 0, 0.24))),
+    (TAG_SPK, "spk", Vector((0, 0, 0.2)), 3.0, 7.5, 42.95, Vector((-0.1, 0, 0.42))),
+    (TAG_LAP, "lap", Vector((-0.12, 0, 0.15)), 3.8, 7.5, 43.05, Vector((-0.1, 0, 0.17))),
 ]
 OPEN_END = SHOTS[0][2]
+TAG_OK = (0.3, 1.0, 0.55)
+# the proven kernel goes out: a green ring spreads from the laptop across the room
+WAVE0, WAVE_V = 43.6, 1.6  # audio.py chimes at each device as the wave reaches it
+WAVE_C = Vector((LAP.x, LAP.y, 0.42))
+bpy.ops.mesh.primitive_torus_add(major_radius=1.0, minor_radius=0.006, major_segments=128, minor_segments=8)
+WAVE = bpy.context.active_object
+WAVE.location = WAVE_C
+WAVE.data.materials.append(M_TAGLINE)
+
+
+def flip_time(anchor):
+    d = anchor - WAVE_C
+    d.z = 0
+    return WAVE0 + d.length / WAVE_V
+
+
+def update_board(t):
+    """The XIAO's LED comes up green when the wave passes it."""
+    t0 = flip_time(BOARD)
+    k = ramp(t, t0, t0 + 0.15) * (0.85 + 0.15 * math.sin((t - t0) * 3.0))
+    col = (0.2, 1.0, 0.55)
+    LED.color = (*col, k)
+    LED_LIGHT.data.color = col
+    LED_LIGHT.data.energy = 0.25 * k
 
 
 def update_devices(t):
@@ -1042,35 +1088,68 @@ def update_devices(t):
     vac.rotation_euler = (0, 0, yaw)
     lidar.rotation_euler = (0, 0, t * 9.0)
     opening = t < OPEN_END
+    closing = t >= CLOSE0
+    lit = opening or closing
+    # each device turns green once the wave has passed it
+    ok = {k: ramp(t, flip_time(a()), flip_time(a()) + 0.25) if closing else 0.0 for k, a in ANCHORS.items()}
     for led in VAC_LED:
-        led.color = (*TAG_COOL, 0.8 if opening else 0.3)
-    listen = 0.55 + 0.45 * math.sin(t * 5.0) if opening else 0.2
-    SPK_RING.color = (*TAG_COOL, listen)
-    SPK_LIGHT.data.energy = 0.6 * listen if opening else 0.0
+        led.color = (*(lerp(a, b, ok["vac"]) for a, b in zip(TAG_COOL, TAG_OK)), 0.8 if lit else 0.3)
+    listen = 0.55 + 0.45 * math.sin(t * 5.0) if lit else 0.2
+    SPK_RING.color = (*(lerp(a, b, ok["spk"]) for a, b in zip(TAG_COOL, TAG_OK)), listen)
+    SPK_LIGHT.data.energy = 0.6 * listen if lit else 0.0
+    SPK_LIGHT.data.color = tuple(lerp(a, b, ok["spk"]) for a, b in zip((0.3, 0.8, 1.0), TAG_OK))
     for led, i in RACK_LEDS:
         on = ((int(t * 7) * 2654435761 + i * 40503) >> 7) % 3 != 0
         led.color = ((0.2, 1.0, 0.45) if i % 4 else (0.35, 0.85, 1.0)) + ((1.0 if on else 0.15),)
-    RACK_LIGHT.data.energy = 0.5 if opening else 0.25
-    DEV_FILL.data.energy = 45.0 * (1 - ramp(t, 6.4, 7.8)) if opening else 0.0
-    hot = ramp(t, 5.2, 5.7)
-    col = tuple(lerp(a, b, hot) for a, b in zip(TAG_COOL, TAG_HOT))
-    for tag, t0, t1, anchor, lift in TAG_AT:
-        k = ramp(t, t0, t0 + 0.35) * (1 - ramp(t, t1 - 0.5, t1))
+    RACK_LIGHT.data.energy = 0.5 if lit else 0.25
+    DEV_FILL.data.energy = (45.0 * (1 - ramp(t, 6.4, 7.8)) if opening
+                            else 40.0 * ramp(t, 41.8, 43.0) if closing else 0.0)
+    dw = t - WAVE0
+    WAVE.hide_render = not (0 <= dw < 3.0)
+    if not WAVE.hide_render:
+        r = max(0.01, dw * WAVE_V)
+        WAVE.scale = (r, r, 1)
+        WAVE.color = (*TAG_OK, 1.6 * (1 - dw / 3.0) ** 1.5)
+    for tag, key, lift, o0, o1, c0, clift in TAG_AT:
+        a = ANCHORS[key]()
+        if opening:
+            t0 = o0
+            k = ramp(t, o0, o0 + 0.35) * (1 - ramp(t, o1 - 0.5, o1))
+            col = tuple(lerp(x, y, ramp(t, 5.2, 5.7)) for x, y in zip(TAG_COOL, TAG_HOT))
+            good = 0.0
+        elif closing:
+            t0, lift = c0, clift
+            k = ramp(t, c0, c0 + 0.35)
+            good = ok[key]
+            col = tuple(lerp(x, y, good) for x, y in zip(TAG_HOT, TAG_OK))
+        else:
+            k = 0.0
         parts = [tag["text"], tag["plate"], tag["line"], tag["dot"], *tag["edges"]]
         for o in parts:
-            o.hide_render = not opening or k <= 0.01
-        if not opening or k <= 0.01:
+            o.hide_render = k <= 0.01
+        for o in tag["badge_parts"]:
+            o.hide_render = k <= 0.01 or not closing or good <= 0.01
+        if k <= 0.01:
             continue
-        a = anchor()
         top = a + lift
         tx = tag["text"]
         tx.location = top
         tx.rotation_euler = cam.rotation_euler.copy()
         pop = k * (1 + 0.12 * math.sin(math.pi * min(1.0, (t - t0) / 0.35)))
+        if closing:
+            # keep the tags readable as the camera pulls back to the wide
+            pop *= min(1.8, max(1.0, (top - cam.location).length / 2.1))
+            if 0 < good < 1:
+                pop *= 1 + 0.15 * math.sin(math.pi * good)
         tx.scale = (pop, pop, pop)
         tx.color = (1.0, 1.0, 1.0, k)
         for e in tag["edges"]:
             e.color = (*col, k)
+        if closing and good > 0.01:
+            b = 0.6 + 0.4 * smooth(good)
+            tag["badge"].scale = (b, b, b)
+            for o in tag["badge_parts"]:
+                o.color = (*TAG_OK, k * good)
         bottom = top - cam.rotation_euler.to_matrix() @ Vector((0, tag["half"] * pop, 0))
         seg = bottom - a
         ln = tag["line"]

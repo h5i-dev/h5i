@@ -82,7 +82,7 @@ pad([33, 34], 17.0, 34.0, 0.16, bright=160, attack=1.0, release=0.8)    # low mi
 pad([45, 52, 57, 60, 64], 24.0, 34.0, 0.18, bright=1200, attack=0.3, release=0.6)
 pad([46, 53, 58, 61], 34.0, 39.0, 0.16, bright=380, attack=0.3, release=0.8)
 pad([45, 52, 57, 61, 64], 39.0, 51.0, 0.24, bright=900, attack=1.2, release=2.5)  # A major
-pad([33, 45], 45.0, 51.0, 0.18, bright=200, attack=0.6, release=2.0)
+pad([33, 45], 46.0, 51.0, 0.18, bright=200, attack=0.6, release=2.0)
 
 # pulse: a muted sub kick under the network sequence, accelerating
 beat = 24.0
@@ -113,7 +113,7 @@ def typing(a, b, rate, gain, bright, pan):
         tt += rng.exponential(1 / rate) + 0.03
 
 
-for a, b in [(3.6, 7.6), (9.0, 9.7), (12.7, 13.3), (39.8, 40.3), (41.4, 42.3)]:
+for a, b in [(3.6, 7.6), (9.0, 9.7), (12.7, 13.3), (39.8, 40.3)]:
     typing(a, b, 9, 0.5, 3500, -0.2)
 for a, b in [(17.5, 19.5), (19.9, 21.9), (22.1, 23.9)]:
     typing(a, b, 13, 0.7, 2600, 0.2)
@@ -142,11 +142,13 @@ for i, n in enumerate([69, 73, 76, 81]):
 # deploy confirmation
 for i, n in enumerate([76, 81]):
     add(bell(hz(n + 12), 2.0, 0.16), 41.15 + i * 0.1)
-# the microcontroller: flash blips, then it comes up
-for i in range(4):
-    add(blip(1700, 0.08, 0.05), 42.56 + i * 0.2, 1.0, -0.35)
-for i, n in enumerate([81, 88]):
-    add(bell(hz(n + 12), 2.2, 0.15), 43.36 + i * 0.1, 1.0, -0.35)
+# the closing: the red tags come back with the opening's pings, then the green
+# wave goes out (WAVE0 in scene.py) and each device chimes as it turns green.
+# The times are when the wave reaches each one: laptop, speaker, vacuum, rack.
+for i, at in enumerate((42.75, 42.85, 42.95, 43.05)):
+    add(bell(hz(86 + 3 * i), 0.8, 0.05), at, 1.0, (-0.6, -0.5, 0.0, 0.2)[i])
+for i, (at, pan) in enumerate([(43.76, 0.2), (44.07, -0.1), (44.65, -0.5), (45.25, -0.7)]):
+    add(bell(hz([76, 81, 85, 88][i] + 12), 2.4, 0.15), at, 1.0, pan)
 # attacker: refusal buzzes
 for at in (17.9 + 1.94, 20.3 + 2.2):
     add(blip(220, 0.35, 0.18), at, 1.0, 0.3)
@@ -186,6 +188,7 @@ for i, at in enumerate((0.9, 1.9, 3.0, 3.8)):
 add(impact(0.22), 5.25, 1.0, 0.0)
 
 add(whoosh(0.7, 0.25, 2000, 200), 23.75)  # cut into the network space
+add(whoosh(2.2, 0.16, 250, 1800), 43.5, 1.0, -0.2)  # the green wave spreads
 with open(os.path.join(OUT, "packets.json")) as fh:
     packets = json.load(fh)
 for i, p in enumerate(packets):
@@ -203,9 +206,9 @@ add(impact(0.6), 36.6)
 # end card: a deep hit and a bright shimmer
 n = int(4 * SR)
 tt = np.arange(n) / SR
-add(np.sin(2 * np.pi * 41 * tt) * np.exp(-tt * 1.2) * 0.5, 46.3)
+add(np.sin(2 * np.pi * 41 * tt) * np.exp(-tt * 1.2) * 0.5, 47.3)
 for i, nn in enumerate([69, 76, 81, 85, 88]):
-    add(bell(hz(nn + 12), 3.5, 0.12), 46.3 + i * 0.06, 1.0, -0.4 + 0.2 * i)
+    add(bell(hz(nn + 12), 3.5, 0.12), 47.3 + i * 0.06, 1.0, -0.4 + 0.2 * i)
 
 # ------------------------------------------------------------------ master
 
