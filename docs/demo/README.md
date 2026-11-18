@@ -5,7 +5,8 @@ around us: a robot vacuum, a smart speaker and a server rack, each serving
 HTTP. Then a hooded engineer
 extracts the board app's Rust kernel into Lean 4 and proves its authorization
 rule. Then an attacker tries to delete someone else's post and every attempt is
-refused. The figures wear hoods with their faces in shadow, so neither
+refused. It closes on the same devices, their tags now green with a proven
+mark, so the film ends where it began. The figures wear hoods with their faces in shadow, so neither
 character has a visible face.
 
 The bodies come from Blender Studio's
@@ -23,8 +24,9 @@ type and ends with their hands on their head.
 | 0:17–0:24 | A red room. The attacker forges a session and an `X-Role` header, then fuzzes the route. Every response is 403. |
 | 0:24–0:34 | Network space. Requests hit a shield around the h5i kernel and shatter. The `authorized` theorem circles it. |
 | 0:34–0:39 | The attacker's screen: 4096 of 4096 requests refused, 0 bypasses. The attacker puts their hands on their head. |
-| 0:39–0:45 | The engineer deploys the board app, then flashes the thermostat example to the XIAO RP2040 on the desk. Its LED turns green: "Proven in Lean 4. Shipped as Rust, to servers and microcontrollers." |
-| 0:45–0:51 | End card: Build and Verify Your Web Apps. `cargo add h5i-app`. |
+| 0:39–0:41 | Over the shoulder, the engineer deploys the board app: "Proven in Lean 4. Shipped as Rust." |
+| 0:41–0:46 | The camera pulls back to the whole room. The opening's tags come back red, then a green ring spreads from the laptop and each device's tag turns green with a check mark: "From servers to robots, wherever web apps run." |
+| 0:46–0:51 | End card: Build and Verify Your Web Apps. `cargo add h5i-app`. |
 
 The film is hosted on YouTube: <https://youtu.be/I7m39qNO0G8>. `index.html`
 and the front page show `assets/poster.jpg` and load the
@@ -42,16 +44,17 @@ successful command is `allowed`. For `DelPost`, `allowed` means the caller is
 the post's author or a moderator. The film claims only this rule for the
 board app.
 
-The microcontroller in the last shot runs a different app,
-`examples/embedded/thermostat` (its `xiao-rp2040` firmware). Its `interlock`
-theorem says the heater is off at or above 35.0 °C in every reachable state.
-h5i also proves the HTTP/1.1 parser it is served through. The board's LED and
-the flashing output are illustrations.
+The film's "robots" stand for embedded and edge devices. h5i's embedded example
+is `examples/embedded/thermostat`, which also runs on the small XIAO RP2040
+board on the desk (a background detail; its LED turns green with the rest).
+Its `interlock` theorem says the heater is off at or above 35.0 °C in every
+reachable state, and h5i also proves the HTTP/1.1 parser it is served through.
 
 Everything else is scripted: the terminal output, the attacker, the fuzzer,
-its 4096 requests, the deploy and the flashing. The robot vacuum, the smart
-speaker and the server rack in the opening, and their routes, illustrate where
-web apps run. The film does not claim that they run h5i. The proof covers the kernel's writes. It
+its 4096 requests and the deploy. The robot vacuum, the smart speaker and the
+server rack, their routes, and the green proven marks they get at the end
+illustrate where h5i is meant to be used. The film does not claim that these
+products run h5i today. The proof covers the kernel's writes. It
 does not cover HTTP routes that bypass the kernel. The page under the video
 says so.
 
