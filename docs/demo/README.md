@@ -16,6 +16,14 @@ rigs it, and poses it every frame with two-bone IK. The engineer nods when
 the proof passes and leans back after the deploy. The attacker leans in to
 type and ends with their hands on their head.
 
+The hoodies have sculpted folds at the elbows, above the cuffs and over the
+hem, ribbed cuffs and a hem band, a kangaroo pocket and drawstrings, with a
+knit normal map. The rooms are dressed with CC0 textures and props from
+[Poly Haven](https://polyhaven.com) (see [Credits](#credits)), lit by the
+desk lamp, the screens and the city through the window. The city is blocks
+of lit windows up to a kilometre away, so the lens turns them into bokeh.
+The network space stays abstract on purpose.
+
 | Time | Beat |
 | --- | --- |
 | 0:00–0:05 | Night, the engineer's room. The camera follows a robot vacuum across the floor, past a server rack, to a smart speaker and the laptop on the desk. Each device shows a tag with an HTTP route: "Web apps run everywhere, from servers to the devices around you." |
@@ -69,10 +77,12 @@ app. The guides link to it, but the film does not use it.
 | --- | --- | --- |
 | Timing | `film/timeline.py` | Shot times and captions, shared by every step |
 | Screen textures | `film/screens.py` | `out/{laptop,hacker,hackside}/NNNN.png`, one per frame (Pillow) |
+| Assets | `film/assets.py` | `out/polyhaven/`: CC0 textures and models, every URL and SHA-256 pinned in `film/assets.lock.json` |
 | Characters | `film/character.py` | Dressed, rigged figures posed from joint targets (imported by `scene.py`) |
+| Realism | `film/realism.py` | Textures, props, the city, practical lights and motion blur for the rooms (imported by `scene.py`) |
 | 3D frames | `film/scene.py` | `out/frames/NNNN.png`. It builds three sets and drives everything from `update(t)` |
 | Soundtrack | `film/audio.py` | `out/soundtrack.wav`. It synthesizes the drone score, typing, impacts and chimes, so nothing is licensed |
-| Finish | `film/compose.py` | `out/h5i-demo.mp4`. It adds bloom, grain, captions, the end card and the audio |
+| Finish | `film/compose.py` | `out/h5i-demo.mp4`. It adds lens effects (chromatic aberration, halation), bloom, grain, captions, the end card and the audio |
 
 ```bash
 PY=/path/to/python film/build.sh --publish   # ~1 h on one GPU; copies the poster into assets/ and the MP4 into media/demo/
@@ -82,8 +92,26 @@ python film/compose.py out --still 16,47                                       #
 
 You need Blender 5.x and a Python with `pillow numpy scipy fonttools brotli
 imageio-ffmpeg`. `build.sh` downloads the Human Base Meshes bundle and verifies its SHA-256 (set
-`H5I_FILM_HUMAN` to use a local `.blend`). The symbol fallback font is DejaVu Sans Mono; set
+`H5I_FILM_HUMAN` to use a local `.blend`), then the Poly Haven files (about 56 MB), each checked
+against `film/assets.lock.json`. The symbol fallback font is DejaVu Sans Mono; set
 `H5I_FILM_SYMBOLS` if it is somewhere else. `out/` is git-ignored.
 
 The page is fingerprinted by `docs/build-content.py`. If you change it, update
 its `PAGE_HISTORY["demo/"]` entry.
+
+## Credits
+
+Everything the film downloads is CC0 (public domain).
+
+- Bodies: [Human Base Meshes](https://www.blender.org/download/demo-files/) by Blender Studio.
+- Textures from [Poly Haven](https://polyhaven.com):
+  `wood_table_001` (desks), `laminate_floor_02` and `painted_plaster_wall` (the engineer's room),
+  `concrete_floor_worn_001` and `concrete_wall_006` (the attacker's room),
+  `poly_wool_herringbone` (chairs), `cotton_jersey` and `knitted_fleece` (hoodies),
+  `denim_fabric_04` (trousers).
+- Models from [Poly Haven](https://polyhaven.com):
+  `desk_lamp_arm_01`, `book_encyclopedia_set_01`, `steel_frame_shelves_03`, `potted_plant_02`,
+  `office_notepads`, `stationery_supplies`, `cardboard_box_01`.
+
+The laptop, the devices, the XIAO board, the monitors and the city are built
+in `scene.py` and `realism.py`.
