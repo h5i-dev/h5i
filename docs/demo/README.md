@@ -1,6 +1,8 @@
 # h5i demo film: Build and Verify Your Web Apps
 
-A 48-second 3D film, rendered in Blender (EEVEE). A hooded engineer
+A 51-second 3D film, rendered in Blender (EEVEE). It opens on the web apps
+around us: a robot vacuum, a smart speaker and a server rack, each serving
+HTTP. Then a hooded engineer
 extracts the board app's Rust kernel into Lean 4 and proves its authorization
 rule. Then an attacker tries to delete someone else's post and every attempt is
 refused. The figures wear hoods with their faces in shadow, so neither
@@ -15,13 +17,14 @@ type and ends with their hands on their head.
 
 | Time | Beat |
 | --- | --- |
-| 0:00–0:05 | Night. The engineer types the delete permission check in `kernel/src/lib.rs`. |
-| 0:05–0:14 | Over the shoulder: `h5i app extract` → Lean 4, `h5i app prove` → `✓ authorized`. |
-| 0:14–0:21 | A red room. The attacker forges a session and an `X-Role` header, then fuzzes the route. Every response is 403. |
-| 0:21–0:31 | Network space. Requests hit a shield around the h5i kernel and shatter. The `authorized` theorem circles it. |
-| 0:31–0:36 | The attacker's screen: 4096 of 4096 requests refused, 0 bypasses. The attacker puts their hands on their head. |
-| 0:36–0:41 | The engineer deploys the board app, then flashes the thermostat example to the XIAO RP2040 on the desk. Its LED turns green: "Proven in Lean 4. Shipped as Rust, to servers and microcontrollers." |
-| 0:41–0:48 | End card: Build and Verify Your Web Apps. `cargo add h5i-app`. |
+| 0:00–0:05 | Night, the engineer's room. The camera follows a robot vacuum across the floor, past a server rack, to a smart speaker and the laptop on the desk. Each device shows a tag with an HTTP route: "Web apps run everywhere, from servers to the devices around you." |
+| 0:05–0:08 | The tags turn red: "Every one of them is a target." The engineer types the delete permission check in `kernel/src/lib.rs`. |
+| 0:08–0:17 | Over the shoulder: `h5i app extract` → Lean 4, `h5i app prove` → `✓ authorized`. |
+| 0:17–0:24 | A red room. The attacker forges a session and an `X-Role` header, then fuzzes the route. Every response is 403. |
+| 0:24–0:34 | Network space. Requests hit a shield around the h5i kernel and shatter. The `authorized` theorem circles it. |
+| 0:34–0:39 | The attacker's screen: 4096 of 4096 requests refused, 0 bypasses. The attacker puts their hands on their head. |
+| 0:39–0:45 | The engineer deploys the board app, then flashes the thermostat example to the XIAO RP2040 on the desk. Its LED turns green: "Proven in Lean 4. Shipped as Rust, to servers and microcontrollers." |
+| 0:45–0:51 | End card: Build and Verify Your Web Apps. `cargo add h5i-app`. |
 
 The film is hosted on YouTube: <https://youtu.be/I7m39qNO0G8>. `index.html`
 and the front page show `assets/poster.jpg` and load the
@@ -46,7 +49,9 @@ h5i also proves the HTTP/1.1 parser it is served through. The board's LED and
 the flashing output are illustrations.
 
 Everything else is scripted: the terminal output, the attacker, the fuzzer,
-its 4096 requests, the deploy and the flashing. The proof covers the kernel's writes. It
+its 4096 requests, the deploy and the flashing. The robot vacuum, the smart
+speaker and the server rack in the opening, and their routes, illustrate where
+web apps run. The film does not claim that they run h5i. The proof covers the kernel's writes. It
 does not cover HTTP routes that bypass the kernel. The page under the video
 says so.
 
@@ -68,8 +73,8 @@ app. The guides link to it, but the film does not use it.
 
 ```bash
 PY=/path/to/python film/build.sh --publish   # ~1 h on one GPU; copies the poster into assets/ and the MP4 into media/demo/
-blender -b --factory-startup -P film/scene.py -- out --stills 3,13,27 --pct 50   # quick 3D stills
-python film/compose.py out --still 13,44                                       # finished stills
+blender -b --factory-startup -P film/scene.py -- out --stills 3,16,30 --pct 50   # quick 3D stills
+python film/compose.py out --still 16,47                                       # finished stills
 ```
 
 You need Blender 5.x and a Python with `pillow numpy scipy fonttools brotli

@@ -184,7 +184,7 @@ def main():
     p.wait()
     print("wrote", out)
     poster = os.path.join(OUT, "poster.png")
-    frame(int(round(13.0 * FPS)) + 1).save(poster)
+    frame(int(round(16.0 * FPS)) + 1).save(poster)
     embed_cover(out, poster)
 
 

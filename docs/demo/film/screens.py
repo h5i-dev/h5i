@@ -177,12 +177,12 @@ LW, LH = 1600, 1000
 
 # (time typed, command, [(delay after typed, runs...)])
 LAPTOP_TERM = [
-    (6.0, "h5i app extract", [
+    (9.0, "h5i app extract", [
         (0.4, [("  charon  ", DIM), ("kernel/src/lib.rs", TEXT), ("  →  LLBC", DIM)]),
         (0.8, [("  aeneas  ", DIM), ("LLBC  →  ", DIM), ("BoardKernel.lean", TEXT)]),
         (1.2, [("  ✓ ", OK), ("78 definitions extracted", TEXT)]),
     ]),
-    (9.7, "h5i app prove", [
+    (12.7, "h5i app prove", [
         (0.5, [("  lean 4  ", DIM), ("checking proofs/Theorems.lean", TEXT)]),
         (1.0, [("  ✓ ", OK), ("transition_total", TEXT)]),
         (1.3, [("  ✓ ", OK), ("panic_free", TEXT)]),
@@ -192,13 +192,13 @@ LAPTOP_TERM = [
         (2.5, [("  ✓ ", OK), ("reachable_inv", TEXT)]),
         (3.0, [("  PROVEN", OK), ("  17 theorems · 0 sorry", DIM)]),
     ]),
-    (36.8, "fly deploy", [
+    (39.8, "fly deploy", [
         (0.3, [("  building ", DIM), ("board (release)", TEXT)]),
         (0.6, [("  kernel  ", DIM), ("same Rust that Lean proved", TEXT)]),
         (0.9, [("  ✓ ", OK), ("live at ", TEXT), ("board.example", ACCENT)]),
     ]),
     # the embedded example, examples/embedded/thermostat/xiao-rp2040
-    (38.4, "cargo run --release", [
+    (41.4, "cargo run --release", [
         (0.3, [("  flash  ", DIM), ("thermostat → XIAO RP2040", TEXT)]),
         (0.7, [("  ✓ ", OK), ("interlock", ACCENT), ("  no heat ≥ 35 °C", REF)]),
         (1.1, [("  ✓ ", OK), ("serving HTTP · no OS, no heap", TEXT)]),
@@ -226,7 +226,7 @@ def term_lines(script, t, cps=22):
 def laptop(t):
     im = Image.new("RGB", (LW, LH), BG)
     d = ImageDraw.Draw(im)
-    window_bar(d, LW, "board · h5i-app", ("lib.rs", "Theorems.lean"), 0 if t < 7.5 else 1)
+    window_bar(d, LW, "board · h5i-app", ("lib.rs", "Theorems.lean"), 0 if t < 10.5 else 1)
 
     # editor pane
     ex, ey, ew = 0, 46, 985
@@ -239,23 +239,23 @@ def laptop(t):
     for i, line in enumerate(rust):
         d.text((24, y), f"{148 + i:>3}", font=MONO_S, fill=FAINT)
         shown = line
-        if i == target and t < 4.6:
-            shown, _ = typed(line, t, 0.6, 14)
-        elif i > target and t < 4.6:
+        if i == target and t < 7.6:
+            shown, _ = typed(line, t, 3.6, 14)
+        elif i > target and t < 7.6:
             shown = ""
         x = draw_runs(d, 84, y, highlight(shown, RUST_KW), MONO_S)
-        if i == target and t < 4.6:
+        if i == target and t < 7.6:
             caret(d, x, y, t, ACCENT, 24)
         y += 31
 
     # generated Lean appears after extract
     ly = y + 22
     d.line([0, ly - 10, ew, ly - 10], fill=BAR, width=2)
-    if t >= 7.4:
-        a = clamp((t - 7.4) / 0.6)
+    if t >= 10.4:
+        a = clamp((t - 10.4) / 0.6)
         d.text((24, ly + 4), "proofs/Theorems.lean", font=MONO_S, fill=DIM)
         lean = LEAN.split("\n")
-        n = int(clamp((t - 7.4) * 9, 0, len(lean)))
+        n = int(clamp((t - 10.4) * 9, 0, len(lean)))
         y2 = ly + 44
         for i, line in enumerate(lean[:n]):
             runs = highlight(line, LEAN_KW)
@@ -264,8 +264,8 @@ def laptop(t):
             draw_runs(d, 24, y2, runs, MONO_S)
             y2 += 31
         # highlight the authorized theorem once it is proven
-        if t >= 12.3:
-            k = clamp((t - 12.3) / 0.5)
+        if t >= 15.3:
+            k = clamp((t - 15.3) / 0.5)
             col = tuple(int(OK[j] * k + PANEL[j] * (1 - k)) for j in range(3))
             d.rectangle([12, ly + 40, ew - 12, ly + 40 + 31 * 4 + 6], outline=col, width=3)
 
@@ -274,7 +274,7 @@ def laptop(t):
     d.rectangle([tx, 46, LW, LH], fill=(8, 8, 12))
     draw_text(d, tx + 24, 62, "zsh — board", MONO_S, DIM)
     # The terminal is cleared before the last command.
-    lines, typing = term_lines(LAPTOP_TERM if t < 36.5 else LAPTOP_TERM[2:], t)
+    lines, typing = term_lines(LAPTOP_TERM if t < 39.5 else LAPTOP_TERM[2:], t)
     y = 110
     wrap = 30
     for kind, body, done in lines[-wrap:]:
@@ -290,15 +290,15 @@ def laptop(t):
         caret(d, x, y, t, TEXT, 24)
 
     # big proven badge
-    if 12.6 <= t:
-        k = clamp((t - 12.6) / 0.4)
+    if 15.6 <= t:
+        k = clamp((t - 15.6) / 0.4)
         bx, by = tx + 40, LH - 190
         col = tuple(int(OK[j] * k + 8 * (1 - k)) for j in range(3))
         d.rounded_rectangle([bx, by, LW - 40, by + 140], radius=18, outline=col, width=4)
         draw_text(d, bx + 30, by + 22, "✓ authorized", MONO_L, col)
         draw_text(d, bx + 32, by + 88, "proven in Lean 4 · kernel writes", MONO_S,
                   tuple(int(DIM[j] * k + 8 * (1 - k)) for j in range(3)))
-    return im, (round(t * FPS) if 0.6 <= t <= 14 or 36.5 <= t <= 42 else int(t > 14))
+    return im, (round(t * FPS) if 3.6 <= t <= 17 or 39.5 <= t <= 45 else int(t > 17))
 
 
 # --------------------------------------------------------------------------
@@ -308,13 +308,13 @@ HW, HH = 1600, 900
 TARGET = "https://board.example"
 
 HACK_TERM = [
-    (14.5, f"curl -X DELETE {TARGET}/api/posts/42 -b session=$BOB", [
+    (17.5, f"curl -X DELETE {TARGET}/api/posts/42 -b session=$BOB", [
         (0.4, [("HTTP/1.1 ", DIM), ("403 Forbidden", DANGER)]),
     ]),
-    (16.9, f"curl -X DELETE {TARGET}/api/posts/42 -H 'X-Role: moderator'", [
+    (19.9, f"curl -X DELETE {TARGET}/api/posts/42 -H 'X-Role: moderator'", [
         (0.4, [("HTTP/1.1 ", DIM), ("403 Forbidden", DANGER)]),
     ]),
-    (19.1, "./fuzz --route /api/posts/{id} --mutate actor,role,id -n 4096", [
+    (22.1, "./fuzz --route /api/posts/{id} --mutate actor,role,id -n 4096", [
         (0.3, [("[*] ", ACCENT), ("4096 mutations queued", TEXT)]),
     ]),
 ]
@@ -334,7 +334,7 @@ def hacker(t):
     d = ImageDraw.Draw(im)
     window_bar(d, HW, "kali — ssh", ("attack.sh",), 0, (30, 12, 14))
     y = 70
-    if t < 31:
+    if t < 34:
         lines, typing = term_lines(HACK_TERM, t, 30)
         for kind, body, done in lines:
             if kind == "cmd":
@@ -344,21 +344,21 @@ def hacker(t):
             else:
                 draw_runs(d, 24, y, body, MONO_S)
             y += 36
-        if not typing and t > 20:
-            n = int((t - 20.3) * 30)
+        if not typing and t > 23:
+            n = int((t - 23.3) * 30)
             for i in range(max(0, n - 12), max(0, n)):
                 draw_runs(d, 24, y, fuzz_line(i), MONO_S)
                 y += 32
         key = round(t * FPS)
     else:
         # the wall of refusals, then the summary
-        n = min(4096, int((t - 31) ** 2 * 260 + (t - 31) * 120))
+        n = min(4096, int((t - 34) ** 2 * 260 + (t - 34) * 120))
         rows = 21
         for i in range(max(0, n - rows), n):
             draw_runs(d, 24, y, fuzz_line(i), MONO_S)
             y += 34
-        if t > 33.6:
-            k = clamp((t - 33.6) / 0.35)
+        if t > 36.6:
+            k = clamp((t - 36.6) / 0.35)
             d.rectangle([0, HH - 230, HW, HH], fill=(10, 4, 6))
             col = tuple(int(DANGER[j] * k + 10 * (1 - k)) for j in range(3))
             d.rectangle([40, HH - 210, HW - 40, HH - 40], outline=col, width=4)
@@ -381,7 +381,7 @@ def hackside(t):
         d.text((24, y), f"{row * 16:08x}  {hexs}", font=MONO_S,
                fill=(150, 50, 50) if (row % 7) else DANGER)
         y += 34
-    attempts = 0 if t < 20.3 else min(4096, int((t - 20.3) * 30 + max(0, t - 31) ** 2 * 260))
+    attempts = 0 if t < 23.3 else min(4096, int((t - 23.3) * 30 + max(0, t - 34) ** 2 * 260))
     d.rectangle([HW - 520, HH - 170, HW - 30, HH - 30], fill=(20, 6, 8), outline=DANGER, width=3)
     d.text((HW - 495, HH - 155), "ATTEMPTS", font=MONO_S, fill=DIM)
     d.text((HW - 495, HH - 120), f"{attempts:>5}", font=MONO_L, fill=DANGER)

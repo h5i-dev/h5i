@@ -448,6 +448,99 @@ cable = link(bpy.data.objects.new("usb_cable", cd))
 cable.data.materials.append(M_CABLE)
 box("usb_plug", (0.008, 0.012, 0.005), LAP + Vector((-0.176, 0.05, 0.007)), M_BLACK, bevel=0.001)
 
+# Web apps live in more places than servers. The opening finds three in the
+# engineer's room: a robot vacuum, a smart speaker and a small server rack.
+# Each gets a floating tag with an HTTP route. They illustrate where web apps
+# run; the film does not claim these devices run h5i.
+M_VAC = principled("vacuum", (0.035, 0.036, 0.04), rough=0.3)
+M_VAC_TOP = principled("vacuum_top", (0.10, 0.10, 0.11), rough=0.12, metal=0.4)
+M_SPEAKER = fabric("speaker_mesh", (0.20, 0.20, 0.22))
+M_RACK = principled("rack", (0.02, 0.02, 0.024), rough=0.35, metal=0.6)
+M_GLOW = led_mat("device_glow", 30.0)   # colour and strength from each object's colour
+M_TAGTXT = led_mat("tag_text", 3.2)
+M_TAGLINE = led_mat("tag_line", 4.0)
+M_PLATE = principled("tag_plate", (0.0, 0.0, 0.0), rough=1.0, emit=(0.01, 0.02, 0.03), strength=1.0)
+
+
+def parent_to(ob, piv, loc):
+    ob.parent = piv
+    ob.location = loc
+    return ob
+
+
+vac = link(bpy.data.objects.new("vacuum", None))
+parent_to(cylinder("vac_bumper", 0.172, 0.022, (0, 0, 0), M_METAL, seg=64), vac, (0, 0, 0.022))
+parent_to(cylinder("vac_body", 0.168, 0.07, (0, 0, 0), M_VAC, seg=64), vac, (0, 0, 0.05))
+parent_to(cylinder("vac_top", 0.15, 0.004, (0, 0, 0), M_VAC_TOP, seg=64), vac, (0, 0, 0.086))
+lidar = parent_to(cylinder("vac_lidar", 0.042, 0.026, (0, 0, 0), M_BLACK, seg=32), vac, (-0.035, 0, 0.1))
+VAC_LED = []
+bpy.ops.mesh.primitive_torus_add(major_radius=0.046, minor_radius=0.0035, major_segments=48, minor_segments=8)
+VAC_LED.append(parent_to(bpy.context.active_object, vac, (-0.035, 0, 0.1)))
+VAC_LED[0].data.materials.append(M_GLOW)
+VAC_LED.append(parent_to(box("vac_led_front", (0.006, 0.05, 0.005), (0, 0, 0), M_GLOW), vac, (0.07, 0, 0.089)))
+
+SPEAKER = Vector((-0.64, 0.40, 0.76))
+cylinder("speaker", 0.052, 0.165, SPEAKER + Vector((0, 0, 0.0825)), M_SPEAKER, seg=48)
+cylinder("speaker_cap", 0.05, 0.006, SPEAKER + Vector((0, 0, 0.168)), M_BLACK, seg=48)
+bpy.ops.mesh.primitive_torus_add(major_radius=0.043, minor_radius=0.0035, major_segments=64, minor_segments=8)
+SPK_RING = bpy.context.active_object
+SPK_RING.location = SPEAKER + Vector((0, 0, 0.171))
+SPK_RING.data.materials.append(M_GLOW)
+SPK_LIGHT = point_light("speaker_glow", SPEAKER + Vector((0, 0, 0.22)), (0.3, 0.8, 1.0), 0.0, 0.03)
+
+RACK = Vector((-2.3, 1.42, 0.0))
+box("rack", (0.58, 0.52, 0.76), RACK + Vector((0, 0, 0.38)), M_RACK, bevel=0.01)
+RACK_LEDS = []
+for u in range(4):
+    z = 0.18 + u * 0.17
+    box("rack_unit", (0.5, 0.02, 0.14), RACK + Vector((0, -0.265, z)), M_METAL, bevel=0.004)
+    box("rack_vent", (0.3, 0.004, 0.09), RACK + Vector((0.07, -0.276, z)), M_BLACK)
+    for i in range(4):
+        led = box("rack_led", (0.012, 0.004, 0.008), RACK + Vector((-0.2 + i * 0.022, -0.277, z + 0.03)), M_GLOW)
+        RACK_LEDS.append((led, u * 4 + i))
+RACK_LIGHT = area_light("rack_glow", RACK + Vector((0, -0.45, 0.4)), (math.radians(90), 0, 0), 0.5,
+                        (0.3, 0.9, 0.6), 0.0, size_y=0.7)
+# a soft cool light from the camera side, only during the opening
+DEV_FILL = area_light("device_fill", (-1.6, -2.4, 1.2), look_rot((-1.6, -2.4, 1.2), (-1.2, 0.2, 0.3)),
+                      2.0, (0.55, 0.7, 1.0), 0.0)
+
+TAG_COOL = (0.35, 0.85, 1.0)
+TAG_HOT = (1.0, 0.22, 0.12)
+TAGS = []
+
+
+def make_tag(text, size):
+    """Route text on a dark plate with a lit edge, and a leader line to its device."""
+    tx = text_obj("tag", text, size, M_TAGTXT, os.path.join(FONT_DIR, "SpaceMono-700.ttf"))
+    dg = bpy.context.evaluated_depsgraph_get()
+    bb = [Vector(c) for c in tx.evaluated_get(dg).bound_box]
+    x0, x1 = min(c.x for c in bb) - size * 0.55, max(c.x for c in bb) + size * 0.55
+    y0, y1 = min(c.y for c in bb) - size * 0.38, max(c.y for c in bb) + size * 0.38
+    me = bpy.data.meshes.new("tag_plate")
+    me.from_pydata([(x0, y0, -0.002), (x1, y0, -0.002), (x1, y1, -0.002), (x0, y1, -0.002)], [], [(0, 1, 2, 3)])
+    plate = link(bpy.data.objects.new("tag_plate", me))
+    plate.data.materials.append(M_PLATE)
+    plate.parent = tx
+    edges = []
+    for (a, b) in [((x0, y0), (x1, y0)), ((x0, y1), (x1, y1)), ((x0, y0), (x0, y1)), ((x1, y0), (x1, y1))]:
+        w = max(abs(b[0] - a[0]), 0.004)
+        h = max(abs(b[1] - a[1]), 0.004)
+        e = box("tag_edge", (w, h, 0.003), ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, -0.001), M_TAGLINE)
+        e.parent = tx
+        edges.append(e)
+    line = cylinder("tag_line", 0.0018, 1.0, (0, 0, 0), M_TAGLINE, seg=8)
+    dot = sphere("tag_dot", 0.008, (0, 0, 0), M_TAGLINE, seg=12, rings=6)
+    tag = dict(text=tx, plate=plate, edges=edges, line=line, dot=dot, half=(y1 - y0) / 2)
+    TAGS.append(tag)
+    return tag
+
+
+# (tag, appears at, anchor function, height above the anchor)
+TAG_VAC = make_tag("GET /map", 0.045)
+TAG_RACK = make_tag("GET /api/posts", 0.07)
+TAG_SPK = make_tag("POST /volume", 0.05)
+TAG_LAP = make_tag("localhost:8080", 0.045)
+
 ENG = character.Figure("engineer", (0, 0, 0), dress(M_HOODIE), M_HOODIE, BUNDLE)
 # rim light (h5i orange) from behind-right, cool fill from the window
 area_light("rim", (1.4, 1.2, 1.9), look_rot((1.4, 1.2, 1.9), (0, -0.45, 1.2)), 1.2, ORANGE, 70)
@@ -626,11 +719,11 @@ def add_packet(t0, t1, start, label=None, size=1.0):
                         show403=label is not None or len(PACKETS) % 4 == 0))
 
 
-add_packet(21.3, 23.7, NX + Vector((-7.5, 0.6, 0.5)), "DELETE /api/posts/42  as bob", 1.4)
-add_packet(23.3, 25.0, NX + Vector((-7.0, -1.8, 1.6)), "X-Role: moderator", 1.2)
-add_packet(24.4, 25.9, NX + Vector((-7.0, 1.6, -0.9)), "replayed session", 1.2)
+add_packet(24.3, 26.7, NX + Vector((-7.5, 0.6, 0.5)), "DELETE /api/posts/42  as bob", 1.4)
+add_packet(26.3, 28.0, NX + Vector((-7.0, -1.8, 1.6)), "X-Role: moderator", 1.2)
+add_packet(27.4, 28.9, NX + Vector((-7.0, 1.6, -0.9)), "replayed session", 1.2)
 for i in range(46):
-    t0 = 25.6 + i * 0.105 + rng.uniform(-0.05, 0.05)
+    t0 = 28.6 + i * 0.105 + rng.uniform(-0.05, 0.05)
     a = rng.uniform(-0.8, 0.8)
     start = NX + Vector((-7.5 + rng.uniform(-1, 1), 5 * math.sin(a) * rng.uniform(0.3, 1), rng.uniform(-1.5, 2.5)))
     PACKETS.append(None)
@@ -656,43 +749,63 @@ BOARD_C = BOARD + Vector((0, 0, 0.004))
 
 # shot -> list of keys (t, pos, look, lens, fstop, focus_point)
 CAM = {
-    "engineer_wide": [
-        (0.0, P(-1.95, -2.35, 1.6), P(0.05, 0.1, 1.0), 35, 2.2, P(0, -0.45, 1.2)),
-        (5.0, P(-1.55, -1.85, 1.5), P(0.05, 0.12, 0.98), 35, 2.2, P(0, -0.45, 1.2)),
+    # one continuous crane move (a spline, see camera_at): low over the floor
+    # with the vacuum, up past the rack and the speaker, onto the engineer
+    "opening": [
+        (0.0, P(-0.55, -2.7, 0.30), P(-1.65, 0.6, 0.02), 28, 2.8, P(-0.7, -1.15, 0.1)),
+        (3.0, P(-0.95, -2.65, 0.75), P(-1.5, 0.3, 0.0), 26, 3.2, P(-1.4, -0.9, 0.2)),
+        (5.6, P(-1.75, -2.25, 1.35), P(-0.35, 0.25, 0.95), 33, 2.8, P(-0.5, 0.2, 0.9)),
+        (8.0, P(-1.55, -1.85, 1.5), P(0.05, 0.12, 0.98), 35, 2.2, P(0, -0.45, 1.2)),
     ],
     "laptop_code": [
-        (5.0, P(0.42, -0.80, 1.42), SCREEN_C, 55, 2.8, SCREEN_C),
-        (14.0, P(0.30, -0.40, 1.16), SCREEN_C, 55, 2.8, SCREEN_C),
+        (8.0, P(0.42, -0.80, 1.42), SCREEN_C, 55, 2.8, SCREEN_C),
+        (17.0, P(0.30, -0.40, 1.16), SCREEN_C, 55, 2.8, SCREEN_C),
     ],
     "hacker": [
-        (14.0, HX + P(1.9, -2.3, 1.35), HX + P(0, 0.2, 1.05), 40, 2.0, HX + P(0, -0.45, 1.2)),
-        (16.2, HX + P(0.78, -1.0, 1.45), MON_C, 60, 2.4, MON_C),
-        (21.0, HX + P(0.62, -0.72, 1.38), MON_C, 60, 2.4, MON_C),
+        (17.0, HX + P(1.9, -2.3, 1.35), HX + P(0, 0.2, 1.05), 40, 2.0, HX + P(0, -0.45, 1.2)),
+        (19.2, HX + P(0.78, -1.0, 1.45), MON_C, 60, 2.4, MON_C),
+        (24.0, HX + P(0.62, -0.72, 1.38), MON_C, 60, 2.4, MON_C),
     ],
     "network": [
-        (21.0, NX + P(-6.4, -3.0, 0.6), NX + P(-4.5, 0.5, 0.2), 32, 4.0, NX + P(-5.5, 0.6, 0.5)),
-        (23.7, NX + P(-2.6, -2.9, 0.4), NX + P(-0.6, 0.2, 0.1), 32, 4.0, NX + P(-1.2, 0.3, 0.2)),
-        (27.0, NX + P(-1.5, -4.6, 1.4), NX + P(-0.3, 0, 0), 32, 5.6, NX),
-        (31.0, NX + P(1.2, -4.0, 0.9), NX + P(-0.2, 0, 0), 32, 5.6, NX),
+        (24.0, NX + P(-6.4, -3.0, 0.6), NX + P(-4.5, 0.5, 0.2), 32, 4.0, NX + P(-5.5, 0.6, 0.5)),
+        (26.7, NX + P(-2.6, -2.9, 0.4), NX + P(-0.6, 0.2, 0.1), 32, 4.0, NX + P(-1.2, 0.3, 0.2)),
+        (30.0, NX + P(-1.5, -4.6, 1.4), NX + P(-0.3, 0, 0), 32, 5.6, NX),
+        (34.0, NX + P(1.2, -4.0, 0.9), NX + P(-0.2, 0, 0), 32, 5.6, NX),
     ],
     "hacker_fail": [
-        (31.0, HX + P(0.55, -0.62, 1.35), MON_C, 60, 2.4, MON_C),
-        (33.6, HX + P(0.58, -0.7, 1.37), MON_C, 60, 2.4, MON_C),
-        (36.0, HX + P(1.6, -2.1, 1.45), HX + P(0, 0.0, 1.05), 40, 2.0, HX + P(0, -0.5, 1.2)),
+        (34.0, HX + P(0.55, -0.62, 1.35), MON_C, 60, 2.4, MON_C),
+        (36.6, HX + P(0.58, -0.7, 1.37), MON_C, 60, 2.4, MON_C),
+        (39.0, HX + P(1.6, -2.1, 1.45), HX + P(0, 0.0, 1.05), 40, 2.0, HX + P(0, -0.5, 1.2)),
     ],
     "engineer_calm": [
-        (36.0, P(-0.44, -0.82, 1.42), SCREEN_C, 55, 2.8, SCREEN_C),
-        (39.3, P(-0.34, -0.55, 1.26), SCREEN_C, 55, 2.8, SCREEN_C),
-        (40.4, P(-0.33, -0.50, 1.23), SCREEN_C, 55, 2.8, SCREEN_C),
+        (39.0, P(-0.44, -0.82, 1.42), SCREEN_C, 55, 2.8, SCREEN_C),
+        (42.3, P(-0.34, -0.55, 1.26), SCREEN_C, 55, 2.8, SCREEN_C),
+        (43.4, P(-0.33, -0.50, 1.23), SCREEN_C, 55, 2.8, SCREEN_C),
         # then down and left, to the microcontroller as it comes up
-        (41.7, P(-0.52, -0.20, 0.98), P(-0.20, 0.11, 0.785), 55, 3.2, BOARD_C),
-        (42.0, P(-0.53, -0.20, 0.975), P(-0.20, 0.11, 0.785), 55, 3.2, BOARD_C),
+        (44.7, P(-0.52, -0.20, 0.98), P(-0.20, 0.11, 0.785), 55, 3.2, BOARD_C),
+        (45.0, P(-0.53, -0.20, 0.975), P(-0.20, 0.11, 0.785), 55, 3.2, BOARD_C),
     ],
     "endcard": [
-        (42.0, P(-1.4, -1.7, 1.45), P(0.05, 0.12, 0.98), 35, 2.2, P(0, -0.45, 1.2)),
-        (48.0, P(-2.6, -3.4, 2.1), P(0.05, 0.12, 0.98), 35, 2.2, P(0, -0.45, 1.2)),
+        (45.0, P(-1.4, -1.7, 1.45), P(0.05, 0.12, 0.98), 35, 2.2, P(0, -0.45, 1.2)),
+        (51.0, P(-2.6, -3.4, 2.1), P(0.05, 0.12, 0.98), 35, 2.2, P(0, -0.45, 1.2)),
     ],
 }
+
+
+def catmull(p0, p1, p2, p3, u):
+    return 0.5 * ((2 * p1) + (p2 - p0) * u + (2 * p0 - 5 * p1 + 4 * p2 - p3) * u * u + (3 * p1 - p0 - 3 * p2 + p3) * u ** 3)
+
+
+def camera_spline(keys, t):
+    """A smooth move through every key, eased only at the two ends."""
+    t0, t1 = keys[0][0], keys[-1][0]
+    x = max(0.0, min(1.0, (t - t0) / (t1 - t0)))
+    tt = t0 + (0.5 * smooth(x) + 0.5 * x) * (t1 - t0)
+    i = max(i for i in range(len(keys) - 1) if keys[i][0] <= tt or i == 0)
+    u = (tt - keys[i][0]) / (keys[i + 1][0] - keys[i][0])
+    k = [keys[max(0, min(len(keys) - 1, j))] for j in (i - 1, i, i + 1, i + 2)]
+    return tuple(catmull(*[kk[c] for kk in k], u) if isinstance(k[1][c], Vector) else lerp(k[1][c], k[2][c], u)
+                 for c in range(1, 6))
 
 
 def camera_at(t):
@@ -700,6 +813,15 @@ def camera_at(t):
         if a <= t < b or (name == SHOTS[-1][0] and t >= a):
             keys = CAM[name]
             break
+    if name == "opening":
+        pos, look, lens, fstop, focus = camera_spline(keys, t)
+        pos = pos + Vector((0.004 * math.sin(t * 0.9), 0.003 * math.sin(t * 1.3 + 1), 0.004 * math.sin(t * 0.7 + 2)))
+        cam.location = pos
+        cam.rotation_euler = look_rot(pos, look)
+        cam_data.lens = lens
+        cam_data.dof.aperture_fstop = fstop
+        cam_data.dof.focus_distance = (focus - pos).length
+        return
     if t <= keys[0][0]:
         k0 = k1 = keys[0]
         u = 0
@@ -728,8 +850,8 @@ def camera_at(t):
 
 # ---------------------------------------------------------------- animation
 
-ENG_TYPING = [(0.6, 4.6), (6.0, 6.7), (9.7, 10.3), (36.8, 37.3), (38.4, 39.3)]
-HACK_TYPING = [(14.5, 16.5), (16.9, 18.9), (19.1, 21.0)]
+ENG_TYPING = [(3.6, 7.6), (9.0, 9.7), (12.7, 13.3), (39.8, 40.3), (41.4, 42.3)]
+HACK_TYPING = [(17.5, 19.5), (19.9, 21.9), (22.1, 24.0)]
 
 
 def typing_amount(t, spans):
@@ -768,8 +890,8 @@ HACK_BASE = HX + Vector((0, -0.40, 0))
 def pose_engineer(t):
     typing = typing_amount(t, ENG_TYPING)
     # the nod when the proof goes green, then leaning back after the deploy
-    nod = math.sin(math.pi * ramp(t, 12.6, 13.5)) * 0.18
-    back = ramp(t, 41.0, 42.4)
+    nod = math.sin(math.pi * ramp(t, 15.6, 16.5)) * 0.18
+    back = ramp(t, 44.0, 45.4)
     lean = math.radians(9) * (1 - back) - math.radians(7) * back
     look = SCREEN_C + Vector((0, 0, -0.4 * nod + 0.12 * back))
     j = seated(ENG_BASE, t, typing, lean, 0.0, look=look)
@@ -781,7 +903,7 @@ def pose_engineer(t):
 
 def pose_hacker(t):
     typing = typing_amount(t, HACK_TYPING)
-    give_up = ramp(t, 33.9, 34.9)
+    give_up = ramp(t, 36.9, 37.9)
     lean = math.radians(20) * (1 - give_up) - math.radians(10) * give_up
     look = MON_C + Vector((0, 0, 0.9 * give_up))
     j = seated(HACK_BASE, t, typing, lean, 1.3, tap=0.02, look=look)
@@ -855,7 +977,7 @@ def update_network(t):
     shell.color = (1, 1, 1, 0.35 + 0.9 * shield_pulse)
     shield.rotation_euler = (0.1 * t, 0.0, 0.17 * t)
     # the theorem appears with the caption that states it
-    th.hide_render = t < 25.9
+    th.hide_render = t < 28.9
     for o in (band, _edge):
         o.hide_render = th.hide_render
     if not th.hide_render:
@@ -864,7 +986,7 @@ def update_network(t):
         to_cam.normalize()
         th.location = NX + to_cam * 1.45 + Vector((0, 0, 0.85 + 0.03 * math.sin(t * 1.3)))
         th.rotation_euler = cam.rotation_euler.copy()
-        k = ramp(t, 25.9, 26.5)
+        k = ramp(t, 28.9, 29.5)
         th.scale = (1, max(0.001, k), 1)
         th.color = (1, 1, 1, k)
     core.color = (1, 1, 1, 1.0 + 0.15 * math.sin(t * 4))
@@ -880,7 +1002,7 @@ def set_screens(f):
 
 
 # the firmware is flashed at FLASH0 and serving from FLASH1 (see screens.py)
-FLASH0, FLASH1 = 39.56, 40.36
+FLASH0, FLASH1 = 42.56, 43.36
 
 
 def update_board(t):
@@ -896,11 +1018,76 @@ def update_board(t):
     LED_LIGHT.data.energy = 0.25 * k
 
 
+def vac_path(t):
+    """The vacuum crosses the floor during the opening, then parks."""
+    u = smooth(min(1.0, t / 6.0)) * 0.85 + 0.15 * min(1.0, t / 6.0)
+    a, c, b = Vector((-0.6, -0.85, 0)), Vector((-1.5, -0.95, 0)), Vector((-2.0, 0.3, 0))
+    pos = (1 - u) ** 2 * a + 2 * (1 - u) * u * c + u * u * b
+    d = 2 * (1 - u) * (c - a) + 2 * u * (b - c)
+    return pos, math.atan2(d.y, d.x)
+
+
+TAG_AT = [  # (tag, appears, leaves, anchor, lift above the anchor); each leaves as the camera does
+    (TAG_VAC, 0.9, 4.3, lambda: vac.location + Vector((0, 0, 0.13)), Vector((0, 0, 0.26))),
+    (TAG_RACK, 1.9, 6.6, lambda: RACK + Vector((0, -0.12, 0.77)), Vector((0, 0, 0.24))),
+    (TAG_SPK, 3.0, 7.5, lambda: SPEAKER + Vector((0, 0, 0.18)), Vector((0, 0, 0.2))),
+    (TAG_LAP, 3.8, 7.5, lambda: LAP + Vector((-0.17, 0.19, 0.235)), Vector((-0.12, 0, 0.15))),
+]
+OPEN_END = SHOTS[0][2]
+
+
+def update_devices(t):
+    pos, yaw = vac_path(t)
+    vac.location = pos
+    vac.rotation_euler = (0, 0, yaw)
+    lidar.rotation_euler = (0, 0, t * 9.0)
+    opening = t < OPEN_END
+    for led in VAC_LED:
+        led.color = (*TAG_COOL, 0.8 if opening else 0.3)
+    listen = 0.55 + 0.45 * math.sin(t * 5.0) if opening else 0.2
+    SPK_RING.color = (*TAG_COOL, listen)
+    SPK_LIGHT.data.energy = 0.6 * listen if opening else 0.0
+    for led, i in RACK_LEDS:
+        on = ((int(t * 7) * 2654435761 + i * 40503) >> 7) % 3 != 0
+        led.color = ((0.2, 1.0, 0.45) if i % 4 else (0.35, 0.85, 1.0)) + ((1.0 if on else 0.15),)
+    RACK_LIGHT.data.energy = 0.5 if opening else 0.25
+    DEV_FILL.data.energy = 45.0 * (1 - ramp(t, 6.4, 7.8)) if opening else 0.0
+    hot = ramp(t, 5.2, 5.7)
+    col = tuple(lerp(a, b, hot) for a, b in zip(TAG_COOL, TAG_HOT))
+    for tag, t0, t1, anchor, lift in TAG_AT:
+        k = ramp(t, t0, t0 + 0.35) * (1 - ramp(t, t1 - 0.5, t1))
+        parts = [tag["text"], tag["plate"], tag["line"], tag["dot"], *tag["edges"]]
+        for o in parts:
+            o.hide_render = not opening or k <= 0.01
+        if not opening or k <= 0.01:
+            continue
+        a = anchor()
+        top = a + lift
+        tx = tag["text"]
+        tx.location = top
+        tx.rotation_euler = cam.rotation_euler.copy()
+        pop = k * (1 + 0.12 * math.sin(math.pi * min(1.0, (t - t0) / 0.35)))
+        tx.scale = (pop, pop, pop)
+        tx.color = (1.0, 1.0, 1.0, k)
+        for e in tag["edges"]:
+            e.color = (*col, k)
+        bottom = top - cam.rotation_euler.to_matrix() @ Vector((0, tag["half"] * pop, 0))
+        seg = bottom - a
+        ln = tag["line"]
+        ln.location = a + seg / 2
+        ln.rotation_euler = seg.to_track_quat("Z", "Y").to_euler()
+        ln.scale = (1, 1, max(0.001, seg.length))
+        ln.color = (*col, 0.5 * k)
+        tag["dot"].location = a
+        tag["dot"].color = (*col, k)
+
+
 def update(f):
     t = (f - 1) / FPS
     update_board(t)
     sc.frame_set(f)
     camera_at(t)
+    update_devices(t)
     set_screens(f)
     pose_engineer(t)
     pose_hacker(t)
