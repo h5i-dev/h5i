@@ -4,6 +4,7 @@
 
 - [o1s](https://github.com/h5i-dev/o1s): Patch-based version control for concurrent AI agents, deployable on Cloudflare Workers.
 - [o5s](https://github.com/h5i-dev/o5s): The universal repository for any kind of data, compatible with Git, OCI, Hugging Face, npm, PyPI, and Maven, with its core decisions verified in Lean 4.
+- [senv](https://github.com/h5i-dev/senv): Build and serve Lean 4-verified [OpenEnv](https://github.com/openenv/OpenEnv) reinforcement learning environments in Rust with `h5i-app`.
 - [h5i-ai-gateway](https://github.com/h5i-dev/h5i-ai-gateway): [litellm](https://github.com/BerriAI/litellm) rebuilt in Rust with `h5i-app`, deployable on Vercel.
 - [h5i-pay](https://github.com/h5i-dev/h5i-pay): Payments, a double-entry ledger and PSP reconciliation on `h5i-app`, deployable on AWS. 
 - [h5i-db](https://github.com/Koukyosyumei/h5i-db): High-performance time-series database and backtesting engine with an `h5i-app`-based web interface.
