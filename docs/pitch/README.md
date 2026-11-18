@@ -36,6 +36,12 @@ proved, the async shell (`h5i-app-embedded`) is trusted and tested. Its claims f
 on an STM32F407 emulated in Renode, and firmware exists for the Seeed XIAO
 RP2040. Do not say it ran on hardware unless that README does.
 
+The cover lists three use cases under the lead: trustworthy web apps in finance,
+secure multi-tenant SaaS and reliable robot controllers. Do not write
+"bug-free": proofs cover stated properties, not every bug. They are intended uses backed by
+examples (`examples/app`, the tenant-scoped apps, `examples/embedded`),
+not customers.
+
 The cover shows stars, forks (82) and downloads in a right-hand column.
 The traction slide embeds the live star-history.com chart (dark theme), so
 the PDF render needs network access to include it. Beside it: 82 forks and
