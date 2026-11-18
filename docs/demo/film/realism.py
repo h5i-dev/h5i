@@ -356,6 +356,11 @@ def city_mat():
         nt.links.new(d, mr.inputs["Value"])
         return mr.outputs[0]
     win = math_("MULTIPLY", soft(fh, 0.5, 0.18, 0.36), soft(fv, 0.54, 0.12, 0.3))
+    # windows only on the walls, not on the roofs
+    geo = nt.nodes.new("ShaderNodeNewGeometry")
+    nsep = nt.nodes.new("ShaderNodeSeparateXYZ")
+    nt.links.new(geo.outputs["Normal"], nsep.inputs[0])
+    win = math_("MULTIPLY", win, math_("LESS_THAN", math_("ABSOLUTE", nsep.outputs["Z"]), 0.5))
     cell = nt.nodes.new("ShaderNodeCombineXYZ")
     nt.links.new(math_("FLOOR", hu), cell.inputs[0])
     nt.links.new(math_("FLOOR", vu), cell.inputs[1])
@@ -578,7 +583,7 @@ def lights(hx):
     area("h_wall_spill", hx + Vector((0, 0.9, 1.6)), hx + Vector((0, 1.3, 1.3)), 2.5, 1.0, (1.0, 0.2, 0.15), 12.0)
 
 
-def finish(scene, update, shots, fps, blur=True, shutter=0.3):
+def finish(scene, update, shots, fps, blur=True, shutter=0.25):
     """Camera and render settings, once the camera exists; returns scene.py's
     `render(f, path)`.
 
