@@ -72,6 +72,17 @@ fn check_recorded(
     let _packages = crate::report::step(record, "packages", out, |log| {
         crate::packages::prepare(&proofs, refetch, log)
     })?;
+    // A library pinned before a module this h5i builds (`H5iAppLib.Obligation`
+    // below): say so now, rather than build everything and then let Lake fail
+    // on a file it cannot find.
+    if !obligations.is_empty()
+        && let Some(pin) = crate::lib_pin::locate(&proofs)
+    {
+        let missing = pin.missing();
+        if !missing.is_empty() {
+            bail!("{}", crate::lib_pin::advice(&pin, concat!("v", env!("CARGO_PKG_VERSION")), &missing));
+        }
+    }
     let mut build = Command::new("lake");
     build
         .arg("build")

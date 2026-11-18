@@ -27,6 +27,7 @@ pub mod deps;
 pub mod doctor;
 pub mod extract;
 pub mod guarantees;
+pub mod lib_pin;
 pub mod lint;
 pub mod manifest;
 pub mod mutate;
@@ -126,6 +127,11 @@ pub enum AppCommands {
         /// Project directory or h5i-app.toml (default: the one the current
         /// directory is in, if any).
         path: Option<PathBuf>,
+        /// Fix what can be fixed in place: a project whose h5i Lean library
+        /// predates modules this h5i builds is pinned at this h5i's release
+        /// (`proofs/lakefile.lean`, then `lake update h5i_app_lib`).
+        #[arg(long)]
+        fix: bool,
     },
 }
 
@@ -280,7 +286,7 @@ pub fn run(cmd: AppCommands, cx: &Context) -> Result<()> {
             }
             mutate_project(p, &args)
         }),
-        AppCommands::Doctor { path } => {
+        AppCommands::Doctor { path, fix } => {
             let p = match path {
                 Some(p) => Some(Project::find(Some(&p))?),
                 // No project is fine (doctor checks the tools); a manifest
@@ -290,7 +296,7 @@ pub fn run(cmd: AppCommands, cx: &Context) -> Result<()> {
                     None => None,
                 },
             };
-            doctor::doctor(p.as_ref())
+            doctor::doctor(p.as_ref(), &cx.default_rev, fix)
         }
     }
 }

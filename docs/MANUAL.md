@@ -171,7 +171,8 @@ theorems must exist, and which bugs the proofs must reject.
 ```bash
 h5i app new counter            # a kernel, proofs that already pass, h5i-app.toml
 cd counter
-h5i app doctor                 # Charon, Aeneas and Lean at the versions this h5i pins
+h5i app doctor                 # Charon, Aeneas, Lean and the h5i Lean library at the versions this h5i pins
+h5i app doctor --fix           # a project pinned to an older h5i Lean library: pin it at this release
 h5i app prove                  # extract to proofs/generated/, lake build, then the gate
 h5i app lint                   # routes take an Actor; no client-set identity in Command
 h5i app report                 # per route: commands, covering theorems, assumptions (--json)
