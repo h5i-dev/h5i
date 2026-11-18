@@ -1,4 +1,4 @@
-"""Finish the 3D frames into the film: bloom, vignette, captions, end card.
+"""Finish the 3D frames into the film: lens effects, bloom, vignette, captions, end card.
 
     python compose.py OUT_DIR [--still SECONDS] [--crf 20]
 
@@ -56,7 +56,29 @@ VIGNETTE = VIGNETTE[..., None].astype(np.float32)
 RNG = np.random.default_rng(3)
 
 
+CA = 0.0011       # chromatic aberration: red scaled up, blue down, about the centre
+HALATION = (0.20, 0.07, 0.02)  # film halation: a warm fringe bleeding off highlights
+
+
+def aberrate(img):
+    """Lateral chromatic aberration, growing toward the edges like a real lens."""
+    r, g, b = img.split()
+
+    def scale(ch, k):
+        w, h = round(W * (1 + k)), round(H * (1 + k))
+        big = ch.resize((w, h), Image.BICUBIC)
+        x, y = (w - W) // 2, (h - H) // 2
+        if k >= 0:
+            return big.crop((x, y, x + W, y + H))
+        out = Image.new("L", (W, H))
+        out.paste(ch)  # keep the border, then the shrunken channel over it
+        out.paste(big, (-x, -y))
+        return out
+    return Image.merge("RGB", (scale(r, CA), g, scale(b, -CA)))
+
+
 def bloom(img):
+    img = aberrate(img)
     a = np.asarray(img, dtype=np.float32) / 255.0
     bright = np.clip(a - 0.55, 0, 1) * 1.6
     small = Image.fromarray((bright * 255).astype(np.uint8)).resize((W // 4, H // 4), Image.BILINEAR)
@@ -64,6 +86,11 @@ def bloom(img):
     for r, w in ((3, 0.55), (10, 0.45), (26, 0.35)):
         b = small.filter(ImageFilter.GaussianBlur(r)).resize((W, H), Image.BILINEAR)
         acc += np.asarray(b, dtype=np.float32) / 255.0 * w
+    # halation: the brightest highlights only, a tight warm glow
+    hot = np.clip(a.max(axis=2, keepdims=True) - 0.78, 0, 1) * 4.0
+    hs = Image.fromarray((np.clip(hot[..., 0], 0, 1) * 255).astype(np.uint8)).resize((W // 2, H // 2), Image.BILINEAR)
+    hal = np.asarray(hs.filter(ImageFilter.GaussianBlur(4)).resize((W, H), Image.BILINEAR), dtype=np.float32) / 255.0
+    acc += hal[..., None] * np.array(HALATION, dtype=np.float32)
     out = 1 - (1 - a) * (1 - np.clip(acc, 0, 1))  # screen blend
     out *= VIGNETTE
     out += RNG.normal(0, 0.005, (H // 2, W // 2, 1)).repeat(2, 0).repeat(2, 1).astype(np.float32)

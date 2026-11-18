@@ -34,6 +34,9 @@ import zipfile; z = zipfile.ZipFile('$OUT/hbm.zip')
 open('$HBM', 'wb').write(z.read('human-base-meshes-bundle-v1.4.1/human_base_meshes_bundle.blend'))"
 fi
 
+# Poly Haven textures and props (CC0) for the rooms; every file's URL and SHA-256 is pinned in assets.lock.json
+"$PY" assets.py "$OUT"
+
 "$PY" screens.py "$OUT"
 blender -b --factory-startup -P scene.py -- "$OUT" --dump-packets "$OUT/packets.json"
 # two processes keep the GPU busy while the other one syncs the scene

@@ -584,6 +584,11 @@ area_light("h_red_top", HX + Vector((0.8, -0.3, 2.6)), look_rot(HX + Vector((0.8
 # a red warning strip on the wall
 box("h_strip", (3.0, 0.02, 0.025), HX + Vector((0, 1.24, 2.1)), emissive("strip", RED, 6, by_object=False))
 
+# textures, props, the city and practical lights for both rooms (realism.py)
+import realism  # noqa: E402
+
+realism.dress_rooms(OUT, HX)
+
 # ---------------------------------------------------------------- set 3: network (x=100)
 
 NX = Vector((100, 0, 1.5))
@@ -1082,13 +1087,15 @@ def update_devices(t):
         tag["dot"].color = (*col, k)
 
 
-def update(f):
+def update(f, sub=False):
+    """Pose everything for frame f. sub: a motion-blur sub-frame (realism.py)."""
     t = (f - 1) / FPS
     update_board(t)
-    sc.frame_set(f)
+    if not sub:
+        sc.frame_set(f)
     camera_at(t)
     update_devices(t)
-    set_screens(f)
+    set_screens(int(round(f)))
     pose_engineer(t)
     pose_hacker(t)
     update_network(t)
@@ -1100,6 +1107,9 @@ def render(f, path):
     update(f)
     sc.render.filepath = path
     bpy.ops.render.render(write_still=True)
+
+
+render = realism.finish(sc, update, SHOTS, FPS, blur="--no-blur" not in argv)  # noqa: F811
 
 
 if arg("--dump-packets"):

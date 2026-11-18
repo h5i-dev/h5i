@@ -91,17 +91,110 @@ def classify(co):
     return "pants"
 
 
+def rib_material(hoodie):
+    """The cuffs and the hem band: the hoodie's material, kept separate so
+    realism.py can give it a finer, stronger knit."""
+    name = hoodie.name + "_rib"
+    m = bpy.data.materials.get(name)
+    if m is None:
+        m = hoodie.copy()
+        m.name = name
+    return m
+
+
+# the arm in the rest pose: shoulder, elbow, wrist (mesh frame, x > 0 is L)
+def arm_axis(s):
+    return (Vector((s * 0.17, -0.01, 1.36)), Vector((s * 0.28, 0.0, 1.11)), Vector((s * 0.37, -0.06, 0.87)))
+
+
+def ridges(x, sharp=2.0):
+    """0..1 ridges with narrow crests and wide troughs, like cloth folds."""
+    return (0.5 + 0.5 * math.sin(x)) ** sharp
+
+
+def fold_offset(co, n):
+    """Outward offset (metres) and whether the point is ribbed knit, for a
+    hoodie vertex at rest position co with normal n. Sculpted, deterministic
+    folds: rings bunched at the elbow and above the cuff, a ribbed cuff and
+    hem band, the cloth blousing over the hem, and a kangaroo pocket."""
+    x, y, z = co
+    ax = abs(x)
+    off, rib = 0.0, False
+    on_arm = ax > 0.2 and z < 1.37
+    if on_arm:
+        s = 1 if x > 0 else -1
+        sh, el, wr = arm_axis(s)
+        la, lb = (el - sh).length, (wr - el).length
+        # distance along the arm, and the angle around it
+        d1 = (co - sh).dot((el - sh).normalized())
+        if d1 < la:
+            u, axis, foot = d1, (el - sh).normalized(), sh + (el - sh).normalized() * d1
+        else:
+            d2 = (co - el).dot((wr - el).normalized())
+            u, axis, foot = la + d2, (wr - el).normalized(), el + (wr - el).normalized() * d2
+        r = co - foot
+        front = Vector((0, -1, 0)) - axis * axis.y * -1
+        side = axis.cross(front)
+        ang = math.atan2(r.dot(side), r.dot(front))
+        de = u - la                # from the elbow
+        dw = la + lb - u           # from the wrist
+        # elbow: diagonal folds that wrap the joint
+        k = math.exp(-(de / 0.09) ** 2)
+        off += 0.017 * k * (ridges(2 * math.pi * de / 0.05 + 1.4 * ang + 0.7 * math.sin(2 * ang)) - 0.35)
+        # the sleeve bunches above the cuff
+        if 0.055 < dw < 0.19:
+            k = math.sin(math.pi * (dw - 0.055) / 0.135)
+            off += 0.013 * k * (ridges(2 * math.pi * dw / 0.042 + 2.1 * ang) - 0.25)
+        # a snug ribbed cuff, with a lip where the sleeve overhangs it
+        if dw <= 0.055:
+            rib = True
+            off -= 0.004
+        elif dw < 0.068:
+            off += 0.006 * math.sin(math.pi * (dw - 0.055) / 0.013)
+        # a few soft pulls from the armpit down the upper arm
+        if de < -0.05:
+            off += 0.006 * ridges(2 * math.pi * u / 0.1 + 3.0 * ang, 3)
+        return off, rib
+    # torso: the hem band
+    if z < 0.885:
+        return 0.008 * math.sin(math.pi * min(1.0, (z - 0.84) / 0.045)) - 0.001, True
+    # the cloth blouses over the hem, mostly in front and at the sides
+    if z < 1.06:
+        k = 1 - (z - 0.885) / 0.175
+        front = 0.7 + 0.3 * max(0.0, -n.y)
+        off += 0.015 * k * front * (ridges(2 * math.pi * z / 0.045 + 2.6 * math.sin(x * 13) + 9 * y) - 0.3)
+        off += 0.008 * k  # the slack sits a little off the body
+    # long soft drapes down the back, from the shoulder blades
+    if n.y > 0.35 and 1.0 < z < 1.36:
+        k = math.sin(math.pi * (z - 1.0) / 0.36)
+        off += 0.008 * k * (ridges(2 * math.pi * x / 0.07 + 4 * z, 2.5) - 0.3)
+    # kangaroo pocket: a raised panel with slanted side openings
+    if n.y < -0.45 and 0.895 < z < 1.085:
+        half = 0.155 - (z - 0.895) * 0.42  # narrower at the top
+        e = min(half - ax, z - 0.895, 1.085 - z)
+        if e > 0:
+            off += 0.008 * min(1.0, e / 0.01) + (0.002 if e < 0.007 else 0.0)  # with a stitched edge
+    # a centre front seam line and side seams: a shallow groove
+    if n.y < -0.5 and ax < 0.006 and z > 1.085:
+        off -= 0.0012
+    return off, rib
+
+
 def dress(ob, mats):
-    """Inflate and smooth garments in place, and assign their materials."""
+    """Inflate and smooth garments in place, sculpt the hoodie's folds, and
+    assign their materials."""
     me = ob.data
     me.materials.clear()
-    names = ["hoodie", "pants", "glove", "shoe", "void"]
+    names = ["hoodie", "pants", "glove", "shoe", "void", "rib"]
+    mats = dict(mats)
+    mats.setdefault("rib", rib_material(mats["hoodie"]))
     for n in names:
         me.materials.append(mats[n])
     bm = bmesh.new()
     bm.from_mesh(me)
     bm.verts.ensure_lookup_table()
     kind = [classify(v.co) for v in bm.verts]
+    rest = [v.co.copy() for v in bm.verts]
     hood_verts = [v for v, k in zip(bm.verts, kind) if k == "hoodie"]
     pant_verts = [v for v, k in zip(bm.verts, kind) if k == "pants"]
     # smooth away the anatomy under the cloth, then push it out along normals
@@ -123,11 +216,48 @@ def dress(ob, mats):
         ks = [kind[v.index] for v in f.verts]
         f.material_index = names.index(max(set(ks), key=ks.count))
         f.smooth = True
+    # the hoodie gets four times the vertices, so its folds have the
+    # resolution to be sculpted into the mesh
+    hi = names.index("hoodie")
+    hood_faces = [f for f in bm.faces if f.material_index == hi]
+    bm.edges.index_update()
+    edges = list({e.index: e for f in hood_faces for e in f.edges}.values())
+    n0 = len(bm.verts)
+    bmesh.ops.subdivide_edges(bm, edges=edges, cuts=1, use_grid_fill=True, smooth=0.6)
+    bm.verts.index_update()
+    bm.verts.ensure_lookup_table()
+    bm.normal_update()
+
+    # rest position of every vertex: the original (subdivision appends new
+    # vertices, so index < n0 is an original), or the mean of its original
+    # neighbours (a new vertex sits on an old edge or in an old face)
+    def rest_of(v):
+        if v.index < n0:
+            return rest[v.index]
+        old = [e.other_vert(v).index for e in v.link_edges if e.other_vert(v).index < n0]
+        if not old:
+            old = [w.index for f in v.link_faces for w in f.verts if w.index < n0]
+        return sum((rest[i] for i in old), Vector()) / max(1, len(old))
+    ri = names.index("rib")
+    moves = {}
+    for v in bm.verts:
+        fm = [f.material_index for f in v.link_faces]
+        if not fm or fm.count(hi) * 2 < len(fm):
+            continue
+        moves[v.index] = fold_offset(rest_of(v), v.normal)
+    for v in bm.verts:
+        if v.index in moves:
+            v.co += v.normal * moves[v.index][0]
+    for f in bm.faces:
+        if f.material_index == hi and sum(1 for v in f.verts if moves.get(v.index, (0, False))[1]) * 2 > len(f.verts):
+            f.material_index = ri
+        f.smooth = True
     bm.to_mesh(me)
     bm.free()
     # cloth folds: low-frequency noise on the hoodie and trousers only
     vg = ob.vertex_groups.new(name="cloth")
-    vg.add([i for i, k in enumerate(kind) if k in ("hoodie", "pants")], 1.0, "REPLACE")
+    vg.add([p.vertices[i] for p in me.polygons if p.material_index in (hi, ri, names.index("pants"))
+            for i in range(len(p.vertices))], 1.0, "REPLACE")
     ss = ob.modifiers.new("subsurf", "SUBSURF")
     ss.levels = ss.render_levels = 1
     tex = bpy.data.textures.new(ob.name + "_folds", "CLOUDS")
@@ -145,6 +275,67 @@ def dress(ob, mats):
     dm.strength = 0.009
     dm.mid_level = 0.5
     dm.vertex_group = "cloth"
+    return front_surface(me)
+
+
+def front_surface(me):
+    """y of the hoodie's front at (x, z), for laying the drawstrings on it."""
+    pts = [(v.co.x, v.co.z, v.co.y) for v in me.vertices if v.co.y < -0.02 and 1.1 < v.co.z < 1.48 and abs(v.co.x) < 0.12]
+
+    def at(x, z):
+        near = sorted(pts, key=lambda p: (p[0] - x) ** 2 + (p[1] - z) ** 2)[:6]
+        return min(p[2] for p in near)
+    return at
+
+
+def drawstrings(name, rig, surface, mat):
+    """Two cords from the hood's opening down the chest, with metal tips.
+    Built in the rest frame and parented to the chest bone."""
+    obs = []
+    for s in (1, -1):
+        pts = []
+        for i in range(7):
+            k = i / 6
+            z = 1.425 - 0.20 * k
+            x = s * (0.034 + 0.012 * k + 0.004 * math.sin(k * 5))
+            y = surface(x, z) - 0.006 - 0.004 * math.sin(math.pi * k)
+            pts.append(Vector((x, y, z)))
+        cd = bpy.data.curves.new(f"{name}_cord", "CURVE")
+        cd.dimensions = "3D"
+        cd.bevel_depth = 0.0032
+        cd.bevel_resolution = 3
+        sp = cd.splines.new("BEZIER")
+        sp.bezier_points.add(len(pts) - 1)
+        for bp, co in zip(sp.bezier_points, pts):
+            bp.co = co
+            bp.handle_left_type = bp.handle_right_type = "AUTO"
+        ob = bpy.data.objects.new(f"{name}_cord", cd)
+        bpy.context.scene.collection.objects.link(ob)
+        ob.data.materials.append(mat)
+        obs.append(ob)
+        tip = pts[-1] + (pts[-1] - pts[-2]).normalized() * 0.012
+        bm = bmesh.new()
+        bmesh.ops.create_cone(bm, cap_ends=True, segments=12, radius1=0.0036, radius2=0.0036, depth=0.022)
+        tm = bpy.data.meshes.new(f"{name}_aglet")
+        bm.to_mesh(tm)
+        bm.free()
+        t = bpy.data.objects.new(f"{name}_aglet", tm)
+        bpy.context.scene.collection.objects.link(t)
+        t.data.materials.append(bpy.data.materials.get("metal") or mat)
+        t.matrix_world = Matrix.Translation(tip) @ (pts[-1] - pts[-2]).to_track_quat("Z", "Y").to_matrix().to_4x4()
+        for p in tm.polygons:
+            p.use_smooth = True
+        obs.append(t)
+    bone = rig.data.bones["chest"]
+    parent_m = bone.matrix_local @ Matrix.Translation((0, bone.length, 0))
+    for ob in obs:
+        mw = ob.matrix_world.copy()
+        ob.parent = rig
+        ob.parent_type = "BONE"
+        ob.parent_bone = "chest"
+        ob.matrix_parent_inverse = parent_m.inverted()
+        ob.matrix_basis = mw
+    return obs
 
 
 def build_armature(name):
@@ -185,12 +376,14 @@ class Figure:
         self.name = name
         self.body = append_body(bundle)
         self.body.name = name + "_body"
-        dress(self.body, mats)
+        surface = dress(self.body, mats)
         self.rig = build_armature(name + "_rig")
         # automatic weights from the rest pose
         with bpy.context.temp_override(active_object=self.rig, selected_objects=[self.body, self.rig],
                                        selected_editable_objects=[self.body, self.rig], object=self.rig):
             bpy.ops.object.parent_set(type="ARMATURE_AUTO")
+        self.strings = drawstrings(name, self.rig, surface,
+                                   bpy.data.materials.get("drawstring") or mats["hoodie"])
         self.root = bpy.data.objects.new(name + "_root", None)
         bpy.context.scene.collection.objects.link(self.root)
         self.root.location = root_loc
@@ -237,8 +430,17 @@ class Figure:
                 q = Quaternion(y1, ang * twist) @ q
         m = (q.to_matrix() @ rest.to_3x3()).to_4x4()
         m.translation = h
-        pb.matrix = m
-        bpy.context.view_layer.update()
+        # pose_mat = parent_pose @ (parent_rest^-1 @ rest) @ basis; solving for
+        # basis here (instead of setting pb.matrix and updating the view layer
+        # after every bone) keeps posing cheap enough to run per blur sample
+        parent = PARENT.get(bone)
+        if parent:
+            prest = self.rig.data.bones[parent].matrix_local
+            local = prest.inverted() @ rest
+            pb.matrix_basis = local.inverted() @ self._pm[parent].inverted() @ m
+        else:
+            pb.matrix_basis = rest.inverted() @ m
+        self._pm[bone] = m
 
     def pose(self, j):
         """Pose from world-space joints.
@@ -247,6 +449,7 @@ class Figure:
         and per side s in ("L", "R"): shoulder.s, wrist.s, hand_dir.s, hip.s,
         ankle.s, toe.s, elbow_pole.s, knee_pole.s.
         """
+        self._pm = {}
         up = j["chest"]
         self.aim("pelvis", j["pelvis"], j["pelvis"] + (j["chest"] - j["pelvis"]) * 0.3)
         mid = j["pelvis"].lerp(j["chest"], 0.5)
@@ -272,6 +475,7 @@ class Figure:
             self.aim("thigh." + s, hip, kn)
             self.aim("shin." + s, kn, j["ankle." + s])
             self.aim("foot." + s, j["ankle." + s], j["toe." + s])
+        bpy.context.view_layer.update()
 
 
 def make_hood(name, mat):
@@ -312,8 +516,9 @@ def make_hood(name, mat):
     dm.texture_coords = "LOCAL"
     dm.strength = 0.008
     sol = ob.modifiers.new("solid", "SOLIDIFY")
-    sol.thickness = 0.02
+    sol.thickness = 0.026
     sol.offset = 1
+    sol.use_rim = True
     ss = ob.modifiers.new("subsurf", "SUBSURF")
     ss.levels = ss.render_levels = 2
     for p in me.polygons:
