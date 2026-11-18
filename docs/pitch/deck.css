@@ -331,8 +331,10 @@ figure { margin:0; }
 .founder-points li::marker { color:var(--spot); }
 .cover-split { display:grid; grid-template-columns:minmax(0,1fr) 220px; align-items:center; gap:48px; }
 .cover-split > div:first-child { position:relative; }
-.use-cases { position:absolute; top:100%; left:0; margin-top:44px; }
+.use-cases { position:absolute; top:100%; left:0; margin-top:36px; }
 .use-cases ul { display:flex; flex-wrap:wrap; gap:12px; list-style:none; margin:12px 0 0; padding:0; }
+.use-cases li svg { display:block; width:30px; height:30px; margin-top:10px; fill:none; stroke:var(--spot); stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
+.use-cases li svg .dot { fill:var(--spot); stroke:none; }
 .use-cases li { border:1px solid var(--line); border-left:3px solid var(--spot); background:var(--panel); padding:12px 15px; font-size:19px; font-weight:580; letter-spacing:-.02em; color:var(--ink); }
 .cover-stats { margin:0; border-left:1px solid var(--line); padding-left:36px; display:flex; flex-direction:column; gap:26px; }
 .cover-stats dt { font-size:60px; line-height:1; font-stretch:70%; font-weight:650; letter-spacing:-.05em; color:var(--ink); }
