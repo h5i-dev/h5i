@@ -330,6 +330,12 @@ figure { margin:0; }
 .founder-points li + li { margin-top:10px; }
 .founder-points li::marker { color:var(--spot); }
 .cover-split { display:grid; grid-template-columns:minmax(0,1fr) 220px; align-items:center; gap:48px; }
+.cover-split > div:first-child { position:relative; }
+.use-cases { position:absolute; top:100%; left:0; margin-top:36px; }
+.use-cases ul { display:flex; flex-wrap:wrap; gap:12px; list-style:none; margin:12px 0 0; padding:0; }
+.use-cases li svg { display:block; width:30px; height:30px; margin-top:10px; fill:none; stroke:var(--spot); stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
+.use-cases li svg .dot { fill:var(--spot); stroke:none; }
+.use-cases li { border:1px solid var(--line); border-left:3px solid var(--spot); background:var(--panel); padding:12px 15px; font-size:19px; font-weight:580; letter-spacing:-.02em; color:var(--ink); }
 .cover-stats { margin:0; border-left:1px solid var(--line); padding-left:36px; display:flex; flex-direction:column; gap:26px; }
 .cover-stats dt { font-size:60px; line-height:1; font-stretch:70%; font-weight:650; letter-spacing:-.05em; color:var(--ink); }
 .cover-stats dt span { color:var(--spot); }
@@ -359,6 +365,23 @@ figure { margin:0; }
 .arch .node.proof { color:var(--spot); }
 .arch > i { font-style:normal; text-align:center; font-size:32px; color:var(--spot); }
 .arch > i.up { padding:10px 0; }
+.target-row { display:grid; grid-template-columns:500px minmax(0,1fr); gap:36px; align-items:center; margin-top:32px; }
+.chip-fig { margin:0; }
+.chip-fig svg { display:block; width:100%; height:auto; }
+.chip-body { fill:var(--panel); stroke:var(--line); stroke-width:1.5; }
+.chip-pins path { stroke:#55524b; stroke-width:22; fill:none; }
+.chip-trace path { stroke:var(--line); stroke-width:2; fill:none; }
+.chip-dot { fill:var(--dim); }
+.bot rect { fill:var(--panel); stroke:#55524b; stroke-width:1.5; }
+.bot path { stroke:#55524b; stroke-width:2; fill:none; }
+.bot-eye { fill:var(--spot); }
+.bot-link { stroke:var(--spot); stroke-width:2; fill:none; }
+.chip-die { fill:#1d1210; stroke:var(--spot); stroke-width:2; }
+.chip-name { fill:var(--ink); font:650 56px var(--sans); font-stretch:70%; letter-spacing:-.04em; }
+.chip-proof { fill:var(--spot); font:500 12px var(--mono); letter-spacing:.12em; }
+.cards.target-stack { grid-template-columns:1fr; margin-top:0; gap:12px; }
+.cards.target-stack > div { padding:18px 24px; gap:8px; font-size:26px; }
+.cards.target-stack > i { font-style:normal; text-align:center; font-size:30px; line-height:1; color:var(--spot); }
 .proof-row > i { font-style:normal; align-self:center; text-align:center; font-size:28px; color:var(--spot); }
 .proof-row pre { margin:0; padding:12px 14px; font-size:12px; line-height:1.55; }
 .proof-row .guarantee-card { justify-content:flex-start; padding:42px 16px 12px; }
@@ -462,10 +485,15 @@ figure { margin:0; }
   .closing-links.row { flex-direction:column; }
   .founder-points { font-size:19px; }
   .cover-split { grid-template-columns:1fr; gap:28px; }
+  .use-cases { position:static; margin-top:28px; }
+  .use-cases li { font-size:18px; padding:10px 14px; }
   .cover-stats { border-left:0; border-top:1px solid var(--line); padding:20px 0 0; flex-direction:row; flex-wrap:wrap; gap:20px 28px; }
   .cover-stats dt { font-size:40px; }
   .traction-row { grid-template-columns:1fr; gap:20px; }
   .model-row { grid-template-columns:1fr; gap:16px; }
+  .target-row { grid-template-columns:1fr; gap:20px; }
+  .chip-fig svg { max-width:340px; }
+  .cards.target-stack > div { font-size:20px; }
   .session-ui-frame.model-ui { height:calc((100vw - 48px) * .54); }
   .session-ui-frame.model-ui iframe { transform:scale(var(--workspace-scale,.342)); }
   .arch { grid-template-columns:1fr; gap:8px; }

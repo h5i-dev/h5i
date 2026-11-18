@@ -17,24 +17,24 @@
 <meta property="og:type" content="article">
 <meta property="og:site_name" content="h5i">
 <meta property="og:title" content="h5i: Build Web Apps You Can Formally Verify">
-<meta property="og:description" content="An Axum-based Rust web framework that lets developers prove security-critical application logic with Lean 4. Problem, customers, solution, traction, market, business model, founder and the ask.">
+<meta property="og:description" content="An Axum-based Rust web framework that lets developers prove security-critical application logic with Lean 4. Problem, solution, multi-target execution, traction, business model, founder and the ask.">
 <meta property="og:url" content="https://h5i.dev/pitch/">
 <meta property="og:image" content="https://h5i.dev/_static/social-card.png">
 <meta property="og:image:alt" content="h5i — Agent-Native Web Security">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="h5i: Build Web Apps You Can Formally Verify">
-<meta name="twitter:description" content="An Axum-based Rust web framework that lets developers prove security-critical application logic with Lean 4. Problem, customers, solution, traction, market, business model, founder and the ask.">
+<meta name="twitter:description" content="An Axum-based Rust web framework that lets developers prove security-critical application logic with Lean 4. Problem, solution, multi-target execution, traction, business model, founder and the ask.">
 <meta name="twitter:image" content="https://h5i.dev/_static/social-card.png">
 <meta name="twitter:image:alt" content="h5i — Agent-Native Web Security">
-<script type="application/ld+json">{"@context": "https://schema.org", "@type": "PresentationDigitalDocument", "name": "h5i Pitch Deck", "description": "An Axum-based Rust web framework that lets developers prove security-critical application logic with Lean 4 and test the running system.", "url": "https://h5i.dev/pitch/", "dateModified": "2026-11-09", "inLanguage": "en", "author": {"@type": "Organization", "name": "h5i-dev", "url": "https://github.com/h5i-dev/h5i"}, "about": {"@id": "https://h5i.dev/#app"}}</script>
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "PresentationDigitalDocument", "name": "h5i Pitch Deck", "description": "An Axum-based Rust web framework that lets developers prove security-critical application logic with Lean 4 and test the running system.", "url": "https://h5i.dev/pitch/", "dateModified": "2026-11-18", "inLanguage": "en", "author": {"@type": "Organization", "name": "h5i-dev", "url": "https://github.com/h5i-dev/h5i"}, "about": {"@id": "https://h5i.dev/#app"}}</script>
 <link rel="stylesheet" href="deck.css">
 </head>
 <body>
 <main class="deck sparse" id="deck" aria-label="h5i pitch presentation">
 <section class="slide cover" id="slide-1" aria-labelledby="title-1">
-<div class="content cover-split"><div><div class="eyebrow">01 / Product</div><h1 id="title-1">Build Web Apps You Can<br><em>Formally Verify.</em></h1><p class="lead"><em>h5i</em>: A Rust web framework with Lean 4 verification.</p></div>
-<dl class="cover-stats"><div><dt>900<span>+</span></dt><dd>GitHub stars</dd></div><div><dt>80</dt><dd>Forks</dd></div><div><dt>3.8k<span>+</span></dt><dd>Downloads</dd></div></dl></div>
-<footer class="folio"><span>h5i.dev · GitHub, November 9, 2026</span><span>01</span></footer>
+<div class="content cover-split"><div><div class="eyebrow">01 / Product</div><h1 id="title-1">Build Web Apps You Can<br><em>Formally Verify.</em></h1><p class="lead"><em>h5i</em>: A Rust web framework with Lean 4 verification.</p><div class="use-cases"><span class="index">Use cases</span><ul><li>Trustworthy web apps in finance<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 5.5v13M15 9.6c0-1.4-1.3-2.4-3-2.4s-3 1-3 2.4 1.3 2.1 3 2.4 3 1 3 2.4-1.3 2.4-3 2.4-3-1-3-2.4"/></svg></li><li>Secure multi-tenant SaaS<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3M12 15v2.5"/></svg></li><li>Reliable robot controllers<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="8" width="14" height="12" rx="2"/><path d="M12 8V4.5M2.5 12.5v4M21.5 12.5v4M9.5 17h5"/><circle cx="12" cy="3.5" r="1"/><circle class="dot" cx="9.5" cy="13" r="1.2"/><circle class="dot" cx="14.5" cy="13" r="1.2"/></svg></li></ul></div></div>
+<dl class="cover-stats"><div><dt>900<span>+</span></dt><dd>GitHub stars</dd></div><div><dt>82</dt><dd>Forks</dd></div><div><dt>4.4k<span>+</span></dt><dd>Downloads</dd></div></dl></div>
+<footer class="folio"><span>h5i.dev · GitHub, November 18, 2026</span><span>01</span></footer>
 </section>
 
 <section class="slide" id="slide-2" aria-labelledby="title-2">
@@ -55,27 +55,46 @@
 
 
 <section class="slide" id="slide-4" aria-labelledby="title-4">
-<div class="content"><div class="eyebrow">04 / Traction</div><h2 id="title-4"><em>900+</em> GitHub Stars and <em>3.8K+</em> CLI Downloads</h2>
-<div class="traction-row"><a class="star-chart" href="https://www.star-history.com/?repos=h5i-dev%2Fh5i&amp;type=date&amp;legend=top-left"><img src="https://api.star-history.com/chart?repos=h5i-dev/h5i&amp;type=date&amp;theme=dark&amp;legend=top-left" alt="Star history chart for h5i-dev/h5i" width="800" height="533"></a><div class="traction-side"><ul class="founder-points traction-points"><li>80 forks</li><li>20+ contributors</li></ul>
-<div><span class="index">CLI downloads by OS</span><figure class="os-split" aria-label="CLI downloads by OS: Linux 60%, macOS 23%, Windows 18%"><svg viewBox="0 0 42 42" aria-hidden="true"><g transform="rotate(-90 21 21)" fill="none" stroke-width="7"><circle class="os-linux" cx="21" cy="21" r="15.9155" stroke-dasharray="59.6 40.4" stroke-dashoffset="0"/><circle class="os-mac" cx="21" cy="21" r="15.9155" stroke-dasharray="22.7 77.3" stroke-dashoffset="-59.6"/><circle class="os-win" cx="21" cy="21" r="15.9155" stroke-dasharray="17.7 82.3" stroke-dashoffset="-82.3"/></g></svg><figcaption><span><i class="os-linux"></i>Linux<b>60%</b></span><span><i class="os-mac"></i>macOS<b>23%</b></span><span><i class="os-win"></i>Windows<b>18%</b></span></figcaption></figure></div></div></div></div>
-<footer class="folio"><span>h5i.dev</span><span>04</span></footer>
+<div class="content"><div class="eyebrow">04 / Multi-target execution</div><h2 id="title-4"><em>h5i</em> Supports Embedded and Edge Devices.</h2>
+<div class="target-row"><figure class="chip-fig"><svg viewBox="0 0 560 320" role="img" aria-label="An embedded chip whose core is h5i with its Lean 4 proof, driving a robot">
+<g class="chip-trace"><path d="M38 99H8M38 211H0M322 239h38M111 18V0M251 302v18"/></g>
+<g class="chip-pins"><path d="M78 29h206M78 291h206" stroke-dasharray="10 18"/><path d="M49 58v206M311 58v206" stroke-dasharray="10 18"/></g>
+<rect class="chip-body" x="60" y="40" width="240" height="240" rx="6"/>
+<circle class="chip-dot" cx="80" cy="60" r="5"/>
+<rect class="chip-die" x="100" y="80" width="160" height="160"/>
+<text class="chip-name" x="180" y="178" text-anchor="middle">h5i</text>
+<text class="chip-proof" x="180" y="212" text-anchor="middle">LEAN 4 PROOF ✓</text>
+<path class="bot-link" d="M322 175H393"/>
+<g class="bot"><path d="M470 84V62"/><rect x="425" y="84" width="90" height="64" rx="8"/><rect x="460" y="148" width="20" height="10"/><rect x="415" y="158" width="110" height="86" rx="8"/><rect x="393" y="164" width="14" height="62" rx="7"/><rect x="533" y="164" width="14" height="62" rx="7"/><rect x="436" y="244" width="18" height="36"/><rect x="486" y="244" width="18" height="36"/><rect x="428" y="280" width="34" height="12" rx="4"/><rect x="478" y="280" width="34" height="12" rx="4"/><path d="M455 134h30"/></g>
+<circle class="bot-eye" cx="470" cy="56" r="6"/><circle class="bot-eye" cx="450" cy="112" r="7"/><circle class="bot-eye" cx="490" cy="112" r="7"/>
+<rect class="chip-die" x="448" y="182" width="44" height="34"/>
+</svg></figure>
+<div class="cards target-stack"><div><span class="index">Today · Mongoose, picoserve</span>Many edge devices need a built-in web server.</div><i aria-hidden="true">↓</i><div class="paid"><span class="index">With h5i</span>Verified web servers for sensors and robots.</div></div></div></div>
+<footer class="folio"><span>HTTP/1.1 parser and kernel proved in Lean 4, I/O shell tested. No OS, no heap. Example: thermostat on STM32F407 (Renode), XIAO RP2040 firmware</span><span>04</span></footer>
 </section>
 
 <section class="slide" id="slide-5" aria-labelledby="title-5">
-<div class="content"><div class="eyebrow">05 / Business model</div><h2 id="title-5">We Plan to Sell Verification Infrastructure on Top of the Open-Source Framework.</h2>
-<div class="model-row"><div class="cards model-stack"><div><span class="index">Free · today</span><ul><li>Web framework</li><li>Lean 4 proofs</li><li>Local CLI</li></ul></div><div class="paid"><span class="index">Paid · planned</span><ul><li>Continuous verification</li><li>Proof monitoring in CI/CD</li><li>Team collaboration and audit reports</li></ul></div></div>
-<div class="session-ui-frame model-ui"><iframe src="assets/h5i-ui-session.html" title="Actual h5i ui session workspace, static local demonstration" sandbox tabindex="-1"></iframe></div></div></div>
-<footer class="folio"><span>Actual h5i ui dashboard, static capture of a local demo</span><span>05</span></footer>
+<div class="content"><div class="eyebrow">05 / Traction</div><h2 id="title-5"><em>900+</em> GitHub Stars and <em>4.4K+</em> CLI Downloads</h2>
+<div class="traction-row"><a class="star-chart" href="https://www.star-history.com/?repos=h5i-dev%2Fh5i&amp;type=date&amp;legend=top-left"><img src="https://api.star-history.com/chart?repos=h5i-dev/h5i&amp;type=date&amp;theme=dark&amp;legend=top-left" alt="Star history chart for h5i-dev/h5i" width="800" height="533"></a><div class="traction-side"><ul class="founder-points traction-points"><li>82 forks</li><li>20+ contributors</li></ul>
+<div><span class="index">CLI downloads by OS</span><figure class="os-split" aria-label="CLI downloads by OS: Linux 62%, macOS 21%, Windows 17%"><svg viewBox="0 0 42 42" aria-hidden="true"><g transform="rotate(-90 21 21)" fill="none" stroke-width="7"><circle class="os-linux" cx="21" cy="21" r="15.9155" stroke-dasharray="61.7 38.3" stroke-dashoffset="0"/><circle class="os-mac" cx="21" cy="21" r="15.9155" stroke-dasharray="21.4 78.6" stroke-dashoffset="-61.7"/><circle class="os-win" cx="21" cy="21" r="15.9155" stroke-dasharray="16.9 83.1" stroke-dashoffset="-83.1"/></g></svg><figcaption><span><i class="os-linux"></i>Linux<b>62%</b></span><span><i class="os-mac"></i>macOS<b>21%</b></span><span><i class="os-win"></i>Windows<b>17%</b></span></figcaption></figure></div></div></div></div>
+<footer class="folio"><span>h5i.dev</span><span>05</span></footer>
 </section>
 
-<section class="slide close" id="slide-6" aria-labelledby="title-6">
-<div class="content"><div class="eyebrow">06 / Founder</div><h2 id="title-6">Hideaki Takahashi</h2><ul class="founder-points"><li>Columbia CS PhD in software security, formal methods and AI</li><li>Ex-Intern at Apple</li><li>Publications at IEEE S&amp;P '26, ACM CCS '26, ICLR '24, AAMAS '24, CVPR '23</li><li>Found 100+ zero-day vulnerabilities and CVEs</li></ul>
+<section class="slide" id="slide-6" aria-labelledby="title-6">
+<div class="content"><div class="eyebrow">06 / Business model</div><h2 id="title-6">We Plan to Sell Verification Infrastructure on Top of the Open-Source Framework.</h2>
+<div class="model-row"><div class="cards model-stack"><div><span class="index">Free · today</span><ul><li>Web framework</li><li>Lean 4 proofs</li><li>Local CLI</li></ul></div><div class="paid"><span class="index">Paid · planned</span><ul><li>Continuous verification</li><li>Proof monitoring in CI/CD</li><li>Team collaboration and audit reports</li></ul></div></div>
+<div class="session-ui-frame model-ui"><iframe src="assets/h5i-ui-session.html" title="Actual h5i ui session workspace, static local demonstration" sandbox tabindex="-1"></iframe></div></div></div>
+<footer class="folio"><span>Actual h5i ui dashboard, static capture of a local demo</span><span>06</span></footer>
+</section>
+
+<section class="slide close" id="slide-7" aria-labelledby="title-7">
+<div class="content"><div class="eyebrow">07 / Founder</div><h2 id="title-7">Hideaki Takahashi</h2><ul class="founder-points"><li>Columbia CS PhD in software security, formal methods and AI</li><li>Ex-Intern at Apple</li><li>Publications at IEEE S&amp;P '26, ACM CCS '26, ICLR '24, AAMAS '24, CVPR '23</li><li>Found 100+ zero-day vulnerabilities and CVEs</li></ul>
 <p class="takeaway">Seeking design partners and seed investors.</p>
 <div class="closing-links row"><a class="button primary" href="https://github.com/h5i-dev/h5i/issues">Start a conversation ↗</a><a class="button" href="https://h5i.dev">Explore h5i ↗</a></div></div>
-<footer class="folio"><span>h5i.dev / github.com/h5i-dev/h5i</span><span>06</span></footer>
+<footer class="folio"><span>h5i.dev / github.com/h5i-dev/h5i</span><span>07</span></footer>
 </section>
 </main>
-<nav class="controls" aria-label="Presentation controls"><a href="/">h5i.dev</a><div class="pager"><button id="prev" aria-label="Previous slide">←</button><span id="position" aria-live="polite" aria-atomic="true">01 / 06</span><button id="next" aria-label="Next slide">→</button></div><div class="exports"><a href="pdf/">PDF</a><a href="h5i-pitch-deck.pdf" download>Download ↓</a><button id="print">Print</button></div></nav>
+<nav class="controls" aria-label="Presentation controls"><a href="/">h5i.dev</a><div class="pager"><button id="prev" aria-label="Previous slide">←</button><span id="position" aria-live="polite" aria-atomic="true">01 / 07</span><button id="next" aria-label="Next slide">→</button></div><div class="exports"><a href="pdf/">PDF</a><a href="h5i-pitch-deck.pdf" download>Download ↓</a><button id="print">Print</button></div></nav>
 <script src="deck.js"></script>
 </body>
 </html>
