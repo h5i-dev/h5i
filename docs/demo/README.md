@@ -1,6 +1,6 @@
 # h5i demo film: Build and Verify Your Web Apps
 
-A 51-second 3D film, rendered in Blender (EEVEE). It opens on the web apps
+A 52-second 3D film, rendered in Blender (EEVEE). It opens on the web apps
 around us: a robot vacuum, a smart speaker and a server rack, each serving
 HTTP. Then a hooded engineer
 extracts the board app's Rust kernel into Lean 4 and proves its authorization
@@ -33,8 +33,8 @@ The network space stays abstract on purpose.
 | 0:24–0:34 | Network space. Requests hit a shield around the h5i kernel and shatter. The `authorized` theorem circles it. |
 | 0:34–0:39 | The attacker's screen: 4096 of 4096 requests refused, 0 bypasses. The attacker puts their hands on their head. |
 | 0:39–0:41 | Over the shoulder, the engineer deploys the board app: "Proven in Lean 4. Shipped as Rust." |
-| 0:41–0:46 | The camera pulls back to the whole room. The opening's tags come back red, then a green ring spreads from the laptop and each device's tag turns green with a check mark: "From servers to robots, wherever web apps run." |
-| 0:46–0:51 | End card: Build and Verify Your Web Apps. `cargo add h5i-app`. |
+| 0:41–0:47 | The camera pulls back to the whole room. The opening's tags come back red, then a green ring spreads from the laptop and each device's tag turns green with a check mark: "From servers to robots, wherever web apps run." |
+| 0:47–0:52 | End card: Build and Verify Your Web Apps. `cargo add h5i-app`. |
 
 The film is hosted on YouTube: <https://youtu.be/I7m39qNO0G8>. `index.html`
 and the front page show `assets/poster.jpg` and load the

@@ -81,8 +81,8 @@ pad([46, 53, 58, 61], 17.0, 24.0, 0.20, bright=420, attack=0.4, release=0.6)  # 
 pad([33, 34], 17.0, 34.0, 0.16, bright=160, attack=1.0, release=0.8)    # low minor-second rumble
 pad([45, 52, 57, 60, 64], 24.0, 34.0, 0.18, bright=1200, attack=0.3, release=0.6)
 pad([46, 53, 58, 61], 34.0, 39.0, 0.16, bright=380, attack=0.3, release=0.8)
-pad([45, 52, 57, 61, 64], 39.0, 51.0, 0.24, bright=900, attack=1.2, release=2.5)  # A major
-pad([33, 45], 46.0, 51.0, 0.18, bright=200, attack=0.6, release=2.0)
+pad([45, 52, 57, 61, 64], 39.0, 52.0, 0.24, bright=900, attack=1.2, release=2.5)  # A major
+pad([33, 45], 47.0, 52.0, 0.18, bright=200, attack=0.6, release=2.0)
 
 # pulse: a muted sub kick under the network sequence, accelerating
 beat = 24.0
@@ -206,9 +206,9 @@ add(impact(0.6), 36.6)
 # end card: a deep hit and a bright shimmer
 n = int(4 * SR)
 tt = np.arange(n) / SR
-add(np.sin(2 * np.pi * 41 * tt) * np.exp(-tt * 1.2) * 0.5, 47.3)
+add(np.sin(2 * np.pi * 41 * tt) * np.exp(-tt * 1.2) * 0.5, 48.3)
 for i, nn in enumerate([69, 76, 81, 85, 88]):
-    add(bell(hz(nn + 12), 3.5, 0.12), 47.3 + i * 0.06, 1.0, -0.4 + 0.2 * i)
+    add(bell(hz(nn + 12), 3.5, 0.12), 48.3 + i * 0.06, 1.0, -0.4 + 0.2 * i)
 
 # ------------------------------------------------------------------ master
 
