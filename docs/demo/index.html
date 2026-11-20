@@ -16,7 +16,7 @@
 <meta property="og:locale" content="en_US">
 <meta property="og:image" content="https://h5i.dev/demo/assets/poster.jpg">
 <meta property="og:image:alt" content="A hooded engineer's laptop showing the Lean 4 theorem 'authorized' proven by h5i">
-<meta property="og:video" content="https://www.youtube.com/embed/I7m39qNO0G8">
+<meta property="og:video" content="https://www.youtube.com/embed/eHOLi1kxWEo">
 <meta property="og:video:type" content="text/html">
 <meta property="og:video:width" content="1920">
 <meta property="og:video:height" content="1080">
@@ -31,10 +31,10 @@
  "name":"Build and Verify Your Web Apps | h5i demo",
  "description":"An engineer extracts a Rust web app's kernel into Lean 4 and proves that only a post's author or a moderator can delete it; an attacker's forged and fuzzed requests are all refused.",
  "thumbnailUrl":"https://h5i.dev/demo/assets/poster.jpg",
- "contentUrl":"https://www.youtube.com/watch?v=I7m39qNO0G8",
+ "contentUrl":"https://www.youtube.com/watch?v=eHOLi1kxWEo",
  "uploadDate":"2026-11-16",
  "duration":"PT52S",
- "embedUrl":"https://www.youtube-nocookie.com/embed/I7m39qNO0G8",
+ "embedUrl":"https://www.youtube-nocookie.com/embed/eHOLi1kxWEo",
  "publisher":{"@type":"Organization","name":"h5i","logo":{"@type":"ImageObject","url":"https://h5i.dev/_static/logo.png"}}}
 </script>
 <style>
@@ -66,22 +66,18 @@
     border-color:transparent transparent transparent var(--text)}
   .poster:hover .play,.poster:focus-visible .play{transform:scale(1.08)}
   h1{font-size:clamp(28px,4vw,44px);font-weight:600;margin:36px 0 10px;letter-spacing:-.01em}
-  .lede{color:var(--dim);font-size:18px;line-height:1.6;max-width:760px}
-  .lede+.lede{margin-top:14px}
   .row{display:flex;flex-wrap:wrap;gap:14px;margin:28px 0 8px;align-items:center}
   .cmd{font-family:var(--mono);font-size:16px;background:#101016;border:1px solid var(--accent);border-radius:10px;
     padding:12px 18px;color:var(--text)}
   .cmd b{color:var(--accent);font-weight:400}
   .btn{display:inline-block;text-decoration:none;padding:12px 18px;border-radius:10px;border:1px solid var(--line);color:var(--text)}
   .btn:hover{border-color:var(--dim)}
-  .note{color:var(--faint);font-size:14px;line-height:1.6;max-width:760px;margin-top:28px}
-  .note code{font-family:var(--mono);font-size:13px;color:var(--dim)}
   /* ?embed: the front page's film window shows only the video */
   body.embed{display:block;background:#000;overflow:hidden}
   body.embed header,body.embed .copy{display:none}
   body.embed main{padding:0;max-width:none;height:100vh}
   body.embed .film{height:100vh;aspect-ratio:auto;border-radius:0;box-shadow:none}
-  @media (max-width:600px){header nav{gap:14px;font-size:14px}.lede{font-size:16px}}
+  @media (max-width:600px){header nav{gap:14px;font-size:14px}}
 </style>
 </head>
 <body>
@@ -100,24 +96,12 @@
   </div>
   <div class="copy">
     <h1>Build and Verify Your Web Apps.</h1>
-    <p class="lede">h5i extracts the kernel of a Rust web app into Lean 4 and proves its rules.
-      In this board app, the theorem <code>authorized</code> shows that every write the kernel
-      makes is allowed. Only a post's author or a moderator can delete it, whatever the request.</p>
-    <p class="lede">The same approach reaches embedded and edge devices. In the thermostat example, h5i proves
-      the HTTP/1.1 parser and the kernel, including an interlock that keeps the heater off at 35&nbsp;°C
-      and above, and serves them with no OS and no heap on an STM32F407 or a XIAO RP2040.</p>
     <div class="row">
       <span class="cmd"><b>$</b> cargo add h5i-app</span>
       <a class="btn" href="https://github.com/h5i-dev/h5i/blob/main/examples/app/board/TUTORIAL.md">Board tutorial</a>
       <a class="btn" href="https://github.com/h5i-dev/h5i/tree/main/examples/embedded">Embedded example</a>
       <a class="btn" href="/manual/">Manual</a>
     </div>
-    <p class="note">The Rust function and Lean theorems on screen come from
-      <code>examples/app/board</code>. The terminal output, the attacker, and their requests are
-      illustrations. So are the robot vacuum, smart speaker and server rack, and the green marks they
-      get at the end. They show where h5i is meant to be used, and the film does not claim these
-      products run h5i today. The proof covers the kernel's writes. It does not cover HTTP routes that
-      bypass the kernel.</p>
   </div>
 </main>
 <script>
@@ -127,7 +111,7 @@
   function load() {
     if (frame) return;
     frame = document.createElement('iframe');
-    frame.src = YT + '/embed/I7m39qNO0G8?autoplay=1&rel=0&playsinline=1&enablejsapi=1&origin=' + encodeURIComponent(location.origin);
+    frame.src = YT + '/embed/eHOLi1kxWEo?autoplay=1&rel=0&playsinline=1&enablejsapi=1&origin=' + encodeURIComponent(location.origin);
     frame.title = 'h5i demo film';
     frame.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
     frame.allowFullscreen = true;

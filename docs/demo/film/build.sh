@@ -5,7 +5,7 @@
 #   film/build.sh            # full build, ~1 hour on one GPU
 #   film/build.sh --publish  # also copy the poster into assets/ and the MP4 into media/demo/
 #
-# The site embeds the film from YouTube (https://youtu.be/I7m39qNO0G8).
+# The site embeds the film from YouTube (https://youtu.be/eHOLi1kxWEo).
 # --publish also copies the MP4 to media/demo/, outside docs/ so Pages does
 # not serve it; upload that file to YouTube to change the film.
 #

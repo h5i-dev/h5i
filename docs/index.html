@@ -392,19 +392,6 @@
     .film-expand { font-size: 13px; }
     .film-screen { position: relative; aspect-ratio: 16 / 9; background: #060608; }
     .film-screen iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; }
-    .film-poster {
-      position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
-      border: 0; padding: 16px; cursor: pointer; color: #ececf0; text-align: center;
-      background: radial-gradient(ellipse at center, rgba(255, 98, 88, .12), transparent 65%), #060608;
-    }
-    .film-kick { font-family: var(--mono); font-size: 10.5px; letter-spacing: .28em; text-transform: uppercase; color: var(--spot); }
-    .film-q { font-family: var(--disp); font-weight: 800; font-size: clamp(18px, 2.4vw, 30px); line-height: 1.1; letter-spacing: .06em; text-transform: uppercase; }
-    .film-play {
-      width: 54px; height: 54px; border-radius: 50%; background: var(--spot); margin-top: 6px; position: relative;
-      transition: transform .2s ease;
-    }
-    .film-play::after { content: ""; position: absolute; left: 21px; top: 17px; border-style: solid; border-width: 10px 0 10px 16px; border-color: transparent transparent transparent #fff; }
-    .film-poster:hover .film-play { transform: scale(1.08); }
     .proof-flow { margin: 36px 0 0; overflow-x: auto; position: relative; }
     .pd-stage { min-width: 880px; }
     /* The Apps proof receipt now lives in the dashboard's Apps view. */
@@ -1278,7 +1265,7 @@
         </div>
       </div>
     </div>
-    <!-- The demo film, hosted on YouTube. The iframe is created on the first play, so the page never pays for YouTube's player unasked. -->
+    <!-- The demo film, embedded straight from YouTube so the player shows YouTube's own thumbnail. -->
     <figure class="cta-film browser-win">
       <div class="win-bar"><span class="win-tab on"><i class="fav"></i>h5i &#183; demo film</span><span class="win-plus">+</span><span class="win-ctl"><i></i><i></i><i></i></span></div>
       <div class="bw-url">
@@ -1287,11 +1274,7 @@
         <a class="film-btn film-expand" href="/demo/" aria-label="Open the demo film on its own page" title="Open full size">&#10530;</a>
       </div>
       <div class="film-screen">
-        <button class="film-poster" type="button" aria-label="Play the demo film">
-          <span class="film-kick">The film &#183; 0:52</span>
-          <span class="film-q">Build it.<br>Verify it.</span>
-          <span class="film-play" aria-hidden="true"></span>
-        </button>
+        <iframe src="https://www.youtube-nocookie.com/embed/eHOLi1kxWEo?rel=0&amp;playsinline=1&amp;enablejsapi=1" title="h5i demo film" loading="lazy" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>
       </div>
     </figure>
   </div>
@@ -1322,23 +1305,21 @@
 <script src="/_static/highlight.js?v=ed81eee4e6" defer></script>
 <script>
 document.querySelectorAll('.cta-film').forEach(function (fig) {
-  var screen = fig.querySelector('.film-screen'), toggle = fig.querySelector('.film-toggle'), frame = null, playing = false;
-  function show(on) { playing = on; toggle.innerHTML = on ? '&#10074;&#10074;' : '&#9654;'; toggle.setAttribute('aria-label', on ? 'Pause the demo film' : 'Play the demo film'); }
+  var frame = fig.querySelector('.film-screen iframe'), toggle = fig.querySelector('.film-toggle'), playing = false;
   var YT = 'https://www.youtube-nocookie.com';
-  function play() {
-    if (!frame) {
-      frame = document.createElement('iframe');
-      frame.src = YT + '/embed/I7m39qNO0G8?autoplay=1&rel=0&playsinline=1&enablejsapi=1&origin=' + encodeURIComponent(location.origin);
-      frame.title = 'h5i demo film'; frame.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
-      frame.allowFullscreen = true; frame.referrerPolicy = 'strict-origin-when-cross-origin';
-      screen.innerHTML = ''; screen.appendChild(frame); show(true); return;
-    }
-    // YouTube's iframe API takes commands by postMessage when enablejsapi=1
+  // YouTube's iframe API reports state and takes commands by postMessage when enablejsapi=1
+  function show(on) { playing = on; toggle.innerHTML = on ? '&#10074;&#10074;' : '&#9654;'; toggle.setAttribute('aria-label', on ? 'Pause the demo film' : 'Play the demo film'); }
+  frame.addEventListener('load', function () { frame.contentWindow.postMessage(JSON.stringify({ event: 'listening' }), YT); });
+  window.addEventListener('message', function (e) {
+    if (e.origin !== YT || e.source !== frame.contentWindow) return;
+    try { var d = JSON.parse(e.data); } catch (_) { return; }
+    var st = d.info && d.info.playerState;
+    if (typeof st === 'number') show(st === 1 || st === 3);
+  });
+  toggle.addEventListener('click', function () {
     frame.contentWindow.postMessage(JSON.stringify({ event: 'command', func: playing ? 'pauseVideo' : 'playVideo', args: [] }), YT);
     show(!playing);
-  }
-  fig.querySelector('.film-poster').addEventListener('click', play);
-  toggle.addEventListener('click', play);
+  });
 });
 document.querySelectorAll('.proof-diagram .ed-tab').forEach(function (t) {
   function pick() { document.getElementById(t.getAttribute('data-tab')).checked = true; }
