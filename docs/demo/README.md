@@ -36,7 +36,7 @@ The network space stays abstract on purpose.
 | 0:41–0:47 | The camera pulls back to the whole room. The opening's tags come back red, then a green ring spreads from the laptop and each device's tag turns green with a check mark: "From servers to robots, wherever web apps run." |
 | 0:47–0:52 | End card: Build and Verify Your Web Apps. `cargo add h5i-app`. |
 
-The film is hosted on YouTube: <https://youtu.be/I7m39qNO0G8>. `index.html`
+The film is hosted on YouTube: <https://youtu.be/eHOLi1kxWEo>. `index.html`
 and the front page show `assets/poster.jpg` and load the
 `youtube-nocookie.com` player only when someone clicks play. The MP4 itself is
 kept at `media/demo/h5i-demo.mp4`, outside `docs/` so Pages does not serve
