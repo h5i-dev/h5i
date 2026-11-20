@@ -42,9 +42,9 @@ secure multi-tenant SaaS and reliable robot controllers. Do not write
 examples (`examples/app`, the tenant-scoped apps, `examples/embedded`),
 not customers.
 
-The cover shows stars, forks (82) and downloads in a right-hand column.
+The cover shows stars, forks (80+) and downloads in a right-hand column.
 The traction slide embeds the live star-history.com chart (dark theme), so
-the PDF render needs network access to include it. Beside it: 82 forks and
+the PDF render needs network access to include it. Beside it: 80+ forks and
 20+ contributors (23 on GitHub, November 18, 2026). Do not say "active":
 only about ten committed in the last 90 days. The OS donut uses the same
 download run: Linux 2,717, macOS 941, Windows 744 of 4,402.

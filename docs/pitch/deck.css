@@ -23,6 +23,7 @@ p { font-size:19px; line-height:1.5; color:var(--dim); }
 .small { font-size:14px; line-height:1.5; margin-top:18px; }
 .folio { height:43px; flex:none; display:flex; align-items:center; justify-content:space-between; gap:20px; border-top:1px solid var(--line); font:10px var(--mono); color:var(--dim); }
 .folio>span:last-child { color:var(--spot); }
+.folio .credit { margin-left:auto; color:var(--dim); }
 .columns { display:grid; margin-top:30px; border-block:1px solid var(--line); }
 .three { grid-template-columns:repeat(3,minmax(0,1fr)); }
 .two { grid-template-columns:repeat(2,minmax(0,1fr)); }
