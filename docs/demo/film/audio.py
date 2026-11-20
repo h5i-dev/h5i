@@ -75,22 +75,22 @@ def pad(notes, start, end, gain, bright=600, attack=1.5, release=1.5, detune=0.0
 
 
 # A minor: calm night, tension in the attacker's room, resolve to A major.
-pad([45, 52, 57, 60], 0.0, 14.0, 0.22, bright=500, attack=2.5)          # Am
-pad([45, 52, 57, 59], 9.0, 14.0, 0.10, bright=900, attack=2.0)          # lift as the proof lands
-pad([46, 53, 58, 61], 14.0, 21.0, 0.20, bright=420, attack=0.4, release=0.6)  # Bbm: unease
-pad([33, 34], 14.0, 31.0, 0.16, bright=160, attack=1.0, release=0.8)    # low minor-second rumble
-pad([45, 52, 57, 60, 64], 21.0, 31.0, 0.18, bright=1200, attack=0.3, release=0.6)
-pad([46, 53, 58, 61], 31.0, 36.0, 0.16, bright=380, attack=0.3, release=0.8)
-pad([45, 52, 57, 61, 64], 36.0, 48.0, 0.24, bright=900, attack=1.2, release=2.5)  # A major
-pad([33, 45], 41.0, 48.0, 0.18, bright=200, attack=0.6, release=2.0)
+pad([45, 52, 57, 60], 0.0, 17.0, 0.22, bright=500, attack=2.5)          # Am
+pad([45, 52, 57, 59], 12.0, 17.0, 0.10, bright=900, attack=2.0)          # lift as the proof lands
+pad([46, 53, 58, 61], 17.0, 24.0, 0.20, bright=420, attack=0.4, release=0.6)  # Bbm: unease
+pad([33, 34], 17.0, 34.0, 0.16, bright=160, attack=1.0, release=0.8)    # low minor-second rumble
+pad([45, 52, 57, 60, 64], 24.0, 34.0, 0.18, bright=1200, attack=0.3, release=0.6)
+pad([46, 53, 58, 61], 34.0, 39.0, 0.16, bright=380, attack=0.3, release=0.8)
+pad([45, 52, 57, 61, 64], 39.0, 52.0, 0.24, bright=900, attack=1.2, release=2.5)  # A major
+pad([33, 45], 47.0, 52.0, 0.18, bright=200, attack=0.6, release=2.0)
 
 # pulse: a muted sub kick under the network sequence, accelerating
-beat = 21.0
-while beat < 30.8:
+beat = 24.0
+while beat < 33.8:
     k = np.exp(-np.arange(int(0.35 * SR)) / SR * 14)
     f = 55 * (1 + 2.2 * np.exp(-np.arange(len(k)) / SR * 40))
     add(np.sin(2 * np.pi * np.cumsum(f) / SR) * k, beat, 0.38)
-    beat += 0.5 if beat < 25.5 else 0.25
+    beat += 0.5 if beat < 28.5 else 0.25
 
 # room tone
 air = lowpass(rng.normal(0, 1, N), 900) * 0.012
@@ -113,9 +113,9 @@ def typing(a, b, rate, gain, bright, pan):
         tt += rng.exponential(1 / rate) + 0.03
 
 
-for a, b in [(0.6, 4.6), (6.0, 6.7), (9.7, 10.3), (37.0, 37.5)]:
+for a, b in [(3.6, 7.6), (9.0, 9.7), (12.7, 13.3), (39.8, 40.3)]:
     typing(a, b, 9, 0.5, 3500, -0.2)
-for a, b in [(14.5, 16.5), (16.9, 18.9), (19.1, 20.9)]:
+for a, b in [(17.5, 19.5), (19.9, 21.9), (22.1, 23.9)]:
     typing(a, b, 13, 0.7, 2600, 0.2)
 
 
@@ -134,16 +134,23 @@ def blip(f, gain, dur=0.08):
 
 
 # terminal: extract done, proof ticks, then the proven chime
-add(blip(1320, 0.18), 8.0)
+add(blip(1320, 0.18), 11.0)
 for i, dt in enumerate([1.0, 1.3, 1.6, 1.9, 2.2, 2.5]):
-    add(blip(1500 + 60 * i, 0.12), 10.3 + dt)
+    add(blip(1500 + 60 * i, 0.12), 13.3 + dt)
 for i, n in enumerate([69, 73, 76, 81]):
-    add(bell(hz(n + 12), 2.5, 0.22), 12.6 + i * 0.09, 1.0, -0.3 + 0.2 * i)
+    add(bell(hz(n + 12), 2.5, 0.22), 15.6 + i * 0.09, 1.0, -0.3 + 0.2 * i)
 # deploy confirmation
 for i, n in enumerate([76, 81]):
-    add(bell(hz(n + 12), 2.0, 0.16), 38.95 + i * 0.1)
+    add(bell(hz(n + 12), 2.0, 0.16), 41.15 + i * 0.1)
+# the closing: the red tags come back with the opening's pings, then the green
+# wave goes out (WAVE0 in scene.py) and each device chimes as it turns green.
+# The times are when the wave reaches each one: laptop, speaker, vacuum, rack.
+for i, at in enumerate((42.75, 42.85, 42.95, 43.05)):
+    add(bell(hz(86 + 3 * i), 0.8, 0.05), at, 1.0, (-0.6, -0.5, 0.0, 0.2)[i])
+for i, (at, pan) in enumerate([(43.76, 0.2), (44.07, -0.1), (44.65, -0.5), (45.25, -0.7)]):
+    add(bell(hz([76, 81, 85, 88][i] + 12), 2.4, 0.15), at, 1.0, pan)
 # attacker: refusal buzzes
-for at in (14.9 + 1.94, 17.3 + 2.2):
+for at in (17.9 + 1.94, 20.3 + 2.2):
     add(blip(220, 0.35, 0.18), at, 1.0, 0.3)
 
 
@@ -169,7 +176,19 @@ def impact(gain):
     return (ting * 0.5 + thump * 0.9 + crack * 0.5) * gain
 
 
-add(whoosh(0.7, 0.25, 2000, 200), 20.75)  # cut into the network space
+# opening: the robot vacuum's motor while it is in view, a soft ping as each
+# device's route tag appears (times match TAG_AT in scene.py), and a low hit
+# when the tags turn red with "Every one of them is a target."
+n = int(5.0 * SR)
+tt = np.arange(n) / SR
+motor = bandpass(rng.normal(0, 1, n), 180, 900) * 0.5 + np.sin(2 * np.pi * 118 * tt) * 0.15
+add(motor * np.clip(tt / 0.8, 0, 1) * np.clip((5.0 - tt) / 1.4, 0, 1), 0.0, 0.10, -0.4)
+for i, at in enumerate((0.9, 1.9, 3.0, 3.8)):
+    add(bell(hz(86 + 3 * i), 0.8, 0.07), at, 1.0, (-0.5, -0.6, 0.0, 0.2)[i])
+add(impact(0.22), 5.25, 1.0, 0.0)
+
+add(whoosh(0.7, 0.25, 2000, 200), 23.75)  # cut into the network space
+add(whoosh(2.2, 0.16, 250, 1800), 43.5, 1.0, -0.2)  # the green wave spreads
 with open(os.path.join(OUT, "packets.json")) as fh:
     packets = json.load(fh)
 for i, p in enumerate(packets):
@@ -182,14 +201,14 @@ for i, p in enumerate(packets):
 
 # the attacker's screen floods; a low stinger on the summary
 for i in range(40):
-    add(blip(200 + (i % 3) * 20, 0.05, 0.05), 31.2 + (i / 40) ** 0.6 * 2.3, 1.0, 0.3)
-add(impact(0.6), 33.6)
+    add(blip(200 + (i % 3) * 20, 0.05, 0.05), 34.2 + (i / 40) ** 0.6 * 2.3, 1.0, 0.3)
+add(impact(0.6), 36.6)
 # end card: a deep hit and a bright shimmer
 n = int(4 * SR)
 tt = np.arange(n) / SR
-add(np.sin(2 * np.pi * 41 * tt) * np.exp(-tt * 1.2) * 0.5, 42.3)
+add(np.sin(2 * np.pi * 41 * tt) * np.exp(-tt * 1.2) * 0.5, 48.3)
 for i, nn in enumerate([69, 76, 81, 85, 88]):
-    add(bell(hz(nn + 12), 3.5, 0.12), 42.3 + i * 0.06, 1.0, -0.4 + 0.2 * i)
+    add(bell(hz(nn + 12), 3.5, 0.12), 48.3 + i * 0.06, 1.0, -0.4 + 0.2 * i)
 
 # ------------------------------------------------------------------ master
 
