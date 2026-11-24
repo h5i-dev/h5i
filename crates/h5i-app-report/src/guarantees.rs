@@ -57,6 +57,10 @@ pub struct Project {
     /// server is linked to its principal function (a source check).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tenant: Option<crate::TenantLink>,
+    /// Optional temporal verification status (`skipped` when not enabled,
+    /// or the latest recorded `temporal` run outcome).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temporal: Option<crate::TemporalReport>,
     /// What could not be analyzed; a route or theorem it hides is missing
     /// from the report, so a non-empty list means the report is incomplete.
     pub errors: Vec<String>,
@@ -291,6 +295,15 @@ impl Guarantees {
                     let _ = writeln!(s, "    reviewed: {r}");
                 }
             }
+            if let Some(tv) = &p.temporal {
+                let detail = tv.detail.as_deref().map(|d| format!(" — {d}")).unwrap_or_default();
+                let _ = writeln!(
+                    s,
+                    "  temporal verification ({}): [{}]{detail}",
+                    tv.backend,
+                    word(&tv.status)
+                );
+            }
             for r in &p.routes {
                 let actor = match r.actor {
                     Some(true) => "Actor",
@@ -380,6 +393,12 @@ mod tests {
                 authenticators: vec!["server/src/main.rs:3: HmacAuth::new(…, x::principal): linked".into()],
                 summary: "covered".into(),
                 reviewed: vec![],
+            }),
+            temporal: Some(crate::TemporalReport {
+                enabled: false,
+                backend: "veil".into(),
+                status: crate::TemporalStatus::Skipped,
+                detail: Some("not enabled".into()),
             }),
         }])
     }

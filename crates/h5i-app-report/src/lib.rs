@@ -313,7 +313,34 @@ pub struct Run {
     /// and the server is linked to its principal function (`crates/h5i-app-cli/src/tenant.rs`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tenant: Option<TenantLink>,
+    /// Optional temporal verification outcome (`h5i app temporal-check`, `prove --temporal`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temporal: Option<TemporalReport>,
     pub error: Option<String>,
+}
+
+/// Outcome of optional temporal verification (Veil or built-in model checker).
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TemporalStatus {
+    Skipped,
+    NotRun,
+    Passed,
+    Failed,
+    Counterexample,
+    Unknown,
+    Error,
+}
+
+/// Summary of temporal verification for a project or recorded run.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TemporalReport {
+    pub enabled: bool,
+    pub backend: String,
+    pub status: TemporalStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 /// The tenant of a request: `tenant-of-token`'s status, and whether the
@@ -424,6 +451,7 @@ impl Recorder {
             required_theorems: Vec::new(),
             obligations: Vec::new(),
             tenant: None,
+            temporal: None,
             error: None,
         };
         let r = Self {

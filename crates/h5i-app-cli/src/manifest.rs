@@ -31,6 +31,10 @@ pub struct Manifest {
     /// obligation's statement for this app (`crate::obligations`).
     #[serde(default)]
     pub obligations: Obligations,
+    /// Optional temporal verification settings (`[verification]`).
+    /// Disabled by default so Veil is never required unless opted in.
+    #[serde(default)]
+    pub verification: Verification,
     #[serde(default)]
     pub mutate: Mutate,
     /// Bugs the proofs must reject: `[[mutant]]`.
@@ -152,6 +156,40 @@ pub struct Obligations {
     /// `H5iAppLib.Obligation.TenantOfToken` (or `TenantOfTokenWith`) of
     /// `tenant_of` and `principal`. Optional: without it, automation.
     pub tenant_of_token: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Verification {
+    /// Whether optional temporal verification is enabled for this project.
+    /// Defaults to `false` (Veil is strictly optional).
+    #[serde(default)]
+    pub temporal: bool,
+    /// Temporal verification backend (currently `"veil"`, an optional Lean/Veil Lake package).
+    #[serde(default = "default_temporal_backend", alias = "temporal-backend")]
+    pub temporal_backend: String,
+    /// Directory containing optional temporal Lean/Veil proofs, relative to the
+    /// manifest. Defaults to `"proofs/temporal"`.
+    #[serde(default = "default_temporal_dir", alias = "temporal-dir")]
+    pub temporal_dir: String,
+}
+
+impl Default for Verification {
+    fn default() -> Self {
+        Verification {
+            temporal: false,
+            temporal_backend: default_temporal_backend(),
+            temporal_dir: default_temporal_dir(),
+        }
+    }
+}
+
+fn default_temporal_backend() -> String {
+    "veil".into()
+}
+
+fn default_temporal_dir() -> String {
+    "proofs/temporal".into()
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -288,6 +326,13 @@ impl Project {
                 );
             }
         }
+        let backend = manifest.verification.temporal_backend.as_str();
+        if backend != "veil" {
+            bail!(
+                "{}: `[verification] temporal_backend` must be \"veil\", got {backend:?}",
+                file.display()
+            );
+        }
         Ok(Project { root, manifest, cargo_target: None })
     }
 
@@ -327,6 +372,10 @@ impl Project {
 
     pub fn generated(&self) -> PathBuf {
         self.proofs().join("generated")
+    }
+
+    pub fn temporal_dir(&self) -> PathBuf {
+        self.root.join(&self.manifest.verification.temporal_dir)
     }
 
     pub fn krate(&self) -> Option<PathBuf> {
@@ -452,5 +501,31 @@ mod tests {
         for bad in ["k.principal", "", "tenant_of", "a::"] {
             assert!(load(&format!("{authz}[obligations]\nprincipal = \"{bad}\"\n")).is_err(), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn verification_section_defaults_to_disabled_and_validates_backend() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join(FILE), "[check]\n").unwrap();
+        let p = Project::load(&d.path().join(FILE)).unwrap();
+        assert!(!p.manifest.verification.temporal);
+        assert_eq!(p.manifest.verification.temporal_backend, "veil");
+        assert_eq!(p.manifest.verification.temporal_dir, "proofs/temporal");
+
+        std::fs::write(
+            d.path().join(FILE),
+            "[verification]\ntemporal = true\ntemporal_backend = \"veil\"\n",
+        )
+        .unwrap();
+        let p = Project::load(&d.path().join(FILE)).unwrap();
+        assert!(p.manifest.verification.temporal);
+        assert_eq!(p.manifest.verification.temporal_backend, "veil");
+
+        std::fs::write(
+            d.path().join(FILE),
+            "[verification]\ntemporal = true\ntemporal_backend = \"unknown\"\n",
+        )
+        .unwrap();
+        assert!(Project::load(&d.path().join(FILE)).is_err());
     }
 }

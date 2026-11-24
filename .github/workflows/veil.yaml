@@ -1,0 +1,59 @@
+# Optional Veil temporal verification workflow.
+# Kept strictly separate from `.github/workflows/app.yaml` so standard Rust and
+# Lean (`v4.31.0` / Aeneas) CI never depends on Veil.
+name: h5i-app-veil
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "crates/h5i-app-veil/**"
+      - "crates/h5i-app-embedded/src/replay.rs"
+      - "crates/h5i-app-core/src/replay.rs"
+      - "crates/h5i-app-cli/src/temporal.rs"
+      - ".github/workflows/veil.yaml"
+  pull_request:
+    paths:
+      - "crates/h5i-app-veil/**"
+      - "crates/h5i-app-embedded/src/replay.rs"
+      - "crates/h5i-app-core/src/replay.rs"
+      - "crates/h5i-app-cli/src/temporal.rs"
+      - ".github/workflows/veil.yaml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  # Replay tests directly against real Rust implementations (MemoryEngine, FlashStore, DeviceEngine).
+  rust-replay:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run real Rust counterexample replay tests
+        run: |
+          cargo test -p h5i-app-core -- replay --locked
+          cargo test -p h5i-app-embedded --features flash -- replay --locked
+          cargo test -p h5i-app-cli -- temporal --locked
+
+  # Optional Veil Lake package (`crates/h5i-app-veil/proofs`, Lean v4.35.0).
+  veil:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install elan and Veil's pinned Lean toolchain (v4.35.0)
+        timeout-minutes: 5
+        run: |
+          curl -fsSL --retry 3 --retry-delay 10 --retry-all-errors \
+            https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+            | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+          tc=$(cat crates/h5i-app-veil/proofs/lean-toolchain)
+          "$HOME/.elan/bin/elan" toolchain install "$tc"
+      - name: Build H5iAppVeil (runs Veil #model_check, #temporal_check, and Lean proofs)
+        working-directory: crates/h5i-app-veil/proofs
+        run: lake build

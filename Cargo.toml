@@ -7,6 +7,7 @@ exclude = [
     "examples/app",
     "crates/h5i-app-gpu/backend-nvvm",
     "crates/h5i-app-gpu/backend-oxide",
+    "crates/h5i-app-veil",
 ]
 resolver = "3"
 

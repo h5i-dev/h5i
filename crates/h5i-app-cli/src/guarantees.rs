@@ -178,6 +178,7 @@ pub fn project(p: &Project) -> g::Project {
     routes.sort_by(|a, b| (&a.path, &a.method).cmp(&(&b.path, &b.method)));
 
     let theorems = theorems.into_iter().map(|t| with_check(t, &check)).collect();
+    let temporal = Some(temporal_status(p, top.as_deref()));
     g::Project {
         path,
         kernel: p.manifest.extract.as_ref().map(|e| e.krate.clone()),
@@ -192,6 +193,7 @@ pub fn project(p: &Project) -> g::Project {
         errors,
         obligations,
         tenant,
+        temporal,
     }
 }
 
@@ -719,6 +721,10 @@ fn read_only_theorems(proofs: &Path) -> Vec<String> {
 
 /// The latest recorded check run, and whether its inputs are the current ones.
 fn latest_check(p: &Project, top: Option<&Path>) -> Option<(Run, bool)> {
+    latest_run(p, top, "check")
+}
+
+fn latest_run(p: &Project, top: Option<&Path>, kind: &str) -> Option<(Run, bool)> {
     let dir = p.root.join(h5i_app_report::RUNS);
     let mut runs: Vec<Run> = std::fs::read_dir(&dir)
         .into_iter()
@@ -726,13 +732,50 @@ fn latest_check(p: &Project, top: Option<&Path>) -> Option<(Run, bool)> {
         .flatten()
         .filter_map(|e| h5i_app_report::read_text(&e.path().join("run.json")).ok())
         .filter_map(|t| serde_json::from_str::<Run>(&t).ok())
-        .filter(|r| r.kind == "check")
+        .filter(|r| r.kind == kind)
         .collect();
     runs.sort_by(|a, b| (a.started, &a.id).cmp(&(b.started, &b.id)));
     let run = runs.pop()?;
     let current = h5i_app_report::inputs(top.unwrap_or(&p.root));
     let same = current.digest == run.inputs.digest && current.errors.is_empty() && run.inputs.errors.is_empty();
     Some((run, same))
+}
+
+fn temporal_status(p: &Project, top: Option<&Path>) -> h5i_app_report::TemporalReport {
+    let v = &p.manifest.verification;
+    if !v.temporal {
+        return h5i_app_report::TemporalReport {
+            enabled: false,
+            backend: v.temporal_backend.clone(),
+            status: h5i_app_report::TemporalStatus::Skipped,
+            detail: Some("not enabled".into()),
+        };
+    }
+    match latest_run(p, top, "temporal") {
+        Some((run, current)) => match run.temporal {
+            Some(mut rep) => {
+                if !current {
+                    rep.detail = Some(match rep.detail {
+                        Some(d) => format!("{d} (sources changed since)"),
+                        None => "sources changed since".into(),
+                    });
+                }
+                rep
+            }
+            None => h5i_app_report::TemporalReport {
+                enabled: true,
+                backend: v.temporal_backend.clone(),
+                status: h5i_app_report::TemporalStatus::NotRun,
+                detail: Some("no temporal status in latest run".into()),
+            },
+        },
+        None => h5i_app_report::TemporalReport {
+            enabled: true,
+            backend: v.temporal_backend.clone(),
+            status: h5i_app_report::TemporalStatus::NotRun,
+            detail: Some("run `h5i app temporal-check`".into()),
+        },
+    }
 }
 
 fn status(s: &str) -> RunStatus {

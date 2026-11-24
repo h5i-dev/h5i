@@ -89,6 +89,8 @@ impl Timestamp {
 pub mod authz;
 #[cfg(feature = "std")]
 pub use authz::{Authz, AuthzKernel};
+#[cfg(feature = "std")]
+pub mod replay;
 
 /// Implement on a marker type in the server crate, delegating to the kernel crate.
 pub trait Kernel: Send + Sync + 'static {
