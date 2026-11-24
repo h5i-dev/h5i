@@ -317,7 +317,10 @@ fn lean_files(dir: &Path, out: &mut Vec<PathBuf>) {
         let p = e.path();
         let name = e.file_name();
         if p.is_dir() {
-            if !matches!(name.to_string_lossy().as_ref(), ".lake" | "target" | ".git") {
+            if !matches!(name.to_string_lossy().as_ref(), ".lake" | "target" | ".git")
+                && !p.join("lakefile.lean").is_file()
+                && !p.join("lakefile.toml").is_file()
+            {
                 lean_files(&p, out);
             }
         } else if p.extension().is_some_and(|x| x == "lean") && name != "lakefile.lean" {

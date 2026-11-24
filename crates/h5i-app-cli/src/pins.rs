@@ -37,7 +37,7 @@ mod tests {
                 if p.is_dir()
                     && !matches!(
                         n.to_string_lossy().as_ref(),
-                        "target" | ".lake" | ".git" | "node_modules" | "h5i-app-veil"
+                        "target" | ".lake" | ".git" | "node_modules" | "h5i-app-veil" | "temporal"
                     )
                 {
                     walk(&p, out);

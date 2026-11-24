@@ -12,6 +12,7 @@ on:
       - "crates/h5i-app-embedded/src/replay.rs"
       - "crates/h5i-app-core/src/replay.rs"
       - "crates/h5i-app-cli/src/temporal.rs"
+      - "examples/embedded/thermostat/proofs/temporal/**"
       - ".github/workflows/veil.yaml"
   pull_request:
     paths:
@@ -19,6 +20,7 @@ on:
       - "crates/h5i-app-embedded/src/replay.rs"
       - "crates/h5i-app-core/src/replay.rs"
       - "crates/h5i-app-cli/src/temporal.rs"
+      - "examples/embedded/thermostat/proofs/temporal/**"
       - ".github/workflows/veil.yaml"
 
 concurrency:
@@ -35,9 +37,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Run real Rust counterexample replay tests
         run: |
-          cargo test -p h5i-app-core -- replay --locked
-          cargo test -p h5i-app-embedded --features flash -- replay --locked
-          cargo test -p h5i-app-cli -- temporal --locked
+          cargo test --locked -p h5i-app-core replay
+          cargo test --locked -p h5i-app-embedded --features flash replay
+          cargo test --locked -p h5i-app-cli temporal
 
   # Optional Veil Lake package (`crates/h5i-app-veil/proofs`, Lean v4.35.0).
   veil:
@@ -57,3 +59,9 @@ jobs:
       - name: Build H5iAppVeil (runs Veil #model_check, #temporal_check, and Lean proofs)
         working-directory: crates/h5i-app-veil/proofs
         run: lake build
+      - name: Build thermostat optional Veil temporal proofs
+        working-directory: examples/embedded/thermostat/proofs/temporal
+        run: |
+          mkdir -p .lake
+          ln -sfn ../../../../../../crates/h5i-app-veil/proofs/.lake/packages .lake/packages
+          lake build

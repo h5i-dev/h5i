@@ -26,3 +26,12 @@ new = "if i > RELAYS {"
 name = "setpoint_upper"
 old = "*dc > MAX_SETPOINT_DC"
 new = "*dc > MAX_TEMP_DC"
+
+# Optional Veil temporal verification (`proofs/temporal/`).
+# Kept disabled by default so normal `h5i app check` / `prove` never require Veil.
+# Run with `h5i app temporal-check --enable` or `h5i app prove --temporal`
+# (or flip `temporal = true` when Veil is installed).
+[verification]
+temporal = false
+temporal_backend = "veil"
+temporal_dir = "proofs/temporal"

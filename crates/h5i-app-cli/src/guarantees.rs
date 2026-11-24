@@ -640,7 +640,11 @@ fn lean_files(dir: &Path) -> Vec<PathBuf> {
             let p = e.path();
             let name = e.file_name().to_string_lossy().into_owned();
             if p.is_dir() {
-                if !name.starts_with('.') && name != "build" {
+                if !name.starts_with('.')
+                    && name != "build"
+                    && !p.join("lakefile.lean").is_file()
+                    && !p.join("lakefile.toml").is_file()
+                {
                     walk(&p, out);
                 }
             } else if p.extension().is_some_and(|x| x == "lean") {
