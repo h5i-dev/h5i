@@ -21,20 +21,41 @@ model checking inside h5i.
   - Application temporal packages (such as
     `examples/embedded/thermostat/proofs/temporal`) import the actual
     Aeneas-extracted Rust kernel (`ThermostatKernel.lean`) and its safety proofs
-    (`Proofs.lean`), lifting `H5iAppLib.Run` invariants and proving temporal
-    liveness theorems directly over the extracted transition function.
-- **Explicit distinction between scopes**:
-  - **Implementation-level theorems**: proved in Lean over the actual
-    Aeneas-extracted kernel (`thermostat_kernel.transition`,
-    `H5iAppLib.Run`, `H5iAppVeil.kernelRTS`, `StutterRefines`, `Lentil`).
-  - **Model-level finite-state checks**: explored exhaustively via Veil's
-    explicit-state model checker (`#model_check`) and Lasso temporal checker
-    (`#temporal_check`) over abstract finite-state DSL models.
-  - **Runtime replay**: Veil counterexample traces can be replayed against real
-    Rust implementations (`FlashStore`, `DeviceEngine`, `MemoryEngine`) via
-    `h5i app trace-replay`. For liveness lasso traces on `DeviceEngine`, replay
-    checks closure over the projected observable state
-    `(snapshot, notify_pending, actuator_motor_on)` (`ProjectedCycleReproduced`).
+    (`Proofs.lean`).
+- **Explicit distinction between verification scopes** (recorded as
+  `declared_scope` in reports; for Lean theorems this is declared in
+  `h5i-app.toml`, while the gate mechanically checks `ci.isTheorem`, standard
+  axioms only, optional `Kernel.isDefEq` against `statement`, and Veil's
+  structured exhaustive search verdicts):
+  - **`kernel_implementation_level`**: proved in Lean purely over the actual
+    Aeneas-extracted Rust kernel (`thermostat_kernel.transition`,
+    `H5iAppLib.Run`, `H5iAppVeil.kernelRTS`).
+  - **`compositional`**: proved in Lean over the actual Aeneas-extracted Rust
+    kernel composed with a handwritten runtime / environment transition model
+    (for example `ThermostatTemporal.ExtractedBridge.FirmwareStep`); does **not**
+    establish refinement of the full Rust firmware runtime (`firmware/src/main.rs`,
+    `DeviceEngine`, `FlashStore`).
+  - **`model_level`**: explored exhaustively via Veil's explicit-state model
+    checker (`Veil.ModelChecker.Concrete.findReachableThen`) and Lasso temporal
+    checker (`Veil.LivenessMC.checkAllWithProgress`) over handwritten
+    finite-state Veil DSL models.
+  - **`unspecified`**: default for Lean theorems whose manifest entry does not
+    declare a scope.
+- **Gate trust boundary**:
+  - `H5iAppVeil/Gate.lean` is a type-checked Lean module invoked by
+    `h5i app temporal-check` with a per-run delimiter tag to avoid accidental
+    collision with normal Lean/Veil output in local developer and trusted-CI
+    workflows.
+  - Because the generated gate runs in the same Lean process and filesystem as
+    imported proof modules, the tag is **not** a security boundary against
+    arbitrary untrusted Lean metaprograms. Untrusted submission harnesses must
+    own and isolate the specification, gate, and Lake configuration externally.
+- **Runtime replay**: Veil counterexample traces can be replayed against real
+  Rust implementations (`FlashStore`, `DeviceEngine`, `MemoryEngine`) via
+  `h5i app trace-replay`. For liveness lasso traces on `DeviceEngine`, replay
+  checks closure over the 3-field projected observable state
+  `(snapshot, notify_pending, actuator_motor_on)` (`ProjectedCycleReproduced`),
+  not full concrete runtime state (`version`, `seen`, wakers, `Store`).
 
 ## Responsibility Split
 
@@ -54,6 +75,8 @@ model checking inside h5i.
     `timedKernelRTS.reachable`
   - `Refinement.lean`: cross-state stuttering refinement (`StutterRefines`) on
     top of `Veil.RelationalTransitionSystem`
+  - `Gate.lean`: type-checked Lean/Veil verification gate (`checkTheorem`,
+    `runVeilCheck`) invoked by `h5i app temporal-check`
   - `Embedded/FlashStore.lean`: Veil DSL models comparing the current Rust
     `FlashStore` wraparound design (`FlashStorePlain`, discovering 3-bit
     wraparound via `#model_check`) and a proposed modular multi-slot design

@@ -346,16 +346,26 @@ pub enum TemporalCheckKind {
     FiniteTemporalCheck,
 }
 
-/// Scope of a temporal verification obligation: proved over the Aeneas-extracted
-/// implementation vs checked over an abstract finite-state Veil model.
+/// Declared verification scope of a temporal obligation.
+///
+/// For Lean theorems, this scope is **user-declared** in `h5i-app.toml` rather
+/// than mechanically inferred by the gate. The gate mechanically verifies
+/// `ci.isTheorem`, standard axioms only, optional `Kernel.isDefEq` against a
+/// declared `statement`, and Veil's structured finite-state search results.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum VerificationScope {
-    /// Proved in Lean directly over the Aeneas-extracted implementation (`H5iAppLib.Run`).
-    ImplementationLevel,
-    /// Checked or proved over an abstract model (e.g., finite-state Veil DSL model).
-    #[default]
+    /// Proved directly over the Aeneas-extracted Rust kernel (`H5iAppLib.Run`).
+    KernelImplementationLevel,
+    /// Compositional: combines an Aeneas-extracted Rust kernel with a
+    /// handwritten runtime / environment transition model (does not prove
+    /// refinement of the full Rust firmware runtime).
+    Compositional,
+    /// Checked or proved purely over a handwritten abstract model (e.g., Veil DSL).
     ModelLevel,
+    /// Scope not declared in the manifest (default for Lean theorems).
+    #[default]
+    Unspecified,
 }
 
 /// Property-level outcome recorded by `h5i app temporal-check`.
@@ -375,9 +385,11 @@ pub enum TemporalPropertyStatus {
 pub struct TemporalProperty {
     pub name: String,
     pub kind: TemporalCheckKind,
-    /// Whether this obligation verifies the Aeneas-extracted implementation or an abstract model.
-    #[serde(default)]
-    pub scope: VerificationScope,
+    /// Declared scope (`kernel_implementation_level`, `compositional`,
+    /// `model_level`, or `unspecified`). For Lean theorems this reflects the
+    /// manifest declaration rather than a mechanically inferred scope.
+    #[serde(default, alias = "scope")]
+    pub declared_scope: VerificationScope,
     pub status: TemporalPropertyStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,

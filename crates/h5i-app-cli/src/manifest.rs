@@ -168,8 +168,10 @@ pub enum TemporalTheoremSpec {
         /// Optional expected Lean proposition (`Prop`), verified via `Kernel.isDefEq`.
         #[serde(default)]
         statement: Option<String>,
-        /// Verification scope (`implementation_level` or `model_level`).
-        /// Defaults to `implementation_level` for Lean theorems.
+        /// User-declared verification scope (`kernel_implementation_level`,
+        /// `compositional`, `model_level`, or `unspecified`). Defaults to
+        /// `unspecified` — never assumed to be implementation-level unless
+        /// explicitly declared (and fixed externally in untrusted evaluation).
         #[serde(default)]
         scope: Option<h5i_app_report::VerificationScope>,
     },
@@ -190,18 +192,18 @@ impl TemporalTheoremSpec {
         }
     }
 
-    pub fn scope(&self) -> h5i_app_report::VerificationScope {
+    pub fn declared_scope(&self) -> h5i_app_report::VerificationScope {
         match self {
-            Self::Name(_) => h5i_app_report::VerificationScope::ImplementationLevel,
+            Self::Name(_) => h5i_app_report::VerificationScope::Unspecified,
             Self::Detailed { scope, .. } => {
-                scope.unwrap_or(h5i_app_report::VerificationScope::ImplementationLevel)
+                scope.unwrap_or(h5i_app_report::VerificationScope::Unspecified)
             }
         }
     }
 }
 
-/// One structured Veil finite-state check executed via Veil's Lean API in the
-/// trusted nonce-authenticated gate (`[verification] temporal_checks`).
+/// One structured Veil finite-state check executed via Veil's Lean API
+/// (`H5iAppVeil.Gate.runVeilCheck`) in `[verification] temporal_checks`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TemporalVeilCheckSpec {

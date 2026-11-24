@@ -8,32 +8,38 @@ import H5iAppVeil
 # Optional Veil Temporal Verification for `examples/embedded/thermostat`
 
 Complements the Aeneas safety proofs in `../Proofs.lean` (`transition_total`,
-`inv_reachable`, `interlock`) with both model-level and implementation-level
-temporal logic verification of the multi-task closed loop in
-`firmware/src/main.rs` (`sense`, `actuate`, HTTP admin commands over
-`DeviceEngine`):
+`inv_reachable`, `interlock`) with three explicitly distinguished verification
+scopes:
 
-1. **Model-Level Veil Closed-Loop Checks (`ThermostatClosedLoop`)**:
-   - Finite-state Veil DSL abstraction of the thermostat kernel, `sense` task,
-     and `actuate` task.
+1. **Model-Level Veil Closed-Loop Checks (`ThermostatClosedLoop`, `model_level`)**:
+   - Handwritten finite-state Veil DSL abstraction of the thermostat kernel,
+     `sense` task, and `actuate` task.
    - Exhaustively checks safety invariants via Veil **`#model_check`** and
      temporal liveness / fail-safe properties under Lentil weak fairness (`𝒲ℱ`)
      via Veil's Lasso **`#temporal_check`**.
-2. **Implementation-Level Bridge & Liveness (`ThermostatTemporal.ExtractedBridge`)**:
+2. **Kernel-Implementation-Level Lift (`extracted_thermostat_always_inv`,
+   `kernel_implementation_level`)**:
    - Imports the **actual Aeneas-extracted** `thermostat_kernel.transition`
      (`../generated/ThermostatKernel.lean`) and existing safety proof
      `thermostat_kernel.Proofs.inv_reachable` (`../Proofs.lean`) directly —
      with no manual re-encoding of the thermostat kernel.
    - Lifts `inv_reachable` directly into Lentil's `□ ⌜ Inv ⌝` via
      `H5iAppVeil.lentil_always_of_run_inv`.
-   - Proves `StutterRefines` from the concrete firmware closed-loop transition
-     system (`extractedFirmwareRTS`, executing `thermostat_kernel.transition`)
-     to `thermostatKernelRTS`.
-   - Proves the nontrivial Lentil temporal liveness theorem
-     `extracted_thermostat_overtemp_liveness` directly over the extracted
-     implementation: under weak fairness of `senseReport` and `actuatePoll`,
-     persistent physical overheating (`350 ≤ physTemp.val`) or sensor failure
-     (`sensorFailed = true`) guarantees `◇ □ ⌜ pinHeater = false ⌝`.
+3. **Compositional Kernel + Runtime/Environment Proofs
+   (`extracted_firmware_always_inv`, `extracted_thermostat_overtemp_liveness`,
+   `compositional`)**:
+   - Composes the **actual Aeneas-extracted** `thermostat_kernel.transition`
+     with a **handwritten** firmware/environment transition model (`FirmwareStep`:
+     `senseReport`, atomic `actuatePoll`, `envTemp`, `envSensor`).
+   - Proves `StutterRefines` from `extractedFirmwareRTS` to `thermostatKernelRTS`
+     and the nontrivial Lentil temporal liveness theorem
+     `extracted_thermostat_overtemp_liveness` (`◇ □ ⌜ pinHeater = false ⌝` under
+     weak fairness of `senseReport` and `actuatePoll`).
+   - **Scope boundary**: `FirmwareStep` models the firmware loop by hand (e.g.,
+     `actuatePoll` atomically consumes `notifyPending` and updates `pinHeater`
+     without modeling full async scheduling, `version` wraparound, or flash
+     failures). Refinement of the entire Rust firmware runtime
+     (`firmware/src/main.rs`, `DeviceEngine`, `FlashStore`) is **not** proved here.
 -/
 
 /-! ## 1. Closed-Loop Thermostat + `DeviceEngine` Veil Model (Model-Level) -/
@@ -495,13 +501,17 @@ theorem extracted_firmware_actuator_sync
       | envSensor => exact ih
     · rw [heq]; exact ih
 
-/-- **Implementation-Level Temporal Liveness Theorem**:
-Along any infinite execution of `extractedFirmwareRTS` (running the **actual
-Aeneas-extracted `thermostat_kernel.transition`**), under Lentil weak fairness
-of `senseReport` and `actuatePoll`, if physical temperature persistently
-reaches/exceeds `MAX_TEMP_DC` (`350`) or the TMP108 sensor persistently fails,
-then the physical PD12 heater pin eventually turns off and stays off forever:
-`◇ □ ⌜ pinHeater = false ⌝`. -/
+/-- **Compositional Temporal Liveness Theorem** (`compositional`):
+Composes the **actual Aeneas-extracted `thermostat_kernel.transition`** with the
+handwritten firmware/environment transition model `FirmwareStep`. Under Lentil
+weak fairness of `senseReport` and `actuatePoll`, if physical temperature
+persistently reaches/exceeds `MAX_TEMP_DC` (`350`) or the TMP108 sensor
+persistently fails, then `pinHeater` in `FirmwareState` eventually turns off
+and stays off forever: `◇ □ ⌜ pinHeater = false ⌝`.
+
+Note: this proves liveness of the extracted kernel composed with the
+handwritten `FirmwareStep` runtime/environment model; it does not establish
+refinement of the full Rust firmware runtime (`firmware/src/main.rs`). -/
 theorem extracted_thermostat_overtemp_liveness
     (e : Lentil.exec FirmwareState)
     (hInit : extractedFirmwareRTS.init () (e 0))

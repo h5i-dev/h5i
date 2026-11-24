@@ -5,18 +5,20 @@
 //! - **Veil** (`verse-lab/veil`) owns transition-system model checking
 //!   (`Veil.ModelChecker.Concrete.findReachableThen`), temporal/liveness/fairness
 //!   checking (`Veil.LivenessMC.checkAllWithProgress`), and Lentil temporal logic.
+//! - **H5iAppVeil.Gate** (`crates/h5i-app-veil/proofs/H5iAppVeil/Gate.lean`) is
+//!   the type-checked Lean module implementing theorem gating (`ci.isTheorem`,
+//!   standard axioms only, optional `Kernel.isDefEq` against `statement`) and
+//!   structured Veil model/temporal checker invocation.
 //! - **h5i** owns:
 //!   1. Optional CLI integration (Veil is never required unless opted in;
 //!      dependency resolution is delegated directly to Lake).
-//!   2. A single trusted, nonce-authenticated Lean gate (`.lake/h5i/TemporalGate.lean`,
-//!      mirroring `check.rs::gate()`):
-//!      - Verifies every declared `temporal_theorems` obligation is an actual Lean
-//!        **theorem** (`ci.isTheorem`), depends only on Lean's three standard axioms
-//!        (`propext`, `Classical.choice`, `Quot.sound`), and matches its declared
-//!        `statement` via `Kernel.isDefEq` when provided.
-//!      - Executes every declared `temporal_checks` obligation directly through
-//!        Veil's structured Lean API and inspects the returned structured JSON
-//!        (`no_violation_found` + `explored_all_reachable_states` / `verdict == "holds"`).
+//!   2. Generating a minimal `.lake/h5i/TemporalGate.lean` driver that imports
+//!      `H5iAppVeil.Gate` and the project's built targets, runs each declared
+//!      obligation with a per-run delimiter tag, and parses the structured JSON.
+//!      Note: the delimiter tag prevents accidental collision with normal
+//!      Lean/Veil log output in developer and trusted-CI workflows; it is **not**
+//!      a security boundary against arbitrary untrusted Lean metaprograms running
+//!      in the same process/filesystem.
 //!   3. Strict counterexample & projected-cycle replay directly against the
 //!      unmodified Rust implementations (`FlashStore`, `DeviceEngine`).
 
@@ -243,14 +245,17 @@ pub fn temporal_check(
 }
 
 /* -------------------------------------------------------------------------- */
-/* Nonce-Authenticated Lean / Veil Gate                                       */
+/* Structured Lean / Veil Gate Driver (delegates to H5iAppVeil.Gate)          */
 /* -------------------------------------------------------------------------- */
 
 fn lean_str(s: &str) -> String {
     serde_json::to_string(s).expect("string serializes as JSON string literal")
 }
 
-fn gate_nonce() -> String {
+/// Per-run delimiter tag to distinguish gate JSON lines from normal Lean/Veil
+/// log output in developer and trusted-CI workflows. Not a security boundary
+/// against untrusted Lean metaprograms running in the same process/filesystem.
+fn gate_run_tag() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -266,189 +271,30 @@ fn gate_nonce() -> String {
     format!("{x:016x}")
 }
 
-/// Generate `.lake/h5i/TemporalGate.lean` after `lake build` with a fresh `nonce`.
+/// Generate a thin `.lake/h5i/TemporalGate.lean` driver invoking the
+/// type-checked `H5iAppVeil.Gate` module on each declared obligation.
 ///
-/// The gate imports `Lean`, `Veil` (so Lake/Lean itself enforces Veil is a real
-/// dependency without inspecting `lakefile.lean`), and the built `targets`. It:
-/// 1. Checks every `temporal_theorems` entry is an actual Lean theorem
-///    (`ci.isTheorem`), depends only on `STANDARD_AXIOMS`, and matches its
-///    declared `statement` via `Kernel.isDefEq` when provided.
-/// 2. Runs every `temporal_checks` entry directly through Veil's structured
-///    Lean API (`Veil.ModelChecker.Concrete.findReachableThen` for safety,
-///    `Veil.LivenessMC.checkAllWithProgress` for temporal/liveness) and emits
-///    structured JSON tagged with `nonce`.
+/// Importing `H5iAppVeil.Gate` (which imports `Veil`) lets Lake/Lean itself
+/// enforce that Veil and `H5iAppVeil` are real dependencies of the project.
 fn temporal_gate_program(
     targets: &[String],
     theorems: &[TemporalTheoremSpec],
     checks: &[TemporalVeilCheckSpec],
-    nonce: &str,
+    run_tag: &str,
 ) -> String {
-    let mut s = String::from("import Lean\nimport Veil\n");
+    let mut s = String::from("import H5iAppVeil.Gate\n");
     for t in targets {
         s.push_str(&format!("import {t}\n"));
     }
 
-    let thm_tag = format!("H5I-TEMPORAL-THM-{nonce}");
-    let veil_tag = format!("H5I-TEMPORAL-VEIL-{nonce}");
-    let done_tag = format!("H5I-TEMPORAL-DONE-{nonce}");
+    let thm_tag = format!("H5I-TEMPORAL-THM-{run_tag}");
+    let veil_tag = format!("H5I-TEMPORAL-VEIL-{run_tag}");
+    let done_tag = format!("H5I-TEMPORAL-DONE-{run_tag}");
     let std_list = STANDARD_AXIOMS
         .iter()
         .map(|a| format!("`{a}"))
         .collect::<Vec<_>>()
         .join(", ");
-
-    s.push_str(
-        r#"
-open Lean Elab Command in
-private def h5iCheckTheorem (declName : Name) (stmt? : Option String) (std : List Name) (tag : String) :
-    CommandElabM Unit := do
-  let env ← getEnv
-  let emit (status : String) (extra : List (String × Json) := []) : CommandElabM Unit := do
-    let row := Json.mkObj ([("name", toJson declName.toString), ("status", toJson status)] ++ extra)
-    liftIO <| IO.println (tag ++ " " ++ row.compress)
-  match env.find? declName with
-  | none => emit "missing" [("detail", toJson "declaration not found in built environment")]
-  | some ci =>
-    if !ci.isTheorem then
-      let kind := match ci with
-        | .defnInfo _ => "def"
-        | .axiomInfo _ => "axiom"
-        | .opaqueInfo _ => "opaque"
-        | .inductInfo _ => "inductive"
-        | .ctorInfo _ => "constructor"
-        | .recInfo _ => "recursor"
-        | .quotInfo _ => "quot"
-        | .thmInfo _ => "theorem"
-      emit "not_theorem" [("detail", toJson s!"expected a theorem, found `{kind}`")]
-      return
-    let axs ← liftTermElabM (Lean.collectAxioms declName)
-    let extraAxs := axs.filter (fun a => !std.contains a)
-    unless extraAxs.isEmpty do
-      emit "bad_axioms" [
-        ("axioms", toJson (axs.toList.map Name.toString)),
-        ("detail", toJson s!"disallowed axioms: {String.intercalate ", " (extraAxs.toList.map Name.toString)}")
-      ]
-      return
-    match stmt? with
-    | none =>
-      emit "ok" [("axioms", toJson (axs.toList.map Name.toString))]
-    | some stmtSrc =>
-      match Parser.runParserCategory env `term stmtSrc with
-      | .error err =>
-        emit "statement_error" [("detail", toJson s!"failed to parse expected statement: {err}")]
-      | .ok stx =>
-        let verdict ← liftTermElabM do
-          try
-            let expected ← Term.elabTerm stx (some (.sort .zero))
-            Term.synthesizeSyntheticMVarsNoPostponing
-            let expected ← instantiateMVars expected
-            if expected.hasMVar then
-              return ("statement_error", s!"expected statement contains unresolved metavariables: {(← Meta.ppExpr expected).pretty}")
-            match Kernel.isDefEq env {} expected ci.type with
-            | .ok true => return ("ok", "")
-            | _ =>
-              let expStr := (← Meta.ppExpr expected).pretty
-              let gotStr := (← Meta.ppExpr ci.type).pretty
-              return ("statement_mismatch", s!"expected `{expStr}`, found `{gotStr}`")
-          catch ex =>
-            return ("statement_error", ← ex.toMessageData.toString)
-        if verdict.1 == "ok" then
-          emit "ok" [("axioms", toJson (axs.toList.map Name.toString))]
-        else
-          emit verdict.1 [("detail", toJson verdict.2)]
-"#,
-    );
-
-    if !checks.is_empty() {
-        s.push_str(
-            r#"
-open Lean Elab Command in
-private def h5iRunVeilCheck (label : String) (modName : Name) (propName? : Option Name)
-    (instSrc theorySrc : String) (tag : String) : CommandElabM Unit := withScope id do
-  let env ← getEnv
-  let emitErr (msg : String) : CommandElabM Unit := do
-    let row := Json.mkObj [("name", toJson label), ("status", toJson "failed"), ("detail", toJson msg)]
-    liftIO <| IO.println (tag ++ " " ++ row.compress)
-  let some em ← Veil.getExecutableModule? modName
-    | emitErr s!"module `{modName}` has no Veil executable definitions (add #gen_executable or #model_check)"
-      return
-  let .ok instStx := Parser.runParserCategory env `term instSrc
-    | emitErr s!"failed to parse instantiation: {instSrc}"
-      return
-  let .ok theoryStx := Parser.runParserCategory env `term theorySrc
-    | emitErr s!"failed to parse theory: {theorySrc}"
-      return
-  let instTerm : Term := ⟨instStx⟩
-  let theoryTerm : Term := ⟨theoryStx⟩
-  let modIdent := mkIdent modName
-  let qName (n : Name) := mkIdent (em.name ++ n)
-  let instId := mkIdent `inst
-  let thId := mkIdent `th
-  let instSortArgs ← em.instantiationFields.mapM fun f => `($instId.$(mkIdent f))
-  let mkAssump (n : Name) : CommandElabM Term :=
-    `(Veil.ModelChecker.TheoryProperty.mk $(quote n) (fun th => $(qName n) th))
-  let mkInv (n : Name) : CommandElabM Term :=
-    `(Veil.ModelChecker.SafetyProperty.mk $(quote n) (fun th st => $(qName n) th st))
-  let assumpList ← `([$((← em.assumptions.mapM mkAssump)),*])
-  let constraintList ← `([$((← em.stateConstraints.mapM mkInv)),*])
-  let sysTerm ← `(letI : Veil.LogSwitch := ⟨false⟩; $(qName `enumerableTransitionSystem) $instSortArgs* $thId)
-  let pickTerm ← `(fun _ => letI : Veil.LogSwitch := ⟨true⟩; $(qName `pickSource) $instSortArgs* $thId)
-  let earlyTerm ← `([Veil.ModelChecker.EarlyTerminationCondition.foundViolatingState,
-                     Veil.ModelChecker.EarlyTerminationCondition.assertionFailed,
-                     Veil.ModelChecker.EarlyTerminationCondition.deadlockOccurred])
-  let evalTerm ← match propName? with
-    | none =>
-      let invList ← `([$((← em.invariants.mapM mkInv)),*])
-      let termProp ← match em.terminations[0]? with
-        | some t => mkInv t
-        | none => `(default)
-      `(veil_dsimp_field_reads% (
-          let $instId : $(qName `Instantiation) := __veil_instantiation_of% $modIdent $instTerm
-          let $thId : $(qName `Theory) $instSortArgs* := $theoryTerm
-          show IO Unit from do
-            let sp : Veil.ModelChecker.SearchParameters _ _ := {
-              assumptions := $assumpList,
-              invariants := $invList,
-              terminating := $termProp,
-              stateConstraints := $constraintList,
-              earlyTerminationConditions := $earlyTerm
-            }
-            let tk ← IO.CancelToken.new
-            let json : Lean.Json ← Veil.ModelChecker.Concrete.findReachableThen
-              (σₕ := UInt64) (ShardOf := fun v => Std.HashMap UInt64 v)
-              $sysTerm $pickTerm sp none 0 tk (fun res => (pure (Lean.toJson res) : IO Lean.Json))
-            let row := Lean.Json.mkObj [("name", Lean.toJson $(quote label)), ("kind", Lean.toJson "safety"), ("veil", json)]
-            IO.println ($(quote tag) ++ " " ++ row.compress)))
-    | some propName =>
-      let astId := qName (Veil.toTemporalAstName propName)
-      `(veil_dsimp_field_reads% (
-          let $instId : $(qName `Instantiation) := __veil_instantiation_of% $modIdent $instTerm
-          let $thId : $(qName `Theory) $instSortArgs* := $theoryTerm
-          show IO Unit from do
-            let sp : Veil.ModelChecker.SearchParameters _ _ := {
-              assumptions := $assumpList,
-              invariants := [],
-              terminating := default,
-              stateConstraints := $constraintList,
-              earlyTerminationConditions := $earlyTerm
-            }
-            let p := $astId
-              ($(qName `Theory) $instSortArgs*)
-              ($(qName `State) ($(qName `FieldConcreteType) $instSortArgs*))
-              $instSortArgs*
-              ($(qName `FieldConcreteType) $instSortArgs*)
-            let tk ← IO.CancelToken.new
-            let json ← Veil.LivenessMC.checkAllWithProgress $sysTerm sp [p] 0 tk .fair
-            let row := Lean.Json.mkObj [("name", Lean.toJson $(quote label)), ("kind", Lean.toJson "temporal"), ("veil", json)]
-            IO.println ($(quote tag) ++ " " ++ row.compress)))
-  try
-    let callCmd ← `(command| open Veil $(mkIdent em.name) in #eval $evalTerm)
-    elabCommand callCmd
-  catch ex =>
-    emitErr (← ex.toMessageData.toString)
-"#,
-        );
-    }
 
     for thm in theorems {
         let stmt_opt = match thm.statement() {
@@ -456,7 +302,7 @@ private def h5iRunVeilCheck (label : String) (modName : Name) (propName? : Optio
             None => "none".to_string(),
         };
         s.push_str(&format!(
-            "\n#eval h5iCheckTheorem `{} {} [{std_list}] {}\n",
+            "\n#eval H5iAppVeil.Gate.checkTheorem `{} {} [{std_list}] {}\n",
             thm.name(),
             stmt_opt,
             lean_str(&thm_tag)
@@ -473,7 +319,7 @@ private def h5iRunVeilCheck (label : String) (modName : Name) (propName? : Optio
             _ => "none".to_string(),
         };
         s.push_str(&format!(
-            "\n#eval h5iRunVeilCheck {} `{mod_name} {prop_opt} {} {} {}\n",
+            "\n#eval H5iAppVeil.Gate.runVeilCheck {} `{mod_name} {prop_opt} {} {} {}\n",
             lean_str(&chk.name),
             lean_str(&chk.instantiation),
             lean_str(&chk.theory),
@@ -524,7 +370,7 @@ fn classify_veil_json(
         return TemporalProperty {
             name: chk.name.clone(),
             kind,
-            scope: VerificationScope::ModelLevel,
+            declared_scope: VerificationScope::ModelLevel,
             status: TemporalPropertyStatus::Failed,
             detail: row.detail.clone(),
         };
@@ -533,7 +379,7 @@ fn classify_veil_json(
         return TemporalProperty {
             name: chk.name.clone(),
             kind,
-            scope: VerificationScope::ModelLevel,
+            declared_scope: VerificationScope::ModelLevel,
             status: TemporalPropertyStatus::Failed,
             detail: Some("Veil gate returned no structured result".into()),
         };
@@ -554,7 +400,7 @@ fn classify_veil_json(
                 TemporalProperty {
                     name: chk.name.clone(),
                     kind,
-                    scope: VerificationScope::ModelLevel,
+                    declared_scope: VerificationScope::ModelLevel,
                     status: TemporalPropertyStatus::Passed,
                     detail: Some(format!(
                         "explored {explored} reachable states (complete exhaustive search)"
@@ -564,7 +410,7 @@ fn classify_veil_json(
                 TemporalProperty {
                     name: chk.name.clone(),
                     kind,
-                    scope: VerificationScope::ModelLevel,
+                    declared_scope: VerificationScope::ModelLevel,
                     status: TemporalPropertyStatus::Unknown,
                     detail: Some(format!(
                         "search did not complete exhaustively (termination_reason={term_kind:?}, explored={explored})"
@@ -585,7 +431,7 @@ fn classify_veil_json(
                 TemporalProperty {
                     name: chk.name.clone(),
                     kind,
-                    scope: VerificationScope::ModelLevel,
+                    declared_scope: VerificationScope::ModelLevel,
                     status: TemporalPropertyStatus::Passed,
                     detail: Some(format!(
                         "Lasso liveness holds (explored {explored} product states)"
@@ -595,7 +441,7 @@ fn classify_veil_json(
                 TemporalProperty {
                     name: chk.name.clone(),
                     kind,
-                    scope: VerificationScope::ModelLevel,
+                    declared_scope: VerificationScope::ModelLevel,
                     status: TemporalPropertyStatus::Unknown,
                     detail: Some(format!(
                         "inconclusive liveness result (properties_checked={checked}, verdict={verdict:?})"
@@ -615,7 +461,7 @@ fn classify_veil_json(
             TemporalProperty {
                 name: chk.name.clone(),
                 kind,
-                scope: VerificationScope::ModelLevel,
+                declared_scope: VerificationScope::ModelLevel,
                 status: TemporalPropertyStatus::Counterexample,
                 detail: Some(format!("Veil found {vkind} (violates: {violates})")),
             }
@@ -623,7 +469,7 @@ fn classify_veil_json(
         (_, other) => TemporalProperty {
             name: chk.name.clone(),
             kind,
-            scope: VerificationScope::ModelLevel,
+            declared_scope: VerificationScope::ModelLevel,
             status: TemporalPropertyStatus::Unknown,
             detail: Some(format!("Veil returned result={other:?}")),
         },
@@ -632,14 +478,14 @@ fn classify_veil_json(
 
 fn parse_temporal_gate(
     output: &str,
-    nonce: &str,
+    run_tag: &str,
     success: bool,
     theorems: &[TemporalTheoremSpec],
     checks: &[TemporalVeilCheckSpec],
 ) -> Result<Vec<TemporalProperty>> {
-    let thm_prefix = format!("H5I-TEMPORAL-THM-{nonce} ");
-    let veil_prefix = format!("H5I-TEMPORAL-VEIL-{nonce} ");
-    let done_marker = format!("H5I-TEMPORAL-DONE-{nonce}");
+    let thm_prefix = format!("H5I-TEMPORAL-THM-{run_tag} ");
+    let veil_prefix = format!("H5I-TEMPORAL-VEIL-{run_tag} ");
+    let done_marker = format!("H5I-TEMPORAL-DONE-{run_tag}");
 
     let mut thm_rows: std::collections::BTreeMap<String, GateTheoremRow> =
         std::collections::BTreeMap::new();
@@ -673,7 +519,7 @@ fn parse_temporal_gate(
 
     for thm in theorems {
         let name = thm.name();
-        let scope = thm.scope();
+        let declared_scope = thm.declared_scope();
         match thm_rows.get(name) {
             Some(row) if row.status == "ok" => {
                 let ax_desc = if row.axioms.is_empty() {
@@ -689,7 +535,7 @@ fn parse_temporal_gate(
                 properties.push(TemporalProperty {
                     name: name.to_string(),
                     kind: TemporalCheckKind::ProvenTheorem,
-                    scope,
+                    declared_scope,
                     status: TemporalPropertyStatus::Passed,
                     detail: Some(format!("theorem verified: {ax_desc}{stmt_desc}")),
                 });
@@ -698,7 +544,7 @@ fn parse_temporal_gate(
                 properties.push(TemporalProperty {
                     name: name.to_string(),
                     kind: TemporalCheckKind::ProvenTheorem,
-                    scope,
+                    declared_scope,
                     status: TemporalPropertyStatus::Failed,
                     detail: Some(format!(
                         "{}: {}",
@@ -711,7 +557,7 @@ fn parse_temporal_gate(
                 properties.push(TemporalProperty {
                     name: name.to_string(),
                     kind: TemporalCheckKind::ProvenTheorem,
-                    scope,
+                    declared_scope,
                     status: TemporalPropertyStatus::Unchecked,
                     detail: Some("gate did not report theorem".into()),
                 });
@@ -734,7 +580,7 @@ fn parse_temporal_gate(
                 properties.push(TemporalProperty {
                     name: chk.name.clone(),
                     kind,
-                    scope: VerificationScope::ModelLevel,
+                    declared_scope: VerificationScope::ModelLevel,
                     status: TemporalPropertyStatus::Unchecked,
                     detail: Some("gate did not report Veil check".into()),
                 });
@@ -752,11 +598,11 @@ fn run_temporal_gate(
     checks: &[TemporalVeilCheckSpec],
     out: &Out,
 ) -> Result<Vec<TemporalProperty>> {
-    let nonce = gate_nonce();
+    let run_tag = gate_run_tag();
     let gate_dir = tdir.join(".lake/h5i");
     std::fs::create_dir_all(&gate_dir)?;
     let gate_file = gate_dir.join("TemporalGate.lean");
-    let src = temporal_gate_program(targets, theorems, checks, &nonce);
+    let src = temporal_gate_program(targets, theorems, checks, &run_tag);
     std::fs::write(&gate_file, src)?;
 
     out.note(&format!("$ lake env lean {}", gate_file.display()));
@@ -771,7 +617,7 @@ fn run_temporal_gate(
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    parse_temporal_gate(&combined, &nonce, output.status.success(), theorems, checks)
+    parse_temporal_gate(&combined, &run_tag, output.status.success(), theorems, checks)
 }
 
 fn run_veil_backend(
@@ -871,7 +717,7 @@ fn run_veil_backend(
         });
     }
 
-    // 2. Run the trusted nonce-authenticated Lean/Veil gate after `lake build`.
+    // 2. Run the structured Lean/Veil gate (`H5iAppVeil.Gate`) after `lake build`.
     let properties = crate::report::step(record, "temporal_gate", out, |log| {
         run_temporal_gate(&tdir, targets, req_theorems, req_checks, log)
     })?;
@@ -880,17 +726,31 @@ fn run_veil_backend(
         .iter()
         .filter(|pr| pr.status == TemporalPropertyStatus::Passed)
         .count();
-    let impl_passed = properties
+    let kernel_passed = properties
         .iter()
         .filter(|pr| {
-            pr.scope == VerificationScope::ImplementationLevel
+            pr.declared_scope == VerificationScope::KernelImplementationLevel
+                && pr.status == TemporalPropertyStatus::Passed
+        })
+        .count();
+    let comp_passed = properties
+        .iter()
+        .filter(|pr| {
+            pr.declared_scope == VerificationScope::Compositional
                 && pr.status == TemporalPropertyStatus::Passed
         })
         .count();
     let model_passed = properties
         .iter()
         .filter(|pr| {
-            pr.scope == VerificationScope::ModelLevel
+            pr.declared_scope == VerificationScope::ModelLevel
+                && pr.status == TemporalPropertyStatus::Passed
+        })
+        .count();
+    let unspec_passed = properties
+        .iter()
+        .filter(|pr| {
+            pr.declared_scope == VerificationScope::Unspecified
                 && pr.status == TemporalPropertyStatus::Passed
         })
         .count();
@@ -919,7 +779,7 @@ fn run_veil_backend(
     };
 
     let detail = Some(format!(
-        "{passed_count}/{} verification obligations passed ({impl_passed} implementation-level, {model_passed} model-level) in {}",
+        "{passed_count}/{} verification obligations passed (declared scopes: {kernel_passed} kernel-impl, {comp_passed} compositional, {model_passed} model, {unspec_passed} unspecified) in {}",
         properties.len(),
         p.manifest.verification.temporal_dir
     ));
@@ -1335,22 +1195,36 @@ mod tests {
     }
 
     #[test]
-    fn gate_parser_rejects_def_and_statement_mismatch_and_forged_nonce() {
+    fn gate_program_delegates_to_type_checked_h5i_app_veil_gate_module() {
+        let thms = vec![TemporalTheoremSpec::Name("Demo.thm".into())];
+        let checks = vec![TemporalVeilCheckSpec {
+            name: "Demo#model_check".into(),
+            module: "Demo".into(),
+            kind: "safety".into(),
+            property: None,
+            instantiation: "{}".into(),
+            theory: "{}".into(),
+        }];
+        let src = temporal_gate_program(&["Demo".into()], &thms, &checks, "tag123");
+        assert!(src.contains("import H5iAppVeil.Gate"));
+        assert!(src.contains("#eval H5iAppVeil.Gate.checkTheorem `Demo.thm"));
+        assert!(src.contains("#eval H5iAppVeil.Gate.runVeilCheck \"Demo#model_check\" `Demo none"));
+        assert_eq!(thms[0].declared_scope(), VerificationScope::Unspecified);
+    }
+
+    #[test]
+    fn gate_parser_rejects_def_and_statement_mismatch_and_mismatched_tag() {
         let theorems = vec![
-            TemporalTheoremSpec::Detailed {
-                name: "Demo.fake_def".into(),
-                statement: None,
-                scope: Some(VerificationScope::ImplementationLevel),
-            },
+            TemporalTheoremSpec::Name("Demo.fake_def".into()),
             TemporalTheoremSpec::Detailed {
                 name: "Demo.wrong_prop".into(),
                 statement: Some("∀ n : Nat, n = n".into()),
-                scope: Some(VerificationScope::ImplementationLevel),
+                scope: Some(VerificationScope::Compositional),
             },
             TemporalTheoremSpec::Detailed {
                 name: "Demo.real_thm".into(),
                 statement: Some("∀ n : Nat, n = n".into()),
-                scope: Some(VerificationScope::ImplementationLevel),
+                scope: Some(VerificationScope::KernelImplementationLevel),
             },
         ];
         let checks = vec![
@@ -1371,33 +1245,35 @@ mod tests {
                 theory: "{}".into(),
             },
         ];
-        let nonce = "deadbeef01234567";
-        // Include a forged line with a different nonce (must be ignored).
+        let run_tag = "deadbeef01234567";
+        // Lines with a different delimiter tag must be ignored.
         let output = format!(
-            "H5I-TEMPORAL-THM-forged0000000000 {{\"name\":\"Demo.fake_def\",\"status\":\"ok\",\"axioms\":[]}}\n\
-             H5I-TEMPORAL-THM-{nonce} {{\"name\":\"Demo.fake_def\",\"status\":\"not_theorem\",\"detail\":\"expected a theorem, found `def`\"}}\n\
-             H5I-TEMPORAL-THM-{nonce} {{\"name\":\"Demo.wrong_prop\",\"status\":\"statement_mismatch\",\"detail\":\"expected `∀ n, n = n`, found `True`\"}}\n\
-             H5I-TEMPORAL-THM-{nonce} {{\"name\":\"Demo.real_thm\",\"status\":\"ok\",\"axioms\":[\"propext\"]}}\n\
-             H5I-TEMPORAL-VEIL-{nonce} {{\"name\":\"Demo#model_check\",\"kind\":\"safety\",\"veil\":{{\"result\":\"no_violation_found\",\"explored_states\":576,\"termination_reason\":{{\"kind\":\"explored_all_reachable_states\"}}}}}}\n\
-             H5I-TEMPORAL-VEIL-{nonce} {{\"name\":\"live_prop\",\"kind\":\"temporal\",\"veil\":{{\"result\":\"no_violation_found\",\"properties_checked\":1,\"explored_states\":1152,\"timing\":{{\"properties\":[{{\"property\":\"live_prop\",\"verdict\":\"holds\"}}]}}}}}}\n\
-             H5I-TEMPORAL-DONE-{nonce}\n"
+            "H5I-TEMPORAL-THM-other00000000000 {{\"name\":\"Demo.fake_def\",\"status\":\"ok\",\"axioms\":[]}}\n\
+             H5I-TEMPORAL-THM-{run_tag} {{\"name\":\"Demo.fake_def\",\"status\":\"not_theorem\",\"detail\":\"expected a theorem, found `def`\"}}\n\
+             H5I-TEMPORAL-THM-{run_tag} {{\"name\":\"Demo.wrong_prop\",\"status\":\"statement_mismatch\",\"detail\":\"expected `∀ n, n = n`, found `True`\"}}\n\
+             H5I-TEMPORAL-THM-{run_tag} {{\"name\":\"Demo.real_thm\",\"status\":\"ok\",\"axioms\":[\"propext\"]}}\n\
+             H5I-TEMPORAL-VEIL-{run_tag} {{\"name\":\"Demo#model_check\",\"kind\":\"safety\",\"veil\":{{\"result\":\"no_violation_found\",\"explored_states\":576,\"termination_reason\":{{\"kind\":\"explored_all_reachable_states\"}}}}}}\n\
+             H5I-TEMPORAL-VEIL-{run_tag} {{\"name\":\"live_prop\",\"kind\":\"temporal\",\"veil\":{{\"result\":\"no_violation_found\",\"properties_checked\":1,\"explored_states\":1152,\"timing\":{{\"properties\":[{{\"property\":\"live_prop\",\"verdict\":\"holds\"}}]}}}}}}\n\
+             H5I-TEMPORAL-DONE-{run_tag}\n"
         );
-        let props = parse_temporal_gate(&output, nonce, true, &theorems, &checks).unwrap();
+        let props = parse_temporal_gate(&output, run_tag, true, &theorems, &checks).unwrap();
         assert_eq!(props.len(), 5);
         assert_eq!(props[0].status, TemporalPropertyStatus::Failed);
+        assert_eq!(props[0].declared_scope, VerificationScope::Unspecified);
         assert!(props[0].detail.as_deref().unwrap().contains("not_theorem"));
         assert_eq!(props[1].status, TemporalPropertyStatus::Failed);
+        assert_eq!(props[1].declared_scope, VerificationScope::Compositional);
         assert!(props[1].detail.as_deref().unwrap().contains("statement_mismatch"));
         assert_eq!(props[2].status, TemporalPropertyStatus::Passed);
-        assert_eq!(props[2].scope, VerificationScope::ImplementationLevel);
+        assert_eq!(props[2].declared_scope, VerificationScope::KernelImplementationLevel);
         assert_eq!(props[3].status, TemporalPropertyStatus::Passed);
-        assert_eq!(props[3].scope, VerificationScope::ModelLevel);
+        assert_eq!(props[3].declared_scope, VerificationScope::ModelLevel);
         assert_eq!(props[4].status, TemporalPropertyStatus::Passed);
-        assert_eq!(props[4].scope, VerificationScope::ModelLevel);
+        assert_eq!(props[4].declared_scope, VerificationScope::ModelLevel);
 
         // Missing DONE marker must fail even if exit status is true.
-        let missing_done = output.replace(&format!("H5I-TEMPORAL-DONE-{nonce}"), "");
-        assert!(parse_temporal_gate(&missing_done, nonce, true, &theorems, &checks).is_err());
+        let missing_done = output.replace(&format!("H5I-TEMPORAL-DONE-{run_tag}"), "");
+        assert!(parse_temporal_gate(&missing_done, run_tag, true, &theorems, &checks).is_err());
     }
 
     #[test]

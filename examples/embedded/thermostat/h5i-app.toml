@@ -37,15 +37,17 @@ temporal_backend = "veil"
 temporal_dir = "proofs/temporal"
 temporal_targets = ["ThermostatTemporal"]
 
-# Implementation-level Lean theorems directly over the Aeneas-extracted
-# `thermostat_kernel.transition` and `H5iAppLib.Run` (`Proofs.inv_reachable`).
-# Each theorem is checked by the nonce-authenticated gate for:
+# Lean theorems checked by `H5iAppVeil.Gate.checkTheorem` for:
 #   1. `ci.isTheorem` (rejects `def`),
 #   2. standard axioms only, and
 #   3. `Kernel.isDefEq` against the declared `statement`.
+# `scope` is a user-declared classification recorded in reports:
+#   - `kernel_implementation_level`: purely over the Aeneas-extracted Rust kernel
+#   - `compositional`: extracted kernel + handwritten runtime/environment model
+#   - `model_level`: purely over a handwritten abstract Veil model
 [[verification.temporal_theorems]]
 name = "ThermostatTemporal.ExtractedBridge.extracted_thermostat_always_inv"
-scope = "implementation_level"
+scope = "kernel_implementation_level"
 statement = """
 ∀ (e : Lentil.exec thermostat_kernel.Snapshot),
   ThermostatTemporal.ExtractedBridge.thermostatKernelRTS.init () (e 0) →
@@ -55,7 +57,7 @@ statement = """
 
 [[verification.temporal_theorems]]
 name = "ThermostatTemporal.ExtractedBridge.extracted_firmware_always_inv"
-scope = "implementation_level"
+scope = "compositional"
 statement = """
 ∀ (e : Lentil.exec ThermostatTemporal.ExtractedBridge.FirmwareState),
   ThermostatTemporal.ExtractedBridge.extractedFirmwareRTS.init () (e 0) →
@@ -65,7 +67,7 @@ statement = """
 
 [[verification.temporal_theorems]]
 name = "ThermostatTemporal.ExtractedBridge.extracted_thermostat_overtemp_liveness"
-scope = "implementation_level"
+scope = "compositional"
 statement = """
 ∀ (e : Lentil.exec ThermostatTemporal.ExtractedBridge.FirmwareState),
   ThermostatTemporal.ExtractedBridge.extractedFirmwareRTS.init () (e 0) →
@@ -76,7 +78,7 @@ statement = """
   Lentil.eventually (Lentil.always (Lentil.state_pred (fun fs => fs.pinHeater = false))) e 0
 """
 
-# Model-level exhaustive Veil checks invoked directly via Veil's structured Lean API.
+# Model-level exhaustive Veil checks executed via `H5iAppVeil.Gate.runVeilCheck`.
 [[verification.temporal_checks]]
 name = "ThermostatClosedLoop#model_check"
 module = "ThermostatClosedLoop"
