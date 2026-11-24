@@ -687,24 +687,21 @@ pub fn replay_real_device_engine_lasso<const LATCHED: bool>(
 mod tests {
     use super::*;
 
-    /// Replays the Veil-discovered sequence-wraparound counterexample directly
-    /// against the **real, unmodified** `h5i_app_embedded::store::FlashStore`.
+    /// Replays the Veil-discovered sequence-wraparound trace (`u32::MAX -> 0`)
+    /// directly against the **production** `h5i_app_embedded::store::FlashStore`.
+    /// With modular sequence ordering (`store_core::seq_newer`), durability is
+    /// now preserved across wraparound: `Save(2)` at `seq = 0` is recovered.
     #[test]
-    fn real_flash_store_reproduces_u32_wraparound_durability_bug() {
-        // Seed region 0 with valid record (seq = u32::MAX, val = 1).
-        // Real FlashStore::save(&2) computes `u32::MAX.wrapping_add(1) == 0`,
-        // writes record (seq = 0, val = 2) into region 0, and returns `Ok(())`.
-        // On reboot, real FlashStore::load() compares `0 > u32::MAX` (false!),
-        // so it recovers OLD value `Some(1)` instead of acknowledged `Some(2)`!
+    fn real_flash_store_preserves_durability_across_u32_wraparound() {
         let outcome = replay_real_flash_store(
             Some((u32::MAX, 1)),
             &[FlashReplayAction::Save(2), FlashReplayAction::RebootLoad],
         );
         assert!(
-            outcome.durability_violated,
-            "real FlashStore MUST reproduce the u32 wraparound durability bug: {outcome:?}"
+            !outcome.durability_violated,
+            "fixed production FlashStore MUST preserve durability across u32::MAX -> 0 wraparound: {outcome:?}"
         );
-        assert_eq!(outcome.last_loaded, Some(1));
+        assert_eq!(outcome.last_loaded, Some(2));
     }
 
     /// Replays power cuts mid-write directly against the real `FlashStore`

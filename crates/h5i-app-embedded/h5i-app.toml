@@ -1,0 +1,52 @@
+# Read by `h5i app` (extract, check, prove, mutate, doctor).
+
+[extract]
+crate = "."
+start-from = [
+    "store_core::align",
+    "store_core::record_len",
+    "store_core::layout_ok",
+    "store_core::region_start",
+    "store_core::other_region",
+    "store_core::next_seq",
+    "store_core::seq_newer",
+    "store_core::get_u16_le",
+    "store_core::get_u32_le",
+    "store_core::put_u16_le",
+    "store_core::put_u32_le",
+    "store_core::crc32_byte",
+    "store_core::crc32_range",
+    "store_core::record_crc",
+    "store_core::all_erased",
+    "store_core::payload_matches",
+    "store_core::encode_record",
+    "store_core::parse_header",
+    "store_core::validate_record_crc",
+    "store_core::plan_save",
+    "store_core::pos_after_write",
+    "store_core::scan_init",
+    "store_core::scan_result_pos",
+    "store_core::scan_step",
+]
+
+[check]
+# Must exist and use only standard Lean axioms (every theorem in NorFlash and
+# FlashStoreProofs is gated as well).
+theorems = [
+    "h5i_app_embedded.FlashStoreProofs.seq_newer_next_seq",
+    "h5i_app_embedded.FlashStoreProofs.seq_newer_wraparound_boundary",
+    "h5i_app_embedded.FlashStoreProofs.seq_newer_modular_window",
+    "h5i_app_embedded.FlashStoreProofs.seq_newer_irrefl",
+    "h5i_app_embedded.FlashStoreProofs.seq_newer_asymm",
+    "h5i_app_embedded.FlashStoreProofs.layout_ok_regions_disjoint_and_window",
+    "h5i_app_embedded.FlashStoreProofs.put_get_u16_le_roundtrip",
+    "h5i_app_embedded.FlashStoreProofs.put_get_u32_le_roundtrip",
+    "h5i_app_embedded.FlashStoreProofs.encode_record_roundtrip",
+    "h5i_app_embedded.FlashStoreProofs.plan_save_safe",
+    "h5i_app_embedded.FlashStoreProofs.scan_init_safe",
+    "h5i_app_embedded.FlashStoreProofs.scan_step_safe_and_terminates",
+    "h5i_app_embedded.FlashStoreProofs.save_erase_preserves_active_region",
+    "h5i_app_embedded.FlashStoreProofs.save_write_preserves_committed_record",
+    "h5i_app_embedded.FlashStoreProofs.save_write_ok_durable_and_newer",
+    "h5i_app_embedded.FlashStoreProofs.extracted_flashstore_crash_consistent",
+]

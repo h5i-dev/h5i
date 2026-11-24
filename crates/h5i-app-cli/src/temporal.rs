@@ -1296,7 +1296,7 @@ mod tests {
     }
 
     #[test]
-    fn replays_veil_flash_store_wraparound_json_trace_with_explicit_reboot() {
+    fn replays_veil_flash_store_wraparound_json_trace_and_verifies_fix() {
         let d = tempfile::tempdir().unwrap();
         let trace_path = d.path().join("veil-flash-trace.json");
         let veil_json = serde_json::json!({
@@ -1315,8 +1315,8 @@ mod tests {
         let rep = replay_veil_trace_file(&trace_path, None, false, false, None, false).unwrap();
         assert_eq!(rep.target, ReplayTarget::FlashStore);
         assert_eq!(rep.mode, ReplayMode::RegressionProbe);
-        assert_eq!(rep.verdict, ReplayVerdict::SafetyViolationReproduced);
-        assert!(rep.reproduced_violation);
+        assert_eq!(rep.verdict, ReplayVerdict::NoViolation);
+        assert!(!rep.reproduced_violation);
     }
 
     #[test]
