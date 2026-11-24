@@ -55,8 +55,7 @@ theorem transition_total (a : Device) (s : Snapshot) (c : Command) : ∃ r, tran
     unfold transition
     have := relays_val
     cases c <;> step* <;> scalar_tac
-  obtain ⟨r, hr, -⟩ := (WP.spec_equiv_exists _ _).1 h
-  exact ⟨r, hr⟩
+  exact H5iAppLib.ok_of h
 
 /-- A relay index of 4 or more is refused; it never reaches the array. -/
 theorem set_relay_refused (a : Device) (s : Snapshot) (idx : U8) (on : Bool) (ha : a.admin = true)

@@ -307,8 +307,9 @@ impl Guarantees {
                     let pdetail = prop.detail.as_deref().map(|d| format!(" ({d})")).unwrap_or_default();
                     let _ = writeln!(
                         s,
-                        "    {} [{} / {}]{pdetail}",
+                        "    {} [{} / {} / {}]{pdetail}",
                         prop.name,
+                        word(&prop.scope),
                         word(&prop.kind),
                         word(&prop.status)
                     );

@@ -443,9 +443,16 @@ pub enum DeviceEngineReplayAction {
     CrashAndRestore,
 }
 
-/// Observable runtime state snapshot used to verify concrete lasso cycle closure.
+/// Projected observable runtime state used to check cycle closure during
+/// lasso replay.
+///
+/// **Projection boundary**: compares only `(snapshot, notify_pending,
+/// actuator_motor_on)`. It omits concrete `version` / `seen` counter values,
+/// registered async wakers, and `Store` internals, so equality on this
+/// projection does not by itself prove full concrete state equality or
+/// infinite repeatability under version wraparound.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct DeviceEngineConcreteState {
+pub struct DeviceEngineProjectedState {
     pub snapshot: MotorSnap,
     pub notify_pending: bool,
     pub actuator_motor_on: bool,
@@ -457,20 +464,22 @@ pub struct DeviceEngineLassoOutcome {
     pub prefix_steps: usize,
     pub cycle_steps: usize,
     pub emergency_committed: bool,
-    /// Whether `cycle` closed an identical concrete state across consecutive iterations
-    /// (demonstrating repeatability of `cycle^ω` on the real `DeviceEngine`).
-    pub cycle_closed: bool,
-    /// Whether `ActuatorPoll` actually ran during the cycle (witnessing `𝒲ℱ actuatorPoll`).
+    /// Whether `cycle` closed an identical [`DeviceEngineProjectedState`] across
+    /// two consecutive iterations (checked on the 3-field projection only, not
+    /// full concrete `version`/`seen`/waker/`Store` state).
+    pub projected_cycle_closed: bool,
+    /// Whether `ActuatorPoll` actually ran during both cycle iterations (witnessing `𝒲ℱ actuatorPoll`).
     pub actuator_poll_in_cycle: bool,
     /// Whether the actuator observed `motor_on == false` during prefix or cycle.
     pub actuator_observed_stop: bool,
-    /// `true` iff a genuine liveness lasso counterexample was reproduced on the real
-    /// `DeviceEngine` (emergency committed, cycle non-empty & closed, actuator polled
-    /// fairly in the cycle, and stop never observed).
-    pub liveness_lasso_confirmed: bool,
+    /// `true` iff the cycle reproduced on the real `DeviceEngine` under the
+    /// 3-field observable projection `(snapshot, notify_pending, actuator_motor_on)`
+    /// (emergency committed, non-empty projected cycle closed across two runs,
+    /// actuator polled in both runs, and stop never observed).
+    pub projected_cycle_reproduced: bool,
     pub clear_refused_count: usize,
-    pub state_after_cycle_1: DeviceEngineConcreteState,
-    pub state_after_cycle_2: DeviceEngineConcreteState,
+    pub state_after_cycle_1: DeviceEngineProjectedState,
+    pub state_after_cycle_2: DeviceEngineProjectedState,
     pub final_version: u32,
 }
 
@@ -583,9 +592,10 @@ pub fn replay_real_device_engine<const LATCHED: bool>(
 }
 
 /// Replay a lasso trace `prefix · cycle^ω` directly against the **actual**
-/// [`DeviceEngine<MotorKernel<LATCHED>, FaultStore>`], verifying concrete state
-/// loop closure across two iterations of `cycle` and checking that `ActuatorPoll`
-/// executed within the cycle without observing stop.
+/// [`DeviceEngine<MotorKernel<LATCHED>, FaultStore>`], checking projected state
+/// closure `(snapshot, notify_pending, actuator_motor_on)` across two
+/// iterations of `cycle` and verifying that `ActuatorPoll` executed without
+/// observing stop.
 pub fn replay_real_device_engine_lasso<const LATCHED: bool>(
     prefix: &[DeviceEngineReplayAction],
     cycle: &[DeviceEngineReplayAction],
@@ -616,7 +626,7 @@ pub fn replay_real_device_engine_lasso<const LATCHED: bool>(
     let snapshot_state = |eng: &DeviceEngine<MotorKernel<LATCHED>, FaultStore>,
                           seen: u32,
                           motor_on: bool| {
-        DeviceEngineConcreteState {
+        DeviceEngineProjectedState {
             snapshot: eng.snapshot(),
             notify_pending: eng.version() != seen,
             actuator_motor_on: motor_on,
@@ -653,19 +663,19 @@ pub fn replay_real_device_engine_lasso<const LATCHED: bool>(
     }
     let state_after_cycle_2 = snapshot_state(&engine, seen, actuator_motor_on);
 
-    let cycle_closed = !cycle.is_empty() && state_after_cycle_1 == state_after_cycle_2;
+    let projected_cycle_closed = !cycle.is_empty() && state_after_cycle_1 == state_after_cycle_2;
     let poll_in_cycle = actuator_poll_in_cycle && actuator_poll_in_cycle_2;
-    let liveness_lasso_confirmed =
-        emergency_committed && cycle_closed && poll_in_cycle && !actuator_observed_stop;
+    let projected_cycle_reproduced =
+        emergency_committed && projected_cycle_closed && poll_in_cycle && !actuator_observed_stop;
 
     DeviceEngineLassoOutcome {
         prefix_steps: prefix.len(),
         cycle_steps: cycle.len(),
         emergency_committed,
-        cycle_closed,
+        projected_cycle_closed,
         actuator_poll_in_cycle: poll_in_cycle,
         actuator_observed_stop,
-        liveness_lasso_confirmed,
+        projected_cycle_reproduced,
         clear_refused_count,
         state_after_cycle_1,
         state_after_cycle_2,
@@ -784,12 +794,12 @@ mod tests {
         assert!(after_poll.actuator_observed_stop);
     }
 
-    /// Verifies genuine lasso cycle reproduction (`prefix · cycle^ω`) on the real
+    /// Verifies projected cycle reproduction (`prefix · cycle^ω`) on the real
     /// unlatched `DeviceEngine`: repeating `[RequestEmergency, ClearEmergency, ActuatorPoll]`
-    /// closes an identical concrete state while `ActuatorPoll` runs fairly every cycle
-    /// and never observes stop.
+    /// closes an identical projected state `(snapshot, notify_pending, actuator_motor_on)`
+    /// while `ActuatorPoll` runs in each iteration and never observes stop.
     #[test]
-    fn real_device_engine_lasso_confirms_unlatched_coalescing_cycle() {
+    fn real_device_engine_lasso_reproduces_unlatched_projected_cycle() {
         let out = replay_real_device_engine_lasso::<false>(
             &[],
             &[
@@ -799,14 +809,14 @@ mod tests {
             ],
         );
         assert!(out.emergency_committed);
-        assert!(out.cycle_closed, "cycle must close identical concrete state: {out:?}");
+        assert!(out.projected_cycle_closed, "cycle must close identical projected state: {out:?}");
         assert!(out.actuator_poll_in_cycle, "fairness witness ActuatorPoll must execute in cycle");
         assert!(!out.actuator_observed_stop);
-        assert!(out.liveness_lasso_confirmed);
+        assert!(out.projected_cycle_reproduced);
     }
 
-    /// A finite trace ending after `RequestEmergency` without a cycle is NOT a
-    /// confirmed liveness counterexample.
+    /// A finite trace ending after `RequestEmergency` without a cycle does NOT
+    /// reproduce a projected cycle.
     #[test]
     fn real_device_engine_finite_trace_without_cycle_is_not_lasso() {
         let out = replay_real_device_engine_lasso::<false>(
@@ -815,11 +825,11 @@ mod tests {
         );
         assert!(out.emergency_committed);
         assert!(!out.actuator_observed_stop);
-        assert!(!out.cycle_closed);
-        assert!(!out.liveness_lasso_confirmed);
+        assert!(!out.projected_cycle_closed);
+        assert!(!out.projected_cycle_reproduced);
     }
 
-    /// On the latched kernel, the same cycle does NOT reproduce a liveness lasso:
+    /// On the latched kernel, the same cycle does NOT reproduce the projected cycle:
     /// `ClearEmergency` is refused and `ActuatorPoll` observes the stop.
     #[test]
     fn real_device_engine_latched_blocks_coalescing_lasso() {
@@ -833,7 +843,7 @@ mod tests {
         );
         assert!(out.emergency_committed);
         assert!(out.actuator_observed_stop);
-        assert!(!out.liveness_lasso_confirmed);
+        assert!(!out.projected_cycle_reproduced);
         assert!(out.clear_refused_count >= 1);
     }
 

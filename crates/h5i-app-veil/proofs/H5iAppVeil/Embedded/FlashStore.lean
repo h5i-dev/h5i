@@ -1,39 +1,34 @@
-module
-
-public import Veil
+import Veil
 
 /-!
 # Veil Models of `FlashStore` (`H5iAppVeil.Embedded.FlashStore`)
 
-Specifies `crates/h5i-app-embedded/src/store.rs` directly in Veil's DSL and
-runs Veil's native explicit-state model checker (`#model_check`) and Lasso
-temporal checker (`#temporal_check`):
+Specifies `crates/h5i-app-embedded/src/store.rs` in Veil's DSL and runs Veil's
+native explicit-state model checker (`#model_check`) and Lasso temporal checker
+(`#temporal_check`).
 
-* `FlashStorePlain`: mirrors `store.rs:235` (`wrapping_add(1)`) paired with
-  `store.rs:169` (`seq > s`) on a 3-bit (`Fin 8`) sequence number. Veil's
-  `#model_check` discovers the concrete wraparound durability counterexample
-  (`seq: 7 → 0` causes `scan` to prefer the older record `7`).
-* `FlashStoreModular`: models the real append-per-region protocol of `store.rs`
-  with modular half-space sequence ordering (`0 < (s₁ - s₂) mod 8 < 4`):
-  - **2 append slots per region** (`a0, a1` in region 0; `b0, b1` in region 1),
-    matching `ReplayFlash` (64-byte region / 24-byte record = 2 records/region):
-    * `saveUnchanged`: saving the same value as `last` (`store.rs:228-230`) is a
-      no-op (no flash write, no `seq` increment).
-    * `beginSaveAppend`: when slot 1 of the active region is free and untorn
-      (`store.rs:246-248`), appends directly to slot 1 without erasing.
-    * `beginSaveSwitch`: when the active region is full or torn (`store.rs:249-258`),
-      erases the standby region and writes to its slot 0.
-  - **Separated flash persistence vs caller ack** (`writeLanded` → `ackSave`):
-    models power cuts *after* a valid record lands in flash and *before*
-    `Store::save` returns `Ok(())` (ambiguous commit).
-  - **Explicit NOR failure modes**:
-    * `powerCutPartialErase`: power loss mid-erase leaving slot 0 `sTorn` while
-      slot 1 still holds stale bytes.
-    * `powerCutTornWrite`: power loss mid-write leaving the target slot `sTorn`,
-      forcing the next reboot's `scan` to mark `append = None` (`store.rs:189`).
-    * `powerCutClean`: power loss while idle or after `writeLanded` and before
-      `ackSave` (ambiguous commit).
-    * Repeated power cuts and reboots in any sequence.
+## Scope Distinction (Current Rust Implementation vs Proposed Fix)
+
+- **Current Rust `FlashStore` (`crates/h5i-app-embedded/src/store.rs`)** uses
+  plain `seq > s` comparison (`store.rs:169`) with `wrapping_add(1)` (`store.rs:235`):
+  * `FlashStorePlain` models this plain `>` behavior on a 3-bit (`Fin 8`) sequence
+    number and Veil's `#model_check` discovers the wraparound durability counterexample.
+  * Real Rust counterexample replay (`h5i app trace-replay`,
+    `crates/h5i-app-embedded/src/replay.rs`) reproduces this wraparound boundary
+    directly against the unmodified Rust `FlashStore` (`u32::MAX → 0`).
+- **Proposed modular-order algorithm (`FlashStoreModular` — NOT the current Rust
+  `FlashStore` implementation)**:
+  * Replaces plain `>` with modular half-space ordering (`0 < (s₁ - s₂) mod 8 < 4`,
+    which is sound provided at most half the sequence space separates the newest
+    record in the standby region from the newest record in the active region —
+    guaranteed here because each region holds at most 2 records before switching
+    and erasing the standby region).
+  * Models the 2-slot append-per-region protocol, unchanged-save no-op,
+    separated `writeLanded` / `ackSave`, partial erase, torn writes, and
+    repeated power cuts/reboots.
+  * Verifying `FlashStoreModular` verifies the **proposed** algorithm at the
+    finite-state model level; changing the Rust implementation to modular
+    comparison would require updating and re-verifying `store.rs` separately.
 
 ## Explicit Modeling Abstractions
 

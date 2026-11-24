@@ -158,6 +158,78 @@ pub struct Obligations {
     pub tenant_of_token: Option<String>,
 }
 
+/// One required Lean theorem in `[verification] temporal_theorems`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum TemporalTheoremSpec {
+    Name(String),
+    Detailed {
+        name: String,
+        /// Optional expected Lean proposition (`Prop`), verified via `Kernel.isDefEq`.
+        #[serde(default)]
+        statement: Option<String>,
+        /// Verification scope (`implementation_level` or `model_level`).
+        /// Defaults to `implementation_level` for Lean theorems.
+        #[serde(default)]
+        scope: Option<h5i_app_report::VerificationScope>,
+    },
+}
+
+impl TemporalTheoremSpec {
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Name(n) => n,
+            Self::Detailed { name, .. } => name,
+        }
+    }
+
+    pub fn statement(&self) -> Option<&str> {
+        match self {
+            Self::Name(_) => None,
+            Self::Detailed { statement, .. } => statement.as_deref(),
+        }
+    }
+
+    pub fn scope(&self) -> h5i_app_report::VerificationScope {
+        match self {
+            Self::Name(_) => h5i_app_report::VerificationScope::ImplementationLevel,
+            Self::Detailed { scope, .. } => {
+                scope.unwrap_or(h5i_app_report::VerificationScope::ImplementationLevel)
+            }
+        }
+    }
+}
+
+/// One structured Veil finite-state check executed via Veil's Lean API in the
+/// trusted nonce-authenticated gate (`[verification] temporal_checks`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TemporalVeilCheckSpec {
+    /// Obligation name recorded in the report.
+    pub name: String,
+    /// Veil module name (must provide executable definitions via `#gen_executable` / `#model_check` / `#temporal_check`).
+    pub module: String,
+    /// `"safety"` (`Veil.ModelChecker.Concrete.findReachableThen`) or `"temporal"` (`Veil.LivenessMC.checkAllWithProgress`).
+    #[serde(default = "default_veil_check_kind")]
+    pub kind: String,
+    /// Required when `kind == "temporal"`: the Veil `temporal [property]` name.
+    #[serde(default)]
+    pub property: Option<String>,
+    /// Finite instantiation term for the Veil module (e.g. `"{ HeatMode := HeatMode_IndT }"`).
+    pub instantiation: String,
+    /// Optional theory term for the Veil module (defaults to `"{}"`).
+    #[serde(default = "default_veil_theory")]
+    pub theory: String,
+}
+
+fn default_veil_check_kind() -> String {
+    "safety".into()
+}
+
+fn default_veil_theory() -> String {
+    "{}".into()
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Verification {
@@ -172,17 +244,17 @@ pub struct Verification {
     /// manifest. Defaults to `"proofs/temporal"`.
     #[serde(default = "default_temporal_dir", alias = "temporal-dir")]
     pub temporal_dir: String,
-    /// Lake targets to build in `temporal_dir`. Empty builds default targets.
+    /// Lake targets to build and import in the trusted gate.
     #[serde(default, alias = "temporal-targets")]
     pub temporal_targets: Vec<String>,
-    /// Required Veil `#temporal_check` / `#model_check` property names that must
-    /// report clean pass (never violated, unknown, or suppressed via `violationIsError false`).
-    #[serde(default, alias = "temporal-properties")]
-    pub temporal_properties: Vec<String>,
-    /// Required Lean theorems in `temporal_dir` that must exist and depend only
-    /// on Lean's three standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
+    /// Required Veil finite-state model/temporal checks executed via Veil's Lean API.
+    #[serde(default, alias = "temporal-checks")]
+    pub temporal_checks: Vec<TemporalVeilCheckSpec>,
+    /// Required Lean theorems in `temporal_dir` that must be actual theorems
+    /// (`ci.isTheorem`), depend only on Lean's three standard axioms, and match
+    /// `statement` via `Kernel.isDefEq` when specified.
     #[serde(default, alias = "temporal-theorems")]
-    pub temporal_theorems: Vec<String>,
+    pub temporal_theorems: Vec<TemporalTheoremSpec>,
 }
 
 impl Default for Verification {
@@ -192,7 +264,7 @@ impl Default for Verification {
             temporal_backend: default_temporal_backend(),
             temporal_dir: default_temporal_dir(),
             temporal_targets: Vec::new(),
-            temporal_properties: Vec::new(),
+            temporal_checks: Vec::new(),
             temporal_theorems: Vec::new(),
         }
     }

@@ -1,9 +1,6 @@
-module
+import Veil.Core.Tools.ModelChecker.TransitionSystem
+import Lentil
 
-public import Veil.Core.Tools.ModelChecker.TransitionSystem
-public import Lentil
-
-@[expose] public section
 /-!
 # Cross-State Refinement for Veil Transition Systems (`H5iAppVeil.Refinement`)
 

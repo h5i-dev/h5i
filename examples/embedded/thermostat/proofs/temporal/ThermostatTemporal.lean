@@ -1,3 +1,1 @@
-module
-
-public import ThermostatTemporal.Model
+import ThermostatTemporal.Model

@@ -1,8 +1,7 @@
-module
-
-public import Veil
-public import H5iAppVeil.KernelBridge
-public import H5iAppVeil.Refinement
+import Aeneas
+import Veil
+import H5iAppVeil.KernelBridge
+import H5iAppVeil.Refinement
 
 /-!
 # Veil Models & Refinement of `DeviceEngine` (`H5iAppVeil.Embedded.DeviceEngine`)
@@ -12,6 +11,13 @@ checks both verification targets using Veil's `#model_check` and Lasso
 `#temporal_check`, then proves `StutterRefines` directly on the **exact same**
 Veil-generated `DeviceEngineLatched.relationalTransitionSystem` (no separate
 handwritten transition system).
+
+> **Scope note**: `DeviceEngine` itself is async `no_std` Embassy Rust code that
+> is not Aeneas-extracted, so this file verifies a Veil model of `DeviceEngine`
+> and its refinement to an abstract `MotorKernel`. For end-to-end formal
+> connection of an **Aeneas-extracted Rust application kernel** via
+> `H5iAppLib.Run` → `H5iAppVeil.kernelRTS` → Veil / Lentil, see
+> `examples/embedded/thermostat/proofs/temporal/ThermostatTemporal/Model.lean`.
 
 ## Modeling Fidelity & Explicit Abstractions
 
@@ -40,9 +46,9 @@ handwritten transition system).
      (`◇ □ ⌜ phase ≠ booting ⌝`) alongside weak fairness of runtime steps.
 -/
 
-@[expose] public section
-
 namespace H5iAppVeil.Embedded.DeviceEngine
+
+open Aeneas Aeneas.Std Result
 
 /-- Abstract motor snapshot matching `crates/h5i-app-embedded/src/replay.rs::MotorSnap`. -/
 structure MotorSnap where
@@ -55,9 +61,10 @@ inductive MotorCmd where
   | clearEmergency
 deriving DecidableEq, Repr
 
-def motorTransition (_ : Unit) (_ : MotorSnap) : MotorCmd → Except Unit (MotorSnap × Unit)
-  | .requestEmergency => .ok ({ emergency := true, motorOn := false }, ())
-  | .clearEmergency => .ok ({ emergency := false, motorOn := true }, ())
+def motorTransition (_ : Unit) (_ : MotorSnap) :
+    MotorCmd → Result (core.result.Result (MotorSnap × Unit) Unit)
+  | .requestEmergency => Result.ok (.Ok ({ emergency := true, motorOn := false }, ()))
+  | .clearEmergency => Result.ok (.Ok ({ emergency := false, motorOn := true }, ()))
 
 def motorApply (_ : MotorSnap) (ws : MotorSnap) : MotorSnap := ws
 
@@ -65,12 +72,10 @@ def motorInit : MotorSnap := { emergency := false, motorOn := true }
 
 /-- Abstract kernel RTS built via `H5iAppVeil.kernelRTS`. -/
 def motorKernelRTS :
-    Veil.RelationalTransitionSystem Unit MotorSnap (KernelEvent Unit MotorCmd Unit Unit) :=
+    Veil.RelationalTransitionSystem Unit MotorSnap (H5iAppLib.Event Unit MotorCmd Unit Unit) :=
   kernelRTS motorTransition id motorApply motorInit
 
 end H5iAppVeil.Embedded.DeviceEngine
-
-end
 
 /-! ## 1. Unlatched Emergency Protocol — Veil finds `changed()` coalescing bug -/
 
@@ -432,12 +437,12 @@ theorem stutterRefines_motorKernel
         have hpm : s.pendingMotorOn = true := by simp [hpend, hpe]
         simpa [motorKernelRTS, kernelRTS, projectSnap, motorApply, hpe, hpm] using
           (KernelStep.ok (s := projectSnap s) (toSt := id) (applyAll := motorApply)
-            (rfl : motorTransition () (projectSnap s) .clearEmergency = .ok ({ emergency := false, motorOn := true }, ())))
+            (rfl : motorTransition () (projectSnap s) .clearEmergency = Aeneas.Std.Result.ok (.Ok ({ emergency := false, motorOn := true }, ()))))
       · refine ⟨.ok () .requestEmergency (), ?_⟩
         have hpm : s.pendingMotorOn = false := by simp [hpend, hpe]
         simpa [motorKernelRTS, kernelRTS, projectSnap, motorApply, hpe, hpm] using
           (KernelStep.ok (s := projectSnap s) (toSt := id) (applyAll := motorApply)
-            (rfl : motorTransition () (projectSnap s) .requestEmergency = .ok ({ emergency := true, motorOn := false }, ())))
+            (rfl : motorTransition () (projectSnap s) .requestEmergency = Aeneas.Std.Result.ok (.Ok ({ emergency := true, motorOn := false }, ()))))
     | powerLoss =>
       simp only [nextSimp] at htr
       rcases htr with ⟨_, _, rfl⟩
@@ -445,7 +450,7 @@ theorem stutterRefines_motorKernel
       refine ⟨.ok () .clearEmergency (), ?_⟩
       simpa [motorKernelRTS, kernelRTS, projectSnap, motorApply] using
         (KernelStep.ok (s := projectSnap s) (toSt := id) (applyAll := motorApply)
-          (rfl : motorTransition () (projectSnap s) .clearEmergency = .ok ({ emergency := false, motorOn := true }, ())))
+          (rfl : motorTransition () (projectSnap s) .clearEmergency = Aeneas.Std.Result.ok (.Ok ({ emergency := false, motorOn := true }, ()))))
     | restore =>
       simp only [nextSimp] at htr
       rcases htr with ⟨_, _, rfl⟩
@@ -455,12 +460,12 @@ theorem stutterRefines_motorKernel
         have hfm : s.flashMotorOn = true := by simp [hflash, hfe]
         simpa [motorKernelRTS, kernelRTS, projectSnap, motorApply, hfe, hfm] using
           (KernelStep.ok (s := projectSnap s) (toSt := id) (applyAll := motorApply)
-            (rfl : motorTransition () (projectSnap s) .clearEmergency = .ok ({ emergency := false, motorOn := true }, ())))
+            (rfl : motorTransition () (projectSnap s) .clearEmergency = Aeneas.Std.Result.ok (.Ok ({ emergency := false, motorOn := true }, ()))))
       · refine ⟨.ok () .requestEmergency (), ?_⟩
         have hfm : s.flashMotorOn = false := by simp [hflash, hfe]
         simpa [motorKernelRTS, kernelRTS, projectSnap, motorApply, hfe, hfm] using
           (KernelStep.ok (s := projectSnap s) (toSt := id) (applyAll := motorApply)
-            (rfl : motorTransition () (projectSnap s) .requestEmergency = .ok ({ emergency := true, motorOn := false }, ())))
+            (rfl : motorTransition () (projectSnap s) .requestEmergency = Aeneas.Std.Result.ok (.Ok ({ emergency := true, motorOn := false }, ()))))
     | _ =>
       simp only [nextSimp] at htr
       right

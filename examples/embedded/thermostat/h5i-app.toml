@@ -36,14 +36,77 @@ temporal = false
 temporal_backend = "veil"
 temporal_dir = "proofs/temporal"
 temporal_targets = ["ThermostatTemporal"]
-temporal_properties = [
-    "ThermostatClosedLoop#model_check",
-    "overtemp_eventually_stops_pin",
-    "sensor_failure_fails_safe",
-    "off_mode_stops_pin",
-    "auto_heats_when_cold",
-]
-temporal_theorems = [
-    "ThermostatTemporal.KernelBridge.thermostat_always_inv",
-    "ThermostatTemporal.KernelBridge.firmware_reachable_inv",
-]
+
+# Implementation-level Lean theorems directly over the Aeneas-extracted
+# `thermostat_kernel.transition` and `H5iAppLib.Run` (`Proofs.inv_reachable`).
+# Each theorem is checked by the nonce-authenticated gate for:
+#   1. `ci.isTheorem` (rejects `def`),
+#   2. standard axioms only, and
+#   3. `Kernel.isDefEq` against the declared `statement`.
+[[verification.temporal_theorems]]
+name = "ThermostatTemporal.ExtractedBridge.extracted_thermostat_always_inv"
+scope = "implementation_level"
+statement = """
+∀ (e : Lentil.exec thermostat_kernel.Snapshot),
+  ThermostatTemporal.ExtractedBridge.thermostatKernelRTS.init () (e 0) →
+  (∀ n, ThermostatTemporal.ExtractedBridge.thermostatKernelRTS.next () (e n) (e (n + 1)) ∨ e (n + 1) = e n) →
+  Lentil.always (Lentil.state_pred thermostat_kernel.Proofs.Inv) e 0
+"""
+
+[[verification.temporal_theorems]]
+name = "ThermostatTemporal.ExtractedBridge.extracted_firmware_always_inv"
+scope = "implementation_level"
+statement = """
+∀ (e : Lentil.exec ThermostatTemporal.ExtractedBridge.FirmwareState),
+  ThermostatTemporal.ExtractedBridge.extractedFirmwareRTS.init () (e 0) →
+  (∀ n, ThermostatTemporal.ExtractedBridge.extractedFirmwareRTS.next () (e n) (e (n + 1)) ∨ e (n + 1) = e n) →
+  Lentil.always (Lentil.state_pred (fun fs => thermostat_kernel.Proofs.Inv fs.snap)) e 0
+"""
+
+[[verification.temporal_theorems]]
+name = "ThermostatTemporal.ExtractedBridge.extracted_thermostat_overtemp_liveness"
+scope = "implementation_level"
+statement = """
+∀ (e : Lentil.exec ThermostatTemporal.ExtractedBridge.FirmwareState),
+  ThermostatTemporal.ExtractedBridge.extractedFirmwareRTS.init () (e 0) →
+  (∀ n, ThermostatTemporal.ExtractedBridge.extractedFirmwareRTS.next () (e n) (e (n + 1)) ∨ e (n + 1) = e n) →
+  Lentil.weak_fairness ThermostatTemporal.ExtractedBridge.senseAction e 0 →
+  Lentil.weak_fairness ThermostatTemporal.ExtractedBridge.actuateAction e 0 →
+  Lentil.eventually (Lentil.always (Lentil.state_pred (fun fs => 350 ≤ fs.physTemp.val ∨ fs.sensorFailed = true))) e 0 →
+  Lentil.eventually (Lentil.always (Lentil.state_pred (fun fs => fs.pinHeater = false))) e 0
+"""
+
+# Model-level exhaustive Veil checks invoked directly via Veil's structured Lean API.
+[[verification.temporal_checks]]
+name = "ThermostatClosedLoop#model_check"
+module = "ThermostatClosedLoop"
+kind = "safety"
+instantiation = "{ HeatMode := HeatMode_IndT, TempBand := TempBand_IndT, SetpointBand := SetpointBand_IndT }"
+
+[[verification.temporal_checks]]
+name = "overtemp_eventually_stops_pin"
+module = "ThermostatClosedLoop"
+kind = "temporal"
+property = "overtemp_eventually_stops_pin"
+instantiation = "{ HeatMode := HeatMode_IndT, TempBand := TempBand_IndT, SetpointBand := SetpointBand_IndT }"
+
+[[verification.temporal_checks]]
+name = "sensor_failure_fails_safe"
+module = "ThermostatClosedLoop"
+kind = "temporal"
+property = "sensor_failure_fails_safe"
+instantiation = "{ HeatMode := HeatMode_IndT, TempBand := TempBand_IndT, SetpointBand := SetpointBand_IndT }"
+
+[[verification.temporal_checks]]
+name = "off_mode_stops_pin"
+module = "ThermostatClosedLoop"
+kind = "temporal"
+property = "off_mode_stops_pin"
+instantiation = "{ HeatMode := HeatMode_IndT, TempBand := TempBand_IndT, SetpointBand := SetpointBand_IndT }"
+
+[[verification.temporal_checks]]
+name = "auto_heats_when_cold"
+module = "ThermostatClosedLoop"
+kind = "temporal"
+property = "auto_heats_when_cold"
+instantiation = "{ HeatMode := HeatMode_IndT, TempBand := TempBand_IndT, SetpointBand := SetpointBand_IndT }"

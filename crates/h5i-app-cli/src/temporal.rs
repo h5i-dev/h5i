@@ -1,25 +1,27 @@
 //! Optional Veil temporal verification (`h5i app temporal-check`, `prove --temporal`,
-//! `model-check`) and strict Rust counterexample / lasso replay (`h5i app trace-replay`).
+//! `model-check`) and strict Rust counterexample replay (`h5i app trace-replay`).
 //!
 //! Design split:
 //! - **Veil** (`verse-lab/veil`) owns transition-system model checking
-//!   (`#model_check`), temporal/liveness/fairness checking (`#temporal_check`
-//!   via Lasso & Lentil), and SMT invariant checking (`#check_invariants`).
+//!   (`Veil.ModelChecker.Concrete.findReachableThen`), temporal/liveness/fairness
+//!   checking (`Veil.LivenessMC.checkAllWithProgress`), and Lentil temporal logic.
 //! - **h5i** owns:
 //!   1. Optional CLI integration (Veil is never required unless opted in;
 //!      dependency resolution is delegated directly to Lake).
-//!   2. Explicit obligation gating: `lake build == 0` is NEVER equated with
-//!      verification success. `temporal-check` validates that the package uses
-//!      Veil, scans for `sorry`/`native_decide`/`axiom`, parses per-property
-//!      Veil check outputs, rejects `veil.violationIsError false` on required
-//!      properties, and runs a Lean axiom gate on `temporal_theorems`.
-//!   3. Strict counterexample & lasso replay directly against the unmodified
-//!      Rust implementations (`FlashStore`, `DeviceEngine`, `MemoryEngine`).
+//!   2. A single trusted, nonce-authenticated Lean gate (`.lake/h5i/TemporalGate.lean`,
+//!      mirroring `check.rs::gate()`):
+//!      - Verifies every declared `temporal_theorems` obligation is an actual Lean
+//!        **theorem** (`ci.isTheorem`), depends only on Lean's three standard axioms
+//!        (`propext`, `Classical.choice`, `Quot.sound`), and matches its declared
+//!        `statement` via `Kernel.isDefEq` when provided.
+//!      - Executes every declared `temporal_checks` obligation directly through
+//!        Veil's structured Lean API and inspects the returned structured JSON
+//!        (`no_violation_found` + `explored_all_reachable_states` / `verdict == "holds"`).
+//!   3. Strict counterexample & projected-cycle replay directly against the
+//!      unmodified Rust implementations (`FlashStore`, `DeviceEngine`).
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, ValueEnum};
@@ -29,11 +31,12 @@ use h5i_app_embedded::replay::{
 };
 use h5i_app_report::{
     TemporalCheckKind, TemporalProperty, TemporalPropertyStatus, TemporalReport, TemporalStatus,
+    VerificationScope,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::check::STANDARD_AXIOMS;
-use crate::manifest::Project;
+use crate::manifest::{Project, TemporalTheoremSpec, TemporalVeilCheckSpec};
 use crate::util::{self, Out};
 
 /// CLI arguments for `h5i app model-check` (delegates directly to Lake / Veil).
@@ -71,9 +74,12 @@ pub enum ReplayMode {
 pub enum ReplayVerdict {
     /// A safety invariant (e.g. `FlashStore` durability or crash consistency) was violated.
     SafetyViolationReproduced,
-    /// A closed fair lasso (`prefix · cycle^ω`) reproduced a liveness violation on the real runtime.
-    LivenessLassoReproduced,
-    /// A finite trace reached an unstopped state, which does NOT by itself prove a liveness violation.
+    /// A cycle closed on the 3-field observable projection
+    /// `(snapshot, notify_pending, actuator_motor_on)` while `ActuatorPoll` ran
+    /// without observing stop. This checks projected state closure rather than
+    /// full concrete runtime state (`version`, `seen`, wakers, `Store`).
+    ProjectedCycleReproduced,
+    /// A finite trace reached an unstopped state, which does NOT by itself prove a cycle.
     PartialFiniteTrace,
     /// No violation was reproduced on the real runtime.
     NoViolation,
@@ -119,8 +125,7 @@ pub enum VeilAvailability {
 }
 
 /// Lightweight check for `h5i app doctor`: verifies `lake` is on PATH and
-/// reports where the optional Veil Lake package lives. Does NOT reject valid
-/// unfetched Lake projects; Lake resolves Veil dependencies when built.
+/// reports where the optional Veil Lake package lives.
 pub fn detect_veil(project: Option<&Project>) -> VeilAvailability {
     if util::on_path("lake").is_none() {
         return VeilAvailability::Missing {
@@ -151,13 +156,6 @@ pub fn detect_veil(project: Option<&Project>) -> VeilAvailability {
 }
 
 /// Run optional Veil temporal verification for `p`.
-///
-/// Policy:
-/// - Disabled (`!force_enable && !p.manifest.verification.temporal`): cleanly
-///   returns `Ok(Skipped)` without requiring `lake` or Veil.
-/// - Enabled: validates the Veil Lake project, scans for `sorry`/`axiom`/
-///   `native_decide`, builds via Lake, verifies every required Veil property
-///   and Lean theorem obligation, and records property-level results.
 pub fn temporal_check(
     p: &Project,
     force_enable: bool,
@@ -244,322 +242,536 @@ pub fn temporal_check(
     }
 }
 
-/// One `#model_check` or `#temporal_check` directive discovered in temporal `.lean` sources.
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct DiscoveredCheck {
-    rel_file: String,
-    line: usize,
-    kind: TemporalCheckKind,
-    name: String,
-    suppressed: bool,
+/* -------------------------------------------------------------------------- */
+/* Nonce-Authenticated Lean / Veil Gate                                       */
+/* -------------------------------------------------------------------------- */
+
+fn lean_str(s: &str) -> String {
+    serde_json::to_string(s).expect("string serializes as JSON string literal")
 }
 
-fn lakefile_uses_veil(tdir: &Path) -> Result<bool> {
-    for fname in ["lakefile.lean", "lakefile.toml"] {
-        let p = tdir.join(fname);
-        if p.is_file() {
-            let text = std::fs::read_to_string(&p)
-                .with_context(|| format!("reading {}", p.display()))?;
-            let uses = text.lines().any(|line| {
-                let code = line.split("--").next().unwrap_or("").trim();
-                (code.contains("require") && (code.contains("veil") || code.contains("h5i_app_veil")))
-                    || code.contains("name = \"veil\"")
-                    || code.contains("name = \"h5i_app_veil\"")
-            });
-            return Ok(uses);
-        }
-    }
-    Ok(false)
+fn gate_nonce() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let pid = std::process::id();
+    let mut x = (nanos as u64) ^ ((nanos >> 64) as u64).rotate_left(17) ^ ((pid as u64) << 32);
+    x ^= x >> 30;
+    x = x.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    x ^= x >> 27;
+    x = x.wrapping_mul(0x94d0_49bb_1331_11eb);
+    x ^= x >> 31;
+    format!("{x:016x}")
 }
 
-fn collect_temporal_lean_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for e in entries.flatten() {
-        let p = e.path();
-        let name = e.file_name();
-        if p.is_dir() {
-            if !matches!(name.to_string_lossy().as_ref(), ".lake" | "target" | ".git") {
-                collect_temporal_lean_files(&p, out);
-            }
-        } else if p.extension().is_some_and(|x| x == "lean") && name != "lakefile.lean" {
-            out.push(p);
-        }
-    }
-}
-
-fn discover_veil_checks(tdir: &Path) -> Result<(Vec<PathBuf>, Vec<DiscoveredCheck>)> {
-    let mut files = Vec::new();
-    collect_temporal_lean_files(tdir, &mut files);
-    files.sort();
-    let mut checks = Vec::new();
-    for f in &files {
-        let rel = f
-            .strip_prefix(tdir)
-            .unwrap_or(f)
-            .to_string_lossy()
-            .replace('\\', "/");
-        let text = std::fs::read_to_string(f)
-            .with_context(|| format!("reading {}", f.display()))?;
-        let mut current_module: Option<String> = None;
-        let mut suppress_next = false;
-        let mut block_comment_depth: usize = 0;
-        for (idx, raw) in text.lines().enumerate() {
-            let line_no = idx + 1;
-            let stripped = strip_lean_comments_line(raw, &mut block_comment_depth);
-            let code = stripped.trim();
-            if code.is_empty() {
-                continue;
-            }
-            if let Some(rest) = code.strip_prefix("veil module ") {
-                current_module = rest.split_whitespace().next().map(str::to_string);
-            }
-            let line_suppresses = code.contains("veil.violationIsError") && code.contains("false");
-            let suppressed = suppress_next || line_suppresses;
-            if code.starts_with("#model_check") || code.contains(" #model_check") {
-                let name = match &current_module {
-                    Some(m) => format!("{m}#model_check"),
-                    None => format!("{rel}:{line_no}#model_check"),
-                };
-                checks.push(DiscoveredCheck {
-                    rel_file: rel.clone(),
-                    line: line_no,
-                    kind: TemporalCheckKind::FiniteModelCheck,
-                    name,
-                    suppressed,
-                });
-                suppress_next = false;
-            } else if let Some(pos) = code.find("#temporal_check")
-                && (pos == 0 || code.as_bytes()[pos - 1].is_ascii_whitespace())
-            {
-                let after = &code[pos + "#temporal_check".len()..];
-                let prop = extract_bracketed_name(after).unwrap_or_else(|| match &current_module {
-                    Some(m) => format!("{m}#temporal_check:{line_no}"),
-                    None => format!("{rel}:{line_no}#temporal_check"),
-                });
-                checks.push(DiscoveredCheck {
-                    rel_file: rel.clone(),
-                    line: line_no,
-                    kind: TemporalCheckKind::FiniteTemporalCheck,
-                    name: prop,
-                    suppressed,
-                });
-                suppress_next = false;
-            } else if line_suppresses && code.ends_with("in") {
-                suppress_next = true;
-            } else if !line_suppresses {
-                suppress_next = false;
-            }
-        }
-    }
-    Ok((files, checks))
-}
-
-/// Strip `--` line comments and nested `/- ... -/` block comments from one Lean source line.
-fn strip_lean_comments_line(line: &str, block_depth: &mut usize) -> String {
-    let bytes = line.as_bytes();
-    let mut out = String::with_capacity(line.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if *block_depth == 0 {
-            if i + 1 < bytes.len() && bytes[i] == b'-' && bytes[i + 1] == b'-' {
-                break;
-            }
-            if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'-' {
-                *block_depth += 1;
-                i += 2;
-                continue;
-            }
-            if let Some(ch) = line[i..].chars().next() {
-                out.push(ch);
-                i += ch.len_utf8();
-            } else {
-                break;
-            }
-        } else if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'-' {
-            *block_depth += 1;
-            i += 2;
-        } else if i + 1 < bytes.len() && bytes[i] == b'-' && bytes[i + 1] == b'/' {
-            *block_depth -= 1;
-            i += 2;
-        } else {
-            i += 1;
-        }
-    }
-    out
-}
-
-fn extract_bracketed_name(s: &str) -> Option<String> {
-    let start = s.find('[')?;
-    let end = s[start + 1..].find(']')?;
-    let inner = s[start + 1..start + 1 + end].trim();
-    if inner.is_empty() {
-        None
-    } else {
-        Some(inner.to_string())
-    }
-}
-
-/// Parse Veil info/error lines from `lake build` output keyed by `(rel_file, line)`.
-fn parse_veil_build_output(output: &str) -> BTreeMap<(String, usize), (TemporalPropertyStatus, String)> {
-    let mut map = BTreeMap::new();
-    for line in output.lines() {
-        let trimmed = line.trim();
-        let Some(rest) = trimmed
-            .strip_prefix("info: ")
-            .or_else(|| trimmed.strip_prefix("error: "))
-            .or_else(|| trimmed.strip_prefix("warning: "))
-        else {
-            continue;
-        };
-        // Format: `<file.lean>:<line>:<col>: <message>`
-        let mut parts = rest.splitn(4, ':');
-        let (Some(file), Some(line_s), Some(_col), Some(msg)) =
-            (parts.next(), parts.next(), parts.next(), parts.next())
-        else {
-            continue;
-        };
-        let Ok(line_no) = line_s.trim().parse::<usize>() else {
-            continue;
-        };
-        let msg = msg.trim();
-        let status = if msg.contains("No liveness violation") || msg.contains("No violation") {
-            TemporalPropertyStatus::Passed
-        } else if msg.contains("Violation:")
-            || msg.contains("safety_failure")
-            || msg.contains("liveness_failure")
-        {
-            TemporalPropertyStatus::Counterexample
-        } else if msg.contains("Unknown")
-            || msg.contains("inconclusive")
-            || msg.contains("timed out")
-        {
-            TemporalPropertyStatus::Unknown
-        } else {
-            continue;
-        };
-        map.insert((file.replace('\\', "/"), line_no), (status, msg.to_string()));
-    }
-    map
-}
-
-fn verify_temporal_theorems(
-    tdir: &Path,
-    lean_files: &[PathBuf],
+/// Generate `.lake/h5i/TemporalGate.lean` after `lake build` with a fresh `nonce`.
+///
+/// The gate imports `Lean`, `Veil` (so Lake/Lean itself enforces Veil is a real
+/// dependency without inspecting `lakefile.lean`), and the built `targets`. It:
+/// 1. Checks every `temporal_theorems` entry is an actual Lean theorem
+///    (`ci.isTheorem`), depends only on `STANDARD_AXIOMS`, and matches its
+///    declared `statement` via `Kernel.isDefEq` when provided.
+/// 2. Runs every `temporal_checks` entry directly through Veil's structured
+///    Lean API (`Veil.ModelChecker.Concrete.findReachableThen` for safety,
+///    `Veil.LivenessMC.checkAllWithProgress` for temporal/liveness) and emits
+///    structured JSON tagged with `nonce`.
+fn temporal_gate_program(
     targets: &[String],
-    theorems: &[String],
-) -> Result<Vec<TemporalProperty>> {
-    if theorems.is_empty() {
-        return Ok(Vec::new());
+    theorems: &[TemporalTheoremSpec],
+    checks: &[TemporalVeilCheckSpec],
+    nonce: &str,
+) -> String {
+    let mut s = String::from("import Lean\nimport Veil\n");
+    for t in targets {
+        s.push_str(&format!("import {t}\n"));
     }
-    let mut imports: BTreeSet<String> = BTreeSet::new();
-    if !targets.is_empty() {
-        for t in targets {
-            imports.insert(t.clone());
-        }
-    } else {
-        for f in lean_files {
-            if let Ok(rel) = f.strip_prefix(tdir) {
-                let mod_name = rel
-                    .with_extension("")
-                    .components()
-                    .map(|c| c.as_os_str().to_string_lossy().into_owned())
-                    .collect::<Vec<_>>()
-                    .join(".");
-                if !mod_name.is_empty() {
-                    imports.insert(mod_name);
-                }
+
+    let thm_tag = format!("H5I-TEMPORAL-THM-{nonce}");
+    let veil_tag = format!("H5I-TEMPORAL-VEIL-{nonce}");
+    let done_tag = format!("H5I-TEMPORAL-DONE-{nonce}");
+    let std_list = STANDARD_AXIOMS
+        .iter()
+        .map(|a| format!("`{a}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    s.push_str(
+        r#"
+open Lean Elab Command in
+private def h5iCheckTheorem (declName : Name) (stmt? : Option String) (std : List Name) (tag : String) :
+    CommandElabM Unit := do
+  let env ← getEnv
+  let emit (status : String) (extra : List (String × Json) := []) : CommandElabM Unit := do
+    let row := Json.mkObj ([("name", toJson declName.toString), ("status", toJson status)] ++ extra)
+    liftIO <| IO.println (tag ++ " " ++ row.compress)
+  match env.find? declName with
+  | none => emit "missing" [("detail", toJson "declaration not found in built environment")]
+  | some ci =>
+    if !ci.isTheorem then
+      let kind := match ci with
+        | .defnInfo _ => "def"
+        | .axiomInfo _ => "axiom"
+        | .opaqueInfo _ => "opaque"
+        | .inductInfo _ => "inductive"
+        | .ctorInfo _ => "constructor"
+        | .recInfo _ => "recursor"
+        | .quotInfo _ => "quot"
+        | .thmInfo _ => "theorem"
+      emit "not_theorem" [("detail", toJson s!"expected a theorem, found `{kind}`")]
+      return
+    let axs ← liftTermElabM (Lean.collectAxioms declName)
+    let extraAxs := axs.filter (fun a => !std.contains a)
+    unless extraAxs.isEmpty do
+      emit "bad_axioms" [
+        ("axioms", toJson (axs.toList.map Name.toString)),
+        ("detail", toJson s!"disallowed axioms: {String.intercalate ", " (extraAxs.toList.map Name.toString)}")
+      ]
+      return
+    match stmt? with
+    | none =>
+      emit "ok" [("axioms", toJson (axs.toList.map Name.toString))]
+    | some stmtSrc =>
+      match Parser.runParserCategory env `term stmtSrc with
+      | .error err =>
+        emit "statement_error" [("detail", toJson s!"failed to parse expected statement: {err}")]
+      | .ok stx =>
+        let verdict ← liftTermElabM do
+          try
+            let expected ← Term.elabTerm stx (some (.sort .zero))
+            Term.synthesizeSyntheticMVarsNoPostponing
+            let expected ← instantiateMVars expected
+            if expected.hasMVar then
+              return ("statement_error", s!"expected statement contains unresolved metavariables: {(← Meta.ppExpr expected).pretty}")
+            match Kernel.isDefEq env {} expected ci.type with
+            | .ok true => return ("ok", "")
+            | _ =>
+              let expStr := (← Meta.ppExpr expected).pretty
+              let gotStr := (← Meta.ppExpr ci.type).pretty
+              return ("statement_mismatch", s!"expected `{expStr}`, found `{gotStr}`")
+          catch ex =>
+            return ("statement_error", ← ex.toMessageData.toString)
+        if verdict.1 == "ok" then
+          emit "ok" [("axioms", toJson (axs.toList.map Name.toString))]
+        else
+          emit verdict.1 [("detail", toJson verdict.2)]
+"#,
+    );
+
+    if !checks.is_empty() {
+        s.push_str(
+            r#"
+open Lean Elab Command in
+private def h5iRunVeilCheck (label : String) (modName : Name) (propName? : Option Name)
+    (instSrc theorySrc : String) (tag : String) : CommandElabM Unit := withScope id do
+  let env ← getEnv
+  let emitErr (msg : String) : CommandElabM Unit := do
+    let row := Json.mkObj [("name", toJson label), ("status", toJson "failed"), ("detail", toJson msg)]
+    liftIO <| IO.println (tag ++ " " ++ row.compress)
+  let some em ← Veil.getExecutableModule? modName
+    | emitErr s!"module `{modName}` has no Veil executable definitions (add #gen_executable or #model_check)"
+      return
+  let .ok instStx := Parser.runParserCategory env `term instSrc
+    | emitErr s!"failed to parse instantiation: {instSrc}"
+      return
+  let .ok theoryStx := Parser.runParserCategory env `term theorySrc
+    | emitErr s!"failed to parse theory: {theorySrc}"
+      return
+  let instTerm : Term := ⟨instStx⟩
+  let theoryTerm : Term := ⟨theoryStx⟩
+  let modIdent := mkIdent modName
+  let qName (n : Name) := mkIdent (em.name ++ n)
+  let instId := mkIdent `inst
+  let thId := mkIdent `th
+  let instSortArgs ← em.instantiationFields.mapM fun f => `($instId.$(mkIdent f))
+  let mkAssump (n : Name) : CommandElabM Term :=
+    `(Veil.ModelChecker.TheoryProperty.mk $(quote n) (fun th => $(qName n) th))
+  let mkInv (n : Name) : CommandElabM Term :=
+    `(Veil.ModelChecker.SafetyProperty.mk $(quote n) (fun th st => $(qName n) th st))
+  let assumpList ← `([$((← em.assumptions.mapM mkAssump)),*])
+  let constraintList ← `([$((← em.stateConstraints.mapM mkInv)),*])
+  let sysTerm ← `(letI : Veil.LogSwitch := ⟨false⟩; $(qName `enumerableTransitionSystem) $instSortArgs* $thId)
+  let pickTerm ← `(fun _ => letI : Veil.LogSwitch := ⟨true⟩; $(qName `pickSource) $instSortArgs* $thId)
+  let earlyTerm ← `([Veil.ModelChecker.EarlyTerminationCondition.foundViolatingState,
+                     Veil.ModelChecker.EarlyTerminationCondition.assertionFailed,
+                     Veil.ModelChecker.EarlyTerminationCondition.deadlockOccurred])
+  let evalTerm ← match propName? with
+    | none =>
+      let invList ← `([$((← em.invariants.mapM mkInv)),*])
+      let termProp ← match em.terminations[0]? with
+        | some t => mkInv t
+        | none => `(default)
+      `(veil_dsimp_field_reads% (
+          let $instId : $(qName `Instantiation) := __veil_instantiation_of% $modIdent $instTerm
+          let $thId : $(qName `Theory) $instSortArgs* := $theoryTerm
+          show IO Unit from do
+            let sp : Veil.ModelChecker.SearchParameters _ _ := {
+              assumptions := $assumpList,
+              invariants := $invList,
+              terminating := $termProp,
+              stateConstraints := $constraintList,
+              earlyTerminationConditions := $earlyTerm
             }
-        }
-    }
-
-    let mut script = String::new();
-    for m in &imports {
-        script.push_str(&format!("import {m}\n"));
-    }
-    script.push_str("import Lean\nopen Lean in\n#eval show CoreM Unit from do\n");
-    script.push_str("  let env ← getEnv\n");
-    for thm in theorems {
-        script.push_str(&format!(
-            "  let n := `{thm}\n  match env.find? n with\n  | none => IO.println s!\"H5I_THM_MISSING {thm}\"\n  | some _ =>\n    let axsArr ← Lean.collectAxioms n\n    let axs := String.intercalate \",\" (axsArr.toList.map toString)\n    IO.println s!\"H5I_THM_AXIOMS {thm} {{axs}}\"\n"
-        ));
-    }
-
-    let mut child = Command::new("lake")
-        .args(["env", "lean", "--stdin"])
-        .current_dir(tdir)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .with_context(|| format!("spawning `lake env lean --stdin` in {}", tdir.display()))?;
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(script.as_bytes())?;
-    }
-    let out = child.wait_with_output()?;
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    if !out.status.success() {
-        bail!(
-            "Lean axiom gate for temporal_theorems failed: {}{}",
-            stdout.trim(),
-            stderr.trim()
+            let tk ← IO.CancelToken.new
+            let json : Lean.Json ← Veil.ModelChecker.Concrete.findReachableThen
+              (σₕ := UInt64) (ShardOf := fun v => Std.HashMap UInt64 v)
+              $sysTerm $pickTerm sp none 0 tk (fun res => (pure (Lean.toJson res) : IO Lean.Json))
+            let row := Lean.Json.mkObj [("name", Lean.toJson $(quote label)), ("kind", Lean.toJson "safety"), ("veil", json)]
+            IO.println ($(quote tag) ++ " " ++ row.compress)))
+    | some propName =>
+      let astId := qName (Veil.toTemporalAstName propName)
+      `(veil_dsimp_field_reads% (
+          let $instId : $(qName `Instantiation) := __veil_instantiation_of% $modIdent $instTerm
+          let $thId : $(qName `Theory) $instSortArgs* := $theoryTerm
+          show IO Unit from do
+            let sp : Veil.ModelChecker.SearchParameters _ _ := {
+              assumptions := $assumpList,
+              invariants := [],
+              terminating := default,
+              stateConstraints := $constraintList,
+              earlyTerminationConditions := $earlyTerm
+            }
+            let p := $astId
+              ($(qName `Theory) $instSortArgs*)
+              ($(qName `State) ($(qName `FieldConcreteType) $instSortArgs*))
+              $instSortArgs*
+              ($(qName `FieldConcreteType) $instSortArgs*)
+            let tk ← IO.CancelToken.new
+            let json ← Veil.LivenessMC.checkAllWithProgress $sysTerm sp [p] 0 tk .fair
+            let row := Lean.Json.mkObj [("name", Lean.toJson $(quote label)), ("kind", Lean.toJson "temporal"), ("veil", json)]
+            IO.println ($(quote tag) ++ " " ++ row.compress)))
+  try
+    let callCmd ← `(command| open Veil $(mkIdent em.name) in #eval $evalTerm)
+    elabCommand callCmd
+  catch ex =>
+    emitErr (← ex.toMessageData.toString)
+"#,
         );
     }
 
-    let mut results = Vec::new();
     for thm in theorems {
-        let missing_tag = format!("H5I_THM_MISSING {thm}");
-        let axioms_prefix = format!("H5I_THM_AXIOMS {thm} ");
-        if stdout.lines().any(|l| l.trim() == missing_tag) {
-            results.push(TemporalProperty {
-                name: thm.clone(),
-                kind: TemporalCheckKind::ProvenTheorem,
-                status: TemporalPropertyStatus::Failed,
-                detail: Some("theorem not found in built environment".into()),
-            });
-        } else if let Some(line) = stdout.lines().find(|l| l.starts_with(&axioms_prefix)) {
-            let raw_axs = line[axioms_prefix.len()..].trim();
-            let axs: Vec<&str> = if raw_axs.is_empty() {
-                Vec::new()
-            } else {
-                raw_axs.split(',').map(str::trim).filter(|s| !s.is_empty()).collect()
-            };
-            let bad: Vec<&str> = axs
-                .iter()
-                .copied()
-                .filter(|a| !STANDARD_AXIOMS.contains(a))
-                .collect();
-            if bad.is_empty() {
-                results.push(TemporalProperty {
-                    name: thm.clone(),
-                    kind: TemporalCheckKind::ProvenTheorem,
+        let stmt_opt = match thm.statement() {
+            Some(st) => format!("(some {})", lean_str(st)),
+            None => "none".to_string(),
+        };
+        s.push_str(&format!(
+            "\n#eval h5iCheckTheorem `{} {} [{std_list}] {}\n",
+            thm.name(),
+            stmt_opt,
+            lean_str(&thm_tag)
+        ));
+    }
+
+    for chk in checks {
+        let prop_opt = match chk.kind.as_str() {
+            "safety" => "none".to_string(),
+            "temporal" => match &chk.property {
+                Some(pr) => format!("(some `{pr})"),
+                None => format!("(some `{})", chk.name),
+            },
+            _ => "none".to_string(),
+        };
+        s.push_str(&format!(
+            "\n#eval h5iRunVeilCheck {} `{mod_name} {prop_opt} {} {} {}\n",
+            lean_str(&chk.name),
+            lean_str(&chk.instantiation),
+            lean_str(&chk.theory),
+            lean_str(&veil_tag),
+            mod_name = chk.module,
+        ));
+    }
+
+    s.push_str(&format!("\n#eval IO.println {}\n", lean_str(&done_tag)));
+    s
+}
+
+#[derive(Debug, Deserialize)]
+struct GateTheoremRow {
+    name: String,
+    status: String,
+    #[serde(default)]
+    axioms: Vec<String>,
+    #[serde(default)]
+    detail: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GateVeilRow {
+    name: String,
+    #[serde(default)]
+    kind: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    detail: Option<String>,
+    #[serde(default)]
+    veil: Option<serde_json::Value>,
+}
+
+fn classify_veil_json(
+    chk: &TemporalVeilCheckSpec,
+    row: &GateVeilRow,
+) -> TemporalProperty {
+    let kind = if chk.kind == "temporal" {
+        TemporalCheckKind::FiniteTemporalCheck
+    } else {
+        TemporalCheckKind::FiniteModelCheck
+    };
+    if let Some(st) = &row.status
+        && st != "ok"
+    {
+        return TemporalProperty {
+            name: chk.name.clone(),
+            kind,
+            scope: VerificationScope::ModelLevel,
+            status: TemporalPropertyStatus::Failed,
+            detail: row.detail.clone(),
+        };
+    }
+    let Some(veil) = &row.veil else {
+        return TemporalProperty {
+            name: chk.name.clone(),
+            kind,
+            scope: VerificationScope::ModelLevel,
+            status: TemporalPropertyStatus::Failed,
+            detail: Some("Veil gate returned no structured result".into()),
+        };
+    };
+    let result = veil.get("result").and_then(|v| v.as_str()).unwrap_or("");
+    let explored = veil
+        .get("explored_states")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+
+    match (chk.kind.as_str(), result) {
+        ("safety", "no_violation_found") => {
+            let term_kind = veil
+                .pointer("/termination_reason/kind")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if term_kind == "explored_all_reachable_states" {
+                TemporalProperty {
+                    name: chk.name.clone(),
+                    kind,
+                    scope: VerificationScope::ModelLevel,
                     status: TemporalPropertyStatus::Passed,
-                    detail: Some(if axs.is_empty() {
-                        "standard axioms only (none)".into()
-                    } else {
-                        format!("standard axioms only ({})", axs.join(", "))
-                    }),
-                });
+                    detail: Some(format!(
+                        "explored {explored} reachable states (complete exhaustive search)"
+                    )),
+                }
             } else {
-                results.push(TemporalProperty {
-                    name: thm.clone(),
-                    kind: TemporalCheckKind::ProvenTheorem,
-                    status: TemporalPropertyStatus::Failed,
-                    detail: Some(format!("disallowed axioms: {}", bad.join(", "))),
-                });
+                TemporalProperty {
+                    name: chk.name.clone(),
+                    kind,
+                    scope: VerificationScope::ModelLevel,
+                    status: TemporalPropertyStatus::Unknown,
+                    detail: Some(format!(
+                        "search did not complete exhaustively (termination_reason={term_kind:?}, explored={explored})"
+                    )),
+                }
             }
-        } else {
-            results.push(TemporalProperty {
-                name: thm.clone(),
-                kind: TemporalCheckKind::ProvenTheorem,
-                status: TemporalPropertyStatus::Unchecked,
-                detail: Some("axiom gate did not report theorem".into()),
-            });
+        }
+        ("temporal", "no_violation_found") => {
+            let checked = veil
+                .get("properties_checked")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let verdict = veil
+                .pointer("/timing/properties/0/verdict")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if checked == 1 && verdict == "holds" {
+                TemporalProperty {
+                    name: chk.name.clone(),
+                    kind,
+                    scope: VerificationScope::ModelLevel,
+                    status: TemporalPropertyStatus::Passed,
+                    detail: Some(format!(
+                        "Lasso liveness holds (explored {explored} product states)"
+                    )),
+                }
+            } else {
+                TemporalProperty {
+                    name: chk.name.clone(),
+                    kind,
+                    scope: VerificationScope::ModelLevel,
+                    status: TemporalPropertyStatus::Unknown,
+                    detail: Some(format!(
+                        "inconclusive liveness result (properties_checked={checked}, verdict={verdict:?})"
+                    )),
+                }
+            }
+        }
+        (_, "found_violation") => {
+            let vkind = veil
+                .pointer("/violation/kind")
+                .and_then(|v| v.as_str())
+                .unwrap_or("violation");
+            let violates = veil
+                .pointer("/violation/violates")
+                .map(|v| v.to_string())
+                .unwrap_or_default();
+            TemporalProperty {
+                name: chk.name.clone(),
+                kind,
+                scope: VerificationScope::ModelLevel,
+                status: TemporalPropertyStatus::Counterexample,
+                detail: Some(format!("Veil found {vkind} (violates: {violates})")),
+            }
+        }
+        (_, other) => TemporalProperty {
+            name: chk.name.clone(),
+            kind,
+            scope: VerificationScope::ModelLevel,
+            status: TemporalPropertyStatus::Unknown,
+            detail: Some(format!("Veil returned result={other:?}")),
+        },
+    }
+}
+
+fn parse_temporal_gate(
+    output: &str,
+    nonce: &str,
+    success: bool,
+    theorems: &[TemporalTheoremSpec],
+    checks: &[TemporalVeilCheckSpec],
+) -> Result<Vec<TemporalProperty>> {
+    let thm_prefix = format!("H5I-TEMPORAL-THM-{nonce} ");
+    let veil_prefix = format!("H5I-TEMPORAL-VEIL-{nonce} ");
+    let done_marker = format!("H5I-TEMPORAL-DONE-{nonce}");
+
+    let mut thm_rows: std::collections::BTreeMap<String, GateTheoremRow> =
+        std::collections::BTreeMap::new();
+    let mut veil_rows: std::collections::BTreeMap<String, GateVeilRow> =
+        std::collections::BTreeMap::new();
+    let mut saw_done = false;
+
+    for line in output.lines() {
+        let trimmed = line.trim();
+        if trimmed == done_marker {
+            saw_done = true;
+        } else if let Some(json) = trimmed.strip_prefix(&thm_prefix) {
+            let row: GateTheoremRow = serde_json::from_str(json)
+                .with_context(|| format!("parsing theorem gate JSON: {json}"))?;
+            thm_rows.insert(row.name.clone(), row);
+        } else if let Some(json) = trimmed.strip_prefix(&veil_prefix) {
+            let row: GateVeilRow = serde_json::from_str(json)
+                .with_context(|| format!("parsing Veil gate JSON: {json}"))?;
+            veil_rows.insert(row.name.clone(), row);
         }
     }
-    Ok(results)
+
+    if !success || !saw_done {
+        bail!(
+            "temporal Lean/Veil gate did not complete cleanly (exit_ok={success}, saw_done={saw_done}):\n{}",
+            output.trim()
+        );
+    }
+
+    let mut properties = Vec::new();
+
+    for thm in theorems {
+        let name = thm.name();
+        let scope = thm.scope();
+        match thm_rows.get(name) {
+            Some(row) if row.status == "ok" => {
+                let ax_desc = if row.axioms.is_empty() {
+                    "standard axioms only (none)".to_string()
+                } else {
+                    format!("standard axioms only ({})", row.axioms.join(", "))
+                };
+                let stmt_desc = if thm.statement().is_some() {
+                    "; statement verified by Kernel.isDefEq"
+                } else {
+                    ""
+                };
+                properties.push(TemporalProperty {
+                    name: name.to_string(),
+                    kind: TemporalCheckKind::ProvenTheorem,
+                    scope,
+                    status: TemporalPropertyStatus::Passed,
+                    detail: Some(format!("theorem verified: {ax_desc}{stmt_desc}")),
+                });
+            }
+            Some(row) => {
+                properties.push(TemporalProperty {
+                    name: name.to_string(),
+                    kind: TemporalCheckKind::ProvenTheorem,
+                    scope,
+                    status: TemporalPropertyStatus::Failed,
+                    detail: Some(format!(
+                        "{}: {}",
+                        row.status,
+                        row.detail.as_deref().unwrap_or("verification failed")
+                    )),
+                });
+            }
+            None => {
+                properties.push(TemporalProperty {
+                    name: name.to_string(),
+                    kind: TemporalCheckKind::ProvenTheorem,
+                    scope,
+                    status: TemporalPropertyStatus::Unchecked,
+                    detail: Some("gate did not report theorem".into()),
+                });
+            }
+        }
+    }
+
+    for chk in checks {
+        match veil_rows.get(&chk.name) {
+            Some(row) => {
+                let _ = &row.kind;
+                properties.push(classify_veil_json(chk, row));
+            }
+            None => {
+                let kind = if chk.kind == "temporal" {
+                    TemporalCheckKind::FiniteTemporalCheck
+                } else {
+                    TemporalCheckKind::FiniteModelCheck
+                };
+                properties.push(TemporalProperty {
+                    name: chk.name.clone(),
+                    kind,
+                    scope: VerificationScope::ModelLevel,
+                    status: TemporalPropertyStatus::Unchecked,
+                    detail: Some("gate did not report Veil check".into()),
+                });
+            }
+        }
+    }
+
+    Ok(properties)
+}
+
+fn run_temporal_gate(
+    tdir: &Path,
+    targets: &[String],
+    theorems: &[TemporalTheoremSpec],
+    checks: &[TemporalVeilCheckSpec],
+    out: &Out,
+) -> Result<Vec<TemporalProperty>> {
+    let nonce = gate_nonce();
+    let gate_dir = tdir.join(".lake/h5i");
+    std::fs::create_dir_all(&gate_dir)?;
+    let gate_file = gate_dir.join("TemporalGate.lean");
+    let src = temporal_gate_program(targets, theorems, checks, &nonce);
+    std::fs::write(&gate_file, src)?;
+
+    out.note(&format!("$ lake env lean {}", gate_file.display()));
+    let output = Command::new("lake")
+        .args(["env", "lean"])
+        .arg(&gate_file)
+        .current_dir(tdir)
+        .output()
+        .with_context(|| format!("running `lake env lean` in {}", tdir.display()))?;
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    parse_temporal_gate(&combined, &nonce, output.status.success(), theorems, checks)
 }
 
 fn run_veil_backend(
@@ -583,7 +795,11 @@ fn run_veil_backend(
             p.manifest.verification.temporal_dir
         );
     }
-    if !lakefile_uses_veil(&tdir)? {
+
+    let targets = &p.manifest.verification.temporal_targets;
+    let req_checks = &p.manifest.verification.temporal_checks;
+    let req_theorems = &p.manifest.verification.temporal_theorems;
+    if req_checks.is_empty() && req_theorems.is_empty() {
         return Ok(TemporalReport {
             enabled: true,
             backend: "veil".into(),
@@ -591,28 +807,37 @@ fn run_veil_backend(
             inputs_current: true,
             properties: Vec::new(),
             detail: Some(format!(
-                "{} does not require `veil` or `h5i_app_veil` in its lakefile",
+                "no verification obligations configured in `[verification]` \
+                 (declare `temporal_theorems` and/or `temporal_checks` for {})",
                 p.manifest.verification.temporal_dir
             )),
         });
     }
-
-    let (lean_files, discovered) = discover_veil_checks(&tdir)?;
-    if lean_files.is_empty() {
+    if targets.is_empty() {
         return Ok(TemporalReport {
             enabled: true,
             backend: "veil".into(),
             status: TemporalStatus::Failed,
             inputs_current: true,
             properties: Vec::new(),
-            detail: Some(format!(
-                "no .lean files found in {}",
-                p.manifest.verification.temporal_dir
-            )),
+            detail: Some(
+                "`[verification] temporal_targets` must name the Lean module(s) to build and gate"
+                    .into(),
+            ),
         });
     }
+    for chk in req_checks {
+        if chk.kind != "safety" && chk.kind != "temporal" {
+            bail!(
+                "{}: invalid temporal_checks kind {:?} for {:?} (expected \"safety\" or \"temporal\")",
+                p.display(),
+                chk.kind,
+                chk.name
+            );
+        }
+    }
 
-    // Textual axiom / sorry / native_decide scan (same gate as `h5i app check`).
+    // Textual axiom / sorry / native_decide scan (reusing `h5i app check`'s scanner).
     let bad = crate::check::scan(&tdir)?;
     if !bad.is_empty() {
         return Ok(TemporalReport {
@@ -629,173 +854,59 @@ fn run_veil_backend(
         });
     }
 
-    let req_props = &p.manifest.verification.temporal_properties;
-    let req_theorems = &p.manifest.verification.temporal_theorems;
-    let has_unsuppressed_check = discovered.iter().any(|c| !c.suppressed);
-    if req_props.is_empty() && req_theorems.is_empty() && !has_unsuppressed_check {
+    // 1. Delegate dependency resolution & build directly to Lake.
+    let build_res = crate::report::step(record, "veil_build", out, |log| {
+        let mut cmd = Command::new("lake");
+        cmd.arg("build").args(targets).current_dir(&tdir);
+        util::run(&mut cmd, log)
+    });
+    if let Err(e) = build_res {
         return Ok(TemporalReport {
             enabled: true,
             backend: "veil".into(),
             status: TemporalStatus::Failed,
             inputs_current: true,
             properties: Vec::new(),
-            detail: Some(format!(
-                "no verification obligations found in {} (declare unsuppressed #model_check/#temporal_check or set `[verification] temporal_properties` / `temporal_theorems`)",
-                p.manifest.verification.temporal_dir
-            )),
+            detail: Some(format!("`lake build` failed: {e:#}")),
         });
     }
 
-    // Delegate dependency resolution & build directly to Lake; capture output for property-level parsing.
-    let mut build_output = String::new();
-    let targets = &p.manifest.verification.temporal_targets;
-    let build_res = crate::report::step(record, "veil_build", out, |log| {
-        let mut cmd = Command::new("lake");
-        cmd.arg("build").args(targets).current_dir(&tdir);
-        let output = cmd
-            .output()
-            .with_context(|| format!("running `lake build` in {}", tdir.display()))?;
-        let combined = format!(
-            "{}{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        if let Out::Log(path) = log {
-            let _ = std::fs::write(path, &combined);
-        }
-        build_output = combined;
-        if !output.status.success() {
-            bail!("`lake build` exited with {}", output.status);
-        }
-        Ok(())
-    });
+    // 2. Run the trusted nonce-authenticated Lean/Veil gate after `lake build`.
+    let properties = crate::report::step(record, "temporal_gate", out, |log| {
+        run_temporal_gate(&tdir, targets, req_theorems, req_checks, log)
+    })?;
 
-    let parsed = parse_veil_build_output(&build_output);
-    let mut properties: Vec<TemporalProperty> = Vec::new();
-    let mut seen_names: BTreeSet<String> = BTreeSet::new();
-
-    for c in &discovered {
-        let is_required = req_props.contains(&c.name);
-        if c.suppressed && !is_required {
-            // Intentional negative/regression check (e.g. `set_option veil.violationIsError false`),
-            // not a required passing obligation; still record its actual status transparently.
-            let (status, detail) = match parsed.get(&(c.rel_file.clone(), c.line)) {
-                Some((st, msg)) => (*st, format!("suppressed regression check: {msg}")),
-                None => (
-                    TemporalPropertyStatus::Unchecked,
-                    "suppressed regression check (not observed in build output)".into(),
-                ),
-            };
-            properties.push(TemporalProperty {
-                name: c.name.clone(),
-                kind: c.kind,
-                status,
-                detail: Some(detail),
-            });
-            continue;
-        }
-        seen_names.insert(c.name.clone());
-        if c.suppressed && is_required {
-            properties.push(TemporalProperty {
-                name: c.name.clone(),
-                kind: c.kind,
-                status: TemporalPropertyStatus::Failed,
-                detail: Some(
-                    "required property must not use `set_option veil.violationIsError false`".into(),
-                ),
-            });
-            continue;
-        }
-        match parsed.get(&(c.rel_file.clone(), c.line)) {
-            Some((st, msg)) => properties.push(TemporalProperty {
-                name: c.name.clone(),
-                kind: c.kind,
-                status: *st,
-                detail: Some(msg.clone()),
-            }),
-            None => properties.push(TemporalProperty {
-                name: c.name.clone(),
-                kind: c.kind,
-                status: TemporalPropertyStatus::Unchecked,
-                detail: Some(format!(
-                    "not observed in `lake build` output ({}:{}; ensure module is in build targets)",
-                    c.rel_file, c.line
-                )),
-            }),
-        }
-    }
-
-    // Any required property not even declared in the sources is explicitly Unchecked.
-    for req in req_props {
-        if !seen_names.contains(req) {
-            properties.push(TemporalProperty {
-                name: req.clone(),
-                kind: TemporalCheckKind::FiniteTemporalCheck,
-                status: TemporalPropertyStatus::Unchecked,
-                detail: Some("required property not found in temporal sources".into()),
-            });
-        }
-    }
-
-    if let Err(e) = build_res {
-        let has_ce = properties
-            .iter()
-            .any(|pr| pr.status == TemporalPropertyStatus::Counterexample)
-            || build_output.contains("Violation:")
-            || build_output.contains("safety_failure")
-            || build_output.contains("liveness_failure");
-        let has_unknown = properties
-            .iter()
-            .any(|pr| pr.status == TemporalPropertyStatus::Unknown);
-        let status = if has_ce {
-            TemporalStatus::Counterexample
-        } else if has_unknown {
-            TemporalStatus::Unknown
-        } else {
-            TemporalStatus::Failed
-        };
-        return Ok(TemporalReport {
-            enabled: true,
-            backend: "veil".into(),
-            status,
-            inputs_current: true,
-            properties,
-            detail: Some(format!("{e:#}")),
-        });
-    }
-
-    // Gate required Lean theorems on standard axioms only.
-    if !req_theorems.is_empty() {
-        let thm_results = verify_temporal_theorems(&tdir, &lean_files, targets, req_theorems)?;
-        properties.extend(thm_results);
-    }
-
-    // Evaluate only active obligations (ignore explicitly non-required suppressed regression checks).
-    let active: Vec<&TemporalProperty> = properties
-        .iter()
-        .filter(|pr| {
-            !pr.detail
-                .as_deref()
-                .is_some_and(|d| d.starts_with("suppressed regression check"))
-        })
-        .collect();
-
-    let passed_count = active
+    let passed_count = properties
         .iter()
         .filter(|pr| pr.status == TemporalPropertyStatus::Passed)
         .count();
-    let status = if active
+    let impl_passed = properties
+        .iter()
+        .filter(|pr| {
+            pr.scope == VerificationScope::ImplementationLevel
+                && pr.status == TemporalPropertyStatus::Passed
+        })
+        .count();
+    let model_passed = properties
+        .iter()
+        .filter(|pr| {
+            pr.scope == VerificationScope::ModelLevel
+                && pr.status == TemporalPropertyStatus::Passed
+        })
+        .count();
+
+    let status = if properties
         .iter()
         .any(|pr| pr.status == TemporalPropertyStatus::Counterexample)
     {
         TemporalStatus::Counterexample
-    } else if active
+    } else if properties
         .iter()
         .any(|pr| pr.status == TemporalPropertyStatus::Unknown)
     {
         TemporalStatus::Unknown
-    } else if active.is_empty()
-        || active.iter().any(|pr| {
+    } else if properties.is_empty()
+        || properties.iter().any(|pr| {
             matches!(
                 pr.status,
                 TemporalPropertyStatus::Failed | TemporalPropertyStatus::Unchecked
@@ -808,8 +919,8 @@ fn run_veil_backend(
     };
 
     let detail = Some(format!(
-        "{passed_count}/{} verification obligations passed in {}",
-        active.len(),
+        "{passed_count}/{} verification obligations passed ({impl_passed} implementation-level, {model_passed} model-level) in {}",
+        properties.len(),
         p.manifest.verification.temporal_dir
     ));
 
@@ -860,10 +971,9 @@ pub fn model_check(args: &ModelCheckArgs, out: &Out) -> Result<()> {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Strict Real Rust Counterexample & Lasso Replay                             */
+/* Strict Real Rust Counterexample & Projected-Cycle Replay                   */
 /* -------------------------------------------------------------------------- */
 
-/// Veil's `Trace.toJsonWithPicks` state entry (`Veil/Core/Tools/ModelChecker/Trace.lean:101`).
 #[derive(Clone, Debug, Deserialize)]
 struct VeilTraceState {
     #[allow(dead_code)]
@@ -874,15 +984,12 @@ struct VeilTraceState {
     fields: serde_json::Value,
 }
 
-/// Veil's `Trace.toJsonWithPicks` top-level JSON (`{"theory": ..., "states": [...]}`),
-/// with optional h5i replay metadata (`target`, `loop_start`, `seed_wraparound`,
-/// `append_reboot`, `power_cut_budget`, `latched`).
 #[derive(Clone, Debug, Deserialize)]
 struct VeilTraceJson {
     #[serde(default)]
     target: Option<ReplayTarget>,
     /// Index into `states` (0-based) where the lasso cycle begins (`prefix = states[1..=loop_start]`,
-    /// `cycle = states[loop_start+1..]`). Required to confirm a liveness counterexample.
+    /// `cycle = states[loop_start+1..]`).
     #[serde(default, alias = "lasso_start")]
     loop_start: Option<usize>,
     #[serde(default)]
@@ -903,8 +1010,7 @@ pub struct ReplaySummary {
     pub mode: ReplayMode,
     pub verdict: ReplayVerdict,
     pub steps_replayed: usize,
-    /// `true` ONLY when a genuine safety violation OR closed fair liveness lasso
-    /// was reproduced on the real Rust implementation.
+    /// `true` when a safety violation or projected cycle was reproduced on the real runtime.
     pub reproduced_violation: bool,
     pub detail: String,
 }
@@ -935,15 +1041,6 @@ pub fn trace_replay(args: &TraceReplayArgs) -> Result<()> {
 /// Strictly parse a Veil JSON trace (`Trace.toJsonWithPicks`) and replay it directly
 /// against the real `h5i_app_embedded::store::FlashStore` or
 /// `h5i_app_embedded::kernel::DeviceEngine`.
-///
-/// Strictness guarantees:
-/// - Unrecognized transitions are rejected with an error (never silently ignored).
-/// - Exact trace replay (`ReplayMode::ExactTrace`) never injects synthetic
-///   `RebootLoad` actions or fabricated power-cut budgets.
-/// - Liveness violations on `DeviceEngine` require an explicit lasso (`loop_start`)
-///   whose cycle closes an identical concrete state and exercises `ActuatorPoll`;
-///   finite traces without a closed fair lasso are reported as `PartialFiniteTrace`
-///   with `reproduced_violation = false`.
 pub fn replay_veil_trace_file(
     path: &Path,
     target_override: Option<ReplayTarget>,
@@ -960,7 +1057,7 @@ pub fn replay_veil_trace_file(
     let transitions: Vec<String> = trace
         .states
         .iter()
-        .skip(1) // index 0 is `after_init`
+        .skip(1)
         .map(|s| match &s.transition {
             serde_json::Value::String(name) => name.clone(),
             other => other.to_string(),
@@ -1011,18 +1108,13 @@ pub fn replay_veil_trace_file(
                         };
                         actions.push(FlashReplayAction::Save(v));
                     }
-                    "eraseOther" => {
-                        // Internal step of `FlashStore::save` before write completes.
-                    }
+                    "eraseOther" | "ackSave" | "powerCutClean" => {}
                     "writeComplete" | "writeLanded" => {
                         let v = pending_val.take().unwrap_or_else(|| {
                             next_val += 1;
                             next_val
                         });
                         actions.push(FlashReplayAction::Save(v));
-                    }
-                    "ackSave" => {
-                        // Completion of `FlashStore::save` after `writeLanded`.
                     }
                     "powerCut" | "powerCutPartialErase" | "powerCutTornWrite" => {
                         if let Some(v) = pending_val.take() {
@@ -1036,19 +1128,12 @@ pub fn replay_veil_trace_file(
                             actions.push(FlashReplayAction::SaveWithCut { val: v, budget });
                         }
                     }
-                    "powerCutClean" => {
-                        // Idle or post-write power cut; next `rebootScan` reloads from flash.
-                    }
-                    "rebootScan" => {
-                        actions.push(FlashReplayAction::RebootLoad);
-                    }
-                    _ => {
-                        bail!(
-                            "unsupported transition {:?} at step {} for target `flash-store`",
-                            name,
-                            step_idx + 1
-                        );
-                    }
+                    "rebootScan" => actions.push(FlashReplayAction::RebootLoad),
+                    _ => bail!(
+                        "unsupported transition {:?} at step {} for target `flash-store`",
+                        name,
+                        step_idx + 1
+                    ),
                 }
             }
             if append && !matches!(actions.last(), Some(FlashReplayAction::RebootLoad)) {
@@ -1088,9 +1173,8 @@ pub fn replay_veil_trace_file(
                     match op {
                         "startEmergency" => *pending_cmd = Some(MotorCmd::RequestEmergency),
                         "startClearEmergency" => *pending_cmd = Some(MotorCmd::ClearEmergency),
-                        "compute" | "beginSave" | "savePersist" | "notify" | "finish" | "monitorPoll" | "powerLoss" => {
-                            // Internal phases / non-actuator observer steps of `DeviceEngine`.
-                        }
+                        "compute" | "beginSave" | "savePersist" | "notify" | "finish"
+                        | "monitorPoll" | "powerLoss" => {}
                         "publish" => {
                             if let Some(cmd) = pending_cmd.take() {
                                 actions.push(DeviceEngineReplayAction::Execute(cmd));
@@ -1117,13 +1201,11 @@ pub fn replay_veil_trace_file(
                             *pending_cmd = None;
                             actions.push(DeviceEngineReplayAction::Restore);
                         }
-                        _ => {
-                            bail!(
-                                "unsupported transition {:?} at step {} for target `device-engine`",
-                                name,
-                                offset + i + 1
-                            );
-                        }
+                        _ => bail!(
+                            "unsupported transition {:?} at step {} for target `device-engine`",
+                            name,
+                            offset + i + 1
+                        ),
                     }
                 }
                 Ok(actions)
@@ -1137,9 +1219,6 @@ pub fn replay_veil_trace_file(
                         trace.states.len()
                     );
                 }
-                // `transitions[k]` is the transition leading into `states[k + 1]`.
-                // Prefix ends at `states[loop_start]` => `transitions[..loop_start]`.
-                // Cycle starts from `states[loop_start]` => `transitions[loop_start..]`.
                 let mut pending = None;
                 let prefix_actions = translate(&transitions[..loop_start], 0, &mut pending)?;
                 let cycle_actions = translate(&transitions[loop_start..], loop_start, &mut pending)?;
@@ -1148,8 +1227,8 @@ pub fn replay_veil_trace_file(
                 } else {
                     replay_real_device_engine_lasso::<false>(&prefix_actions, &cycle_actions)
                 };
-                let verdict = if out.liveness_lasso_confirmed {
-                    ReplayVerdict::LivenessLassoReproduced
+                let verdict = if out.projected_cycle_reproduced {
+                    ReplayVerdict::ProjectedCycleReproduced
                 } else if out.emergency_committed && !out.actuator_observed_stop {
                     ReplayVerdict::PartialFiniteTrace
                 } else {
@@ -1160,11 +1239,11 @@ pub fn replay_veil_trace_file(
                     mode: ReplayMode::ExactTrace,
                     verdict,
                     steps_replayed: out.prefix_steps + out.cycle_steps * 2,
-                    reproduced_violation: out.liveness_lasso_confirmed,
+                    reproduced_violation: out.projected_cycle_reproduced,
                     detail: format!(
-                        "real h5i_app_embedded::kernel::DeviceEngine lasso (latched={latched}): emergency_committed={}, cycle_closed={}, actuator_poll_in_cycle={}, actuator_observed_stop={}, clear_refused={}, final_version={}",
+                        "real h5i_app_embedded::kernel::DeviceEngine projected-cycle replay (latched={latched}, projection=(snapshot, notify_pending, actuator_motor_on)): emergency_committed={}, projected_cycle_closed={}, actuator_poll_in_cycle={}, actuator_observed_stop={}, clear_refused={}, final_version={}",
                         out.emergency_committed,
-                        out.cycle_closed,
+                        out.projected_cycle_closed,
                         out.actuator_poll_in_cycle,
                         out.actuator_observed_stop,
                         out.clear_refused_count,
@@ -1173,7 +1252,6 @@ pub fn replay_veil_trace_file(
                 });
             }
 
-            // Finite trace without a lasso (`loop_start` absent): cannot confirm a liveness violation.
             let mut pending = None;
             let actions = translate(&transitions, 0, &mut pending)?;
             let out = if latched {
@@ -1193,7 +1271,7 @@ pub fn replay_veil_trace_file(
                 steps_replayed: out.steps_replayed,
                 reproduced_violation: false,
                 detail: format!(
-                    "real h5i_app_embedded::kernel::DeviceEngine finite trace (latched={latched}, no lasso `loop_start`): emergency_committed={}, actuator_observed_stop={}, clear_refused={}, final_version={} (finite trace alone does not confirm a liveness counterexample)",
+                    "real h5i_app_embedded::kernel::DeviceEngine finite trace (latched={latched}, no lasso `loop_start`): emergency_committed={}, actuator_observed_stop={}, clear_refused={}, final_version={} (finite trace alone does not reproduce a cycle)",
                     out.emergency_committed,
                     out.actuator_observed_stop,
                     out.clear_refused_count,
@@ -1257,46 +1335,88 @@ mod tests {
     }
 
     #[test]
-    fn unrelated_lake_project_without_veil_is_rejected_not_passed() {
-        let d = tempfile::tempdir().unwrap();
-        std::fs::write(
-            d.path().join(FILE),
-            "[verification]\ntemporal = true\ntemporal_backend = \"veil\"\n",
-        )
-        .unwrap();
-        let tdir = d.path().join("proofs/temporal");
-        std::fs::create_dir_all(&tdir).unwrap();
-        std::fs::write(tdir.join("lakefile.lean"), "import Lake\nopen Lake DSL\npackage decoy\n")
-            .unwrap();
-        std::fs::write(tdir.join("Decoy.lean"), "theorem trivial_ok : True := trivial\n").unwrap();
-        assert!(!lakefile_uses_veil(&tdir).unwrap());
+    fn gate_parser_rejects_def_and_statement_mismatch_and_forged_nonce() {
+        let theorems = vec![
+            TemporalTheoremSpec::Detailed {
+                name: "Demo.fake_def".into(),
+                statement: None,
+                scope: Some(VerificationScope::ImplementationLevel),
+            },
+            TemporalTheoremSpec::Detailed {
+                name: "Demo.wrong_prop".into(),
+                statement: Some("∀ n : Nat, n = n".into()),
+                scope: Some(VerificationScope::ImplementationLevel),
+            },
+            TemporalTheoremSpec::Detailed {
+                name: "Demo.real_thm".into(),
+                statement: Some("∀ n : Nat, n = n".into()),
+                scope: Some(VerificationScope::ImplementationLevel),
+            },
+        ];
+        let checks = vec![
+            TemporalVeilCheckSpec {
+                name: "Demo#model_check".into(),
+                module: "Demo".into(),
+                kind: "safety".into(),
+                property: None,
+                instantiation: "{}".into(),
+                theory: "{}".into(),
+            },
+            TemporalVeilCheckSpec {
+                name: "live_prop".into(),
+                module: "Demo".into(),
+                kind: "temporal".into(),
+                property: Some("live_prop".into()),
+                instantiation: "{}".into(),
+                theory: "{}".into(),
+            },
+        ];
+        let nonce = "deadbeef01234567";
+        // Include a forged line with a different nonce (must be ignored).
+        let output = format!(
+            "H5I-TEMPORAL-THM-forged0000000000 {{\"name\":\"Demo.fake_def\",\"status\":\"ok\",\"axioms\":[]}}\n\
+             H5I-TEMPORAL-THM-{nonce} {{\"name\":\"Demo.fake_def\",\"status\":\"not_theorem\",\"detail\":\"expected a theorem, found `def`\"}}\n\
+             H5I-TEMPORAL-THM-{nonce} {{\"name\":\"Demo.wrong_prop\",\"status\":\"statement_mismatch\",\"detail\":\"expected `∀ n, n = n`, found `True`\"}}\n\
+             H5I-TEMPORAL-THM-{nonce} {{\"name\":\"Demo.real_thm\",\"status\":\"ok\",\"axioms\":[\"propext\"]}}\n\
+             H5I-TEMPORAL-VEIL-{nonce} {{\"name\":\"Demo#model_check\",\"kind\":\"safety\",\"veil\":{{\"result\":\"no_violation_found\",\"explored_states\":576,\"termination_reason\":{{\"kind\":\"explored_all_reachable_states\"}}}}}}\n\
+             H5I-TEMPORAL-VEIL-{nonce} {{\"name\":\"live_prop\",\"kind\":\"temporal\",\"veil\":{{\"result\":\"no_violation_found\",\"properties_checked\":1,\"explored_states\":1152,\"timing\":{{\"properties\":[{{\"property\":\"live_prop\",\"verdict\":\"holds\"}}]}}}}}}\n\
+             H5I-TEMPORAL-DONE-{nonce}\n"
+        );
+        let props = parse_temporal_gate(&output, nonce, true, &theorems, &checks).unwrap();
+        assert_eq!(props.len(), 5);
+        assert_eq!(props[0].status, TemporalPropertyStatus::Failed);
+        assert!(props[0].detail.as_deref().unwrap().contains("not_theorem"));
+        assert_eq!(props[1].status, TemporalPropertyStatus::Failed);
+        assert!(props[1].detail.as_deref().unwrap().contains("statement_mismatch"));
+        assert_eq!(props[2].status, TemporalPropertyStatus::Passed);
+        assert_eq!(props[2].scope, VerificationScope::ImplementationLevel);
+        assert_eq!(props[3].status, TemporalPropertyStatus::Passed);
+        assert_eq!(props[3].scope, VerificationScope::ModelLevel);
+        assert_eq!(props[4].status, TemporalPropertyStatus::Passed);
+        assert_eq!(props[4].scope, VerificationScope::ModelLevel);
+
+        // Missing DONE marker must fail even if exit status is true.
+        let missing_done = output.replace(&format!("H5I-TEMPORAL-DONE-{nonce}"), "");
+        assert!(parse_temporal_gate(&missing_done, nonce, true, &theorems, &checks).is_err());
     }
 
     #[test]
-    fn parses_veil_checks_and_detects_suppressed_required_property() {
-        let d = tempfile::tempdir().unwrap();
-        std::fs::write(
-            d.path().join("Model.lean"),
-            "veil module Demo\n#model_check interpreted {} {}\nset_option veil.violationIsError false in\n#temporal_check [bad_prop] interpreted {} {}\n#temporal_check [good_prop] interpreted {} {}\nend Demo\n",
-        )
-        .unwrap();
-        let (_files, checks) = discover_veil_checks(d.path()).unwrap();
-        assert_eq!(checks.len(), 3);
-        assert_eq!(checks[0].name, "Demo#model_check");
-        assert!(!checks[0].suppressed);
-        assert_eq!(checks[1].name, "bad_prop");
-        assert!(checks[1].suppressed);
-        assert_eq!(checks[2].name, "good_prop");
-        assert!(!checks[2].suppressed);
-
-        let parsed = parse_veil_build_output(
-            "info: Model.lean:2:0: ✅ No violation (explored 12 states)\n\
-             info: Model.lean:4:0: ❌ Violation: liveness_failure\n\
-             info: Model.lean:5:0: ✅ No liveness violation (checked 1 properties, explored 24 product states)\n",
+    fn gate_parser_marks_incomplete_depth_bounded_veil_search_as_unknown() {
+        let checks = vec![TemporalVeilCheckSpec {
+            name: "Demo#model_check".into(),
+            module: "Demo".into(),
+            kind: "safety".into(),
+            property: None,
+            instantiation: "{}".into(),
+            theory: "{}".into(),
+        }];
+        let nonce = "0123456789abcdef";
+        let output = format!(
+            "H5I-TEMPORAL-VEIL-{nonce} {{\"name\":\"Demo#model_check\",\"kind\":\"safety\",\"veil\":{{\"result\":\"no_violation_found\",\"explored_states\":42,\"termination_reason\":{{\"kind\":\"early_termination\"}}}}}}\n\
+             H5I-TEMPORAL-DONE-{nonce}\n"
         );
-        assert_eq!(parsed[&("Model.lean".into(), 2)].0, TemporalPropertyStatus::Passed);
-        assert_eq!(parsed[&("Model.lean".into(), 4)].0, TemporalPropertyStatus::Counterexample);
-        assert_eq!(parsed[&("Model.lean".into(), 5)].0, TemporalPropertyStatus::Passed);
+        let props = parse_temporal_gate(&output, nonce, true, &[], &checks).unwrap();
+        assert_eq!(props[0].status, TemporalPropertyStatus::Unknown);
     }
 
     #[test]
@@ -1341,7 +1461,7 @@ mod tests {
     }
 
     #[test]
-    fn finite_device_engine_trace_without_lasso_is_partial_not_confirmed_liveness_violation() {
+    fn finite_device_engine_trace_without_lasso_is_partial_not_reproduced_cycle() {
         let d = tempfile::tempdir().unwrap();
         let trace_path = d.path().join("finite-de-trace.json");
         let veil_json = serde_json::json!({
@@ -1360,17 +1480,13 @@ mod tests {
         let rep = replay_veil_trace_file(&trace_path, None, false, false, None, false).unwrap();
         assert_eq!(rep.target, ReplayTarget::DeviceEngine);
         assert_eq!(rep.verdict, ReplayVerdict::PartialFiniteTrace);
-        assert!(
-            !rep.reproduced_violation,
-            "finite trace ending before actuatorPoll MUST NOT be claimed as a confirmed liveness violation: {rep:?}"
-        );
+        assert!(!rep.reproduced_violation);
     }
 
     #[test]
-    fn replays_veil_device_engine_coalescing_lasso_and_confirms_liveness_violation() {
+    fn replays_veil_device_engine_coalescing_lasso_as_projected_cycle() {
         let d = tempfile::tempdir().unwrap();
         let trace_path = d.path().join("veil-de-lasso.json");
-        // Explicit lasso (`loop_start: 0`): cycle = emergency -> clear -> actuatorPoll repeats forever.
         let veil_json = serde_json::json!({
             "theory": {},
             "loop_start": 0,
@@ -1397,10 +1513,8 @@ mod tests {
 
         let rep = replay_veil_trace_file(&trace_path, None, false, false, None, false).unwrap();
         assert_eq!(rep.target, ReplayTarget::DeviceEngine);
-        assert_eq!(rep.verdict, ReplayVerdict::LivenessLassoReproduced);
-        assert!(
-            rep.reproduced_violation,
-            "closed fair coalescing lasso MUST confirm liveness violation on real DeviceEngine: {rep:?}"
-        );
+        assert_eq!(rep.verdict, ReplayVerdict::ProjectedCycleReproduced);
+        assert!(rep.reproduced_violation);
+        assert!(rep.detail.contains("projection=(snapshot, notify_pending, actuator_motor_on)"));
     }
 }

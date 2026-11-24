@@ -1,47 +1,42 @@
-module
-
-public import Veil
-public import H5iAppVeil
+import Veil
+import Aeneas
+import ThermostatKernel
+import Proofs
+import H5iAppVeil
 
 /-!
 # Optional Veil Temporal Verification for `examples/embedded/thermostat`
 
 Complements the Aeneas safety proofs in `../Proofs.lean` (`transition_total`,
-`inv_reachable`, `interlock`) with temporal logic verification of the
-multi-task closed loop in `firmware/src/main.rs` (`sense`, `actuate`, HTTP
-admin commands over `DeviceEngine`):
+`inv_reachable`, `interlock`) with both model-level and implementation-level
+temporal logic verification of the multi-task closed loop in
+`firmware/src/main.rs` (`sense`, `actuate`, HTTP admin commands over
+`DeviceEngine`):
 
-1. **Veil Closed-Loop Model (`ThermostatClosedLoop`)**:
-   - Models the thermostat kernel (`Mode::{Off, Heat, Auto}`, `heater_on`,
-     `settle`), the `sense` task (TMP108 readings + fail-safe `MAX_TEMP_DC`
-     report when the sensor fails), and the `actuate` task (`DeviceEngine::changed`
-     driving the physical PD12 heater GPIO pin).
-   - Exhaustively checks safety invariants via Veil **`#model_check`**:
-     * `kernel_interlock`: `snapHeater → snapTemp ≠ overtemp ∧ snapMode ≠ off`
-     * `actuator_sync`: `version = actuatorSeen → pinHeater = snapHeater`
-     * `auto_matches_setpoint`: in `auto` mode, `snapHeater` holds only when
-       temperature is strictly below setpoint.
-   - Exhaustively checks temporal liveness & fail-safe properties under Lentil
-     weak fairness (`𝒲ℱ`) via Veil's Lasso **`#temporal_check`**:
-     * `overtemp_eventually_stops_pin`: persistent physical overheating
-       eventually turns the physical PD12 heater pin off and keeps it off.
-     * `sensor_failure_fails_safe`: persistent I2C sensor failure triggers the
-       fail-safe `MAX_TEMP_DC` report and eventually turns the physical heater
-       pin off.
-     * `off_mode_stops_pin`: switching to `Mode::Off` eventually turns the
-       physical heater pin off.
-     * `auto_heats_when_cold`: staying cold in `Mode::Auto` with a healthy
-       sensor eventually turns the physical heater pin on.
-2. **Kernel Bridge & Refinement (`ThermostatTemporal.KernelBridge`)**:
-   - Connects the full-precision thermostat kernel (`Int` temperatures,
-     `MIN_SETPOINT_DC = 50`, `MAX_SETPOINT_DC = 300`, `MAX_TEMP_DC = 350`,
-     `RELAYS = 4`) to `H5iAppVeil.kernelRTS`, lifts `Inv` to Lentil's
-     `□ ⌜ Inv ⌝` via `H5iAppVeil.lentil_always_of_run_inv`, and proves
-     `StutterRefines` from the concrete `DeviceEngine` + actuator runtime
-     transition system to the abstract `thermostatKernelRTS`.
+1. **Model-Level Veil Closed-Loop Checks (`ThermostatClosedLoop`)**:
+   - Finite-state Veil DSL abstraction of the thermostat kernel, `sense` task,
+     and `actuate` task.
+   - Exhaustively checks safety invariants via Veil **`#model_check`** and
+     temporal liveness / fail-safe properties under Lentil weak fairness (`𝒲ℱ`)
+     via Veil's Lasso **`#temporal_check`**.
+2. **Implementation-Level Bridge & Liveness (`ThermostatTemporal.ExtractedBridge`)**:
+   - Imports the **actual Aeneas-extracted** `thermostat_kernel.transition`
+     (`../generated/ThermostatKernel.lean`) and existing safety proof
+     `thermostat_kernel.Proofs.inv_reachable` (`../Proofs.lean`) directly —
+     with no manual re-encoding of the thermostat kernel.
+   - Lifts `inv_reachable` directly into Lentil's `□ ⌜ Inv ⌝` via
+     `H5iAppVeil.lentil_always_of_run_inv`.
+   - Proves `StutterRefines` from the concrete firmware closed-loop transition
+     system (`extractedFirmwareRTS`, executing `thermostat_kernel.transition`)
+     to `thermostatKernelRTS`.
+   - Proves the nontrivial Lentil temporal liveness theorem
+     `extracted_thermostat_overtemp_liveness` directly over the extracted
+     implementation: under weak fairness of `senseReport` and `actuatePoll`,
+     persistent physical overheating (`350 ≤ physTemp.val`) or sensor failure
+     (`sensorFailed = true`) guarantees `◇ □ ⌜ pinHeater = false ⌝`.
 -/
 
-/-! ## 1. Closed-Loop Thermostat + `DeviceEngine` Veil Model -/
+/-! ## 1. Closed-Loop Thermostat + `DeviceEngine` Veil Model (Model-Level) -/
 
 veil module ThermostatClosedLoop
 
@@ -267,246 +262,402 @@ temporal [auto_heats_when_cold]
 
 end ThermostatClosedLoop
 
-/-! ## 2. Full-Precision Kernel Bridge & Refinement (`H5iAppVeil`) -/
+/-! ## 2. Direct Bridge & Temporal Liveness over the Aeneas-Extracted Kernel -/
 
-@[expose] public section
+namespace ThermostatTemporal.ExtractedBridge
 
-namespace ThermostatTemporal.KernelBridge
+open Aeneas Aeneas.Std Result H5iAppVeil thermostat_kernel thermostat_kernel.Proofs
 
-open H5iAppVeil
-
-def minSetpointDc : Int := 50
-def maxSetpointDc : Int := 300
-def maxTempDc : Int := 350
-def relaysCount : Nat := 4
-
-structure Device where
-  admin : Bool
-deriving DecidableEq, Repr
-
-inductive KMode where
-  | off
-  | heat
-  | auto
-deriving DecidableEq, Repr
-
-structure Snapshot where
-  setpointDc : Int
-  tempDc : Int
-  heater : Bool
-  relays : Fin relaysCount → Bool
-  mode : KMode
-
-inductive Command where
-  | setSetpoint (dc : Int)
-  | reportTemp (dc : Int)
-  | setRelay (idx : Nat) (on : Bool)
-  | setMode (mode : KMode)
-  | read
-deriving DecidableEq, Repr
-
-inductive Error where
-  | setpointOutOfRange
-  | noSuchRelay
-  | forbidden
-deriving DecidableEq, Repr
-
-def initialSnapshot : Snapshot where
-  setpointDc := 200
-  tempDc := 200
-  heater := false
-  relays := fun _ => false
-  mode := .off
-
-def heaterOn (m : KMode) (tempDc setpointDc : Int) : Bool :=
-  if tempDc ≥ maxTempDc then
-    false
-  else
-    match m with
-    | .off => false
-    | .heat => true
-    | .auto => decide (tempDc < setpointDc)
-
-def settle (s : Snapshot) : Snapshot :=
-  { s with heater := heaterOn s.mode s.tempDc s.setpointDc }
-
-/-- Pure Lean specification of `examples/embedded/thermostat/kernel/src/lib.rs::transition`. -/
-def thermostatTransition (actor : Device) (s : Snapshot) :
-    Command → Except Error (Option Snapshot × Snapshot)
-  | .read => .ok (none, s)
-  | .reportTemp dc =>
-      let n := settle { s with tempDc := dc }
-      .ok (some n, n)
-  | .setSetpoint dc =>
-      if !actor.admin then
-        .error .forbidden
-      else if dc < minSetpointDc ∨ dc > maxSetpointDc then
-        .error .setpointOutOfRange
-      else
-        let n := settle { s with setpointDc := dc }
-        .ok (some n, n)
-  | .setRelay idx on =>
-      if !actor.admin then
-        .error .forbidden
-      else if idx < relaysCount then
-        let n := { s with relays := fun i => if i.val = idx then on else s.relays i }
-        .ok (some n, n)
-      else
-        .error .noSuchRelay
-  | .setMode m =>
-      if !actor.admin then
-        .error .forbidden
-      else
-        let n := settle { s with mode := m }
-        .ok (some n, n)
-
-def applyW (s : Snapshot) : Option Snapshot → Snapshot
-  | none => s
-  | some n => n
-
-/-- Abstract `Veil.RelationalTransitionSystem` derived directly from `thermostatTransition`
-+ `applyW` via `H5iAppVeil.kernelRTS`. -/
+/-- The Veil `RelationalTransitionSystem` of the **actual Aeneas-extracted**
+`thermostat_kernel.transition` (from `../generated/ThermostatKernel.lean`). -/
 def thermostatKernelRTS :
-    Veil.RelationalTransitionSystem Unit Snapshot (KernelEvent Device Command Snapshot Error) :=
-  kernelRTS thermostatTransition id applyW initialSnapshot
+    Veil.RelationalTransitionSystem Unit Snapshot
+      (H5iAppLib.Event Device Command Reply thermostat_kernel.Error) :=
+  H5iAppVeil.kernelRTS
+    thermostat_kernel.transition
+    id
+    thermostat_kernel.Proofs.applyW
+    thermostat_kernel.INITIAL
 
-/-- Safety invariant matching `examples/embedded/thermostat/proofs/Proofs.lean::Inv`. -/
-def Inv (s : Snapshot) : Prop :=
-  (s.heater = true → s.tempDc < maxTempDc) ∧ minSetpointDc ≤ s.setpointDc ∧ s.setpointDc ≤ maxSetpointDc
-
-private theorem heaterOn_interlock (m : KMode) (t sp : Int) (h : heaterOn m t sp = true) :
-    t < maxTempDc := by
-  unfold heaterOn at h
-  by_cases hge : t ≥ maxTempDc
-  · simp [hge] at h
-  · omega
-
-theorem inv_initial : Inv initialSnapshot := by
-  simp [Inv, initialSnapshot, minSetpointDc, maxSetpointDc]
-
-theorem inv_step {a : Device} {s : Snapshot} {c : Command} {ws : Option Snapshot} {r : Snapshot}
-    (hs : Inv s) (ht : thermostatTransition a s c = .ok (ws, r)) :
-    Inv (applyW s ws) := by
-  obtain ⟨hh, hlo, hhi⟩ := hs
-  cases c with
-  | read =>
-    cases ht
-    exact ⟨hh, hlo, hhi⟩
-  | reportTemp dc =>
-    cases ht
-    exact ⟨fun h => heaterOn_interlock _ _ _ h, hlo, hhi⟩
-  | setSetpoint dc =>
-    unfold thermostatTransition at ht
-    by_cases hadm : a.admin = true
-    · simp only [hadm, Bool.not_true, Bool.false_eq_true, ↓reduceIte] at ht
-      by_cases hbad : dc < minSetpointDc ∨ dc > maxSetpointDc
-      · simp [hbad] at ht
-      · simp only [hbad, ↓reduceIte, Except.ok.injEq, Prod.mk.injEq] at ht
-        rcases ht with ⟨rfl, _⟩
-        refine ⟨fun h => heaterOn_interlock _ _ _ h, ?_, ?_⟩ <;> (simp [applyW, settle]; omega)
-    · have hfalse : a.admin = false := by cases h : a.admin <;> simp_all
-      simp [hfalse] at ht
-  | setRelay idx on =>
-    unfold thermostatTransition at ht
-    by_cases hadm : a.admin = true
-    · simp only [hadm, Bool.not_true, Bool.false_eq_true, ↓reduceIte] at ht
-      by_cases hlt : idx < relaysCount
-      · simp only [hlt, ↓reduceIte, Except.ok.injEq, Prod.mk.injEq] at ht
-        rcases ht with ⟨rfl, _⟩
-        exact ⟨hh, hlo, hhi⟩
-      · simp [hlt] at ht
-    · have hfalse : a.admin = false := by cases h : a.admin <;> simp_all
-      simp [hfalse] at ht
-  | setMode m =>
-    unfold thermostatTransition at ht
-    by_cases hadm : a.admin = true
-    · simp only [hadm, Bool.not_true, Bool.false_eq_true, ↓reduceIte, Except.ok.injEq, Prod.mk.injEq] at ht
-      rcases ht with ⟨rfl, _⟩
-      exact ⟨fun h => heaterOn_interlock _ _ _ h, hlo, hhi⟩
-    · have hfalse : a.admin = false := by cases h : a.admin <;> simp_all
-      simp [hfalse] at ht
-
-theorem inv_run {st : Snapshot} {evs : List (KernelEvent Device Command Snapshot Error)}
-    (hr : H5iAppVeil.ModelRun thermostatTransition id applyW initialSnapshot st evs) :
-    Inv st := by
-  induction hr with
-  | nil => exact inv_initial
-  | ok _ hst ht ih =>
-    subst hst
-    exact inv_step ih ht
-  | err _ _ _ ih => exact ih
-
-/-- **Lentil lifting**: every infinite execution of `thermostatKernelRTS`
-satisfies `□ ⌜ Inv ⌝` (interlock and setpoint bounds at every step).
-Note: this operates on the Lean `v4.35.0` model-level specification
-(`H5iAppVeil.ModelRun`); formal composition with the Aeneas-extracted
-`v4.31.0` proof in `../Proofs.lean` awaits a shared Aeneas/Veil Lean toolchain. -/
-theorem thermostat_always_inv
+/-- Direct lift of the existing Aeneas safety theorem
+`thermostat_kernel.Proofs.inv_reachable` (proven over `H5iAppLib.Run`) into
+Lentil's `□ ⌜ Inv ⌝` on every infinite execution of the extracted kernel. -/
+theorem extracted_thermostat_always_inv
     (e : Lentil.exec Snapshot)
     (hInit : thermostatKernelRTS.init () (e 0))
     (hNext : ∀ n, thermostatKernelRTS.next () (e n) (e (n + 1)) ∨ e (n + 1) = e n) :
-    Lentil.always (Lentil.state_pred Inv) e 0 :=
-  lentil_always_of_modelRun_inv (fun _ _ hr => inv_run hr) e hInit hNext
+    Lentil.always (Lentil.state_pred thermostat_kernel.Proofs.Inv) e 0 :=
+  H5iAppVeil.lentil_always_of_run_inv
+    (fun _ _ h => thermostat_kernel.Proofs.inv_reachable h) e hInit hNext
 
-/-- Concrete runtime state of `firmware/src/main.rs` (`DeviceEngine` + `actuate` task). -/
+/-- Concrete firmware closed-loop state executing the **actual Aeneas-extracted**
+`thermostat_kernel.transition` inside `DeviceEngine`
+(`examples/embedded/thermostat/firmware/src/main.rs`). -/
 structure FirmwareState where
-  snapshot : Snapshot
-  version : Nat
-  actuatorSeen : Nat
+  snap : Snapshot
+  physTemp : Std.I16
+  sensorFailed : Bool
+  notifyPending : Bool
   pinHeater : Bool
 
+def firmwareInit : FirmwareState where
+  snap := thermostat_kernel.INITIAL
+  physTemp := 200#i16
+  sensorFailed := false
+  notifyPending := false
+  pinHeater := false
+
+/-- The temperature reported by `firmware/src/main.rs`'s `sense` task:
+`MAX_TEMP_DC` (350) when the TMP108 I2C sensor is unreadable, else `physTemp`. -/
+def reportedTemp (s : FirmwareState) : Std.I16 :=
+  if s.sensorFailed then thermostat_kernel.MAX_TEMP_DC else s.physTemp
+
 inductive FirmwareLabel where
-  | exec (a : Device) (c : Command)
+  | adminCmd (actor : Device) (cmd : Command)
+  | senseReport
   | actuatePoll
-deriving DecidableEq, Repr
+  | envTemp (t' : Std.I16)
+  | envSensor (failed' : Bool)
 
-inductive FirmwareStep : FirmwareState → FirmwareLabel → FirmwareState → Prop
-  | execOk {s a c ws r} :
-      thermostatTransition a s.snapshot c = .ok (ws, r) →
-      FirmwareStep s (.exec a c)
-        { s with snapshot := applyW s.snapshot ws, version := s.version + 1 }
-  | execErr {s a c e} :
-      thermostatTransition a s.snapshot c = .error e →
-      FirmwareStep s (.exec a c) s
-  | actuatePoll {s} :
-      s.version ≠ s.actuatorSeen →
-      FirmwareStep s .actuatePoll
-        { s with actuatorSeen := s.version, pinHeater := s.snapshot.heater }
+/-- Firmware closed-loop step relation (`firmware/src/main.rs`):
+- `adminOk`/`adminErr`: HTTP routes (`SetSetpoint`, `SetMode`, `SetRelay`,
+  `Read`; HTTP routes never send `ReportTemp`, see `app/src/lib.rs`) executing
+  the actual Aeneas-extracted `thermostat_kernel.transition`.
+- `senseReport`: `sense` task reporting `reportedTemp s` via the actual
+  extracted `thermostat_kernel.transition`.
+- `actuatePoll`: `actuate` task waking from `DeviceEngine::changed` and driving
+  the physical PD12 heater GPIO pin.
+- `envTemp`/`envSensor`: physical temperature and I2C sensor health changes. -/
+inductive FirmwareStep : FirmwareLabel → FirmwareState → FirmwareState → Prop where
+  | adminOk {actor : Device} {cmd : Command} {s : FirmwareState}
+      {ws : Option Snapshot} {r : Reply}
+      (hNotTemp : ∀ dc, cmd ≠ Command.ReportTemp dc)
+      (ht : thermostat_kernel.transition actor s.snap cmd = ok (.Ok (ws, r))) :
+      FirmwareStep (.adminCmd actor cmd) s
+        { s with
+          snap := applyW s.snap ws
+          notifyPending := match ws with | some _ => true | none => s.notifyPending }
+  | adminErr {actor : Device} {cmd : Command} {s : FirmwareState} {err : thermostat_kernel.Error}
+      (hNotTemp : ∀ dc, cmd ≠ Command.ReportTemp dc)
+      (ht : thermostat_kernel.transition actor s.snap cmd = ok (.Err err)) :
+      FirmwareStep (.adminCmd actor cmd) s s
+  | senseReport {s : FirmwareState} {ws : Option Snapshot} {r : Reply}
+      (hDiff : s.snap.temp_dc ≠ reportedTemp s)
+      (ht : thermostat_kernel.transition { admin := false } s.snap
+              (Command.ReportTemp (reportedTemp s)) = ok (.Ok (ws, r))) :
+      FirmwareStep .senseReport s
+        { s with snap := applyW s.snap ws, notifyPending := true }
+  | actuatePoll {s : FirmwareState}
+      (hPend : s.notifyPending = true) :
+      FirmwareStep .actuatePoll s
+        { s with notifyPending := false, pinHeater := s.snap.heater }
+  | envTemp {s : FirmwareState} {t' : Std.I16} :
+      FirmwareStep (.envTemp t') s { s with physTemp := t' }
+  | envSensor {s : FirmwareState} {failed' : Bool} :
+      FirmwareStep (.envSensor failed') s { s with sensorFailed := failed' }
 
-def firmwareRTS : Veil.RelationalTransitionSystem Unit FirmwareState FirmwareLabel where
+/-- Veil `RelationalTransitionSystem` for the firmware closed loop executing
+the actual Aeneas-extracted `thermostat_kernel.transition`. -/
+def extractedFirmwareRTS :
+    Veil.RelationalTransitionSystem Unit FirmwareState FirmwareLabel where
   assumptions := fun _ => True
-  init := fun _ s =>
-    s = { snapshot := initialSnapshot, version := 0, actuatorSeen := 0, pinHeater := false }
-  tr := fun _ s lbl s' => FirmwareStep s lbl s'
+  init := fun _ s => s = firmwareInit
+  tr := fun _ s lbl s' => FirmwareStep lbl s s'
 
-/-- **Refinement theorem**: the concrete thermostat firmware (`DeviceEngine` +
-`actuate` task) stuttering-refines `thermostatKernelRTS` via committed snapshot
-projection, so every kernel safety invariant lifts directly to the firmware. -/
-theorem firmware_stutterRefines_thermostatKernel :
-    StutterRefines id FirmwareState.snapshot firmwareRTS thermostatKernelRTS where
-  assumptions_map := fun _ h => h
-  init_map := fun _ s _ hinit => by
+/-- Lentil action predicate for `senseReport`. -/
+def senseAction : Lentil.action FirmwareState :=
+  fun s s' => FirmwareStep .senseReport s s'
+
+/-- Lentil action predicate for `actuatePoll`. -/
+def actuateAction : Lentil.action FirmwareState :=
+  fun s s' => FirmwareStep .actuatePoll s s'
+
+/-- Stuttering refinement from the firmware closed loop directly to the
+Aeneas-extracted `thermostatKernelRTS`. -/
+theorem extractedFirmware_stutterRefines_kernel :
+    H5iAppVeil.StutterRefines id (fun fs => fs.snap) extractedFirmwareRTS thermostatKernelRTS where
+  assumptions_map := fun _ _ => trivial
+  init_map := fun _ _ _ hinit => by
     subst hinit
     rfl
-  step_map := fun _ s s' _ hnext => by
+  step_map := fun _ _ _ _ hnext => by
     obtain ⟨lbl, hstep⟩ := hnext
     cases hstep with
-    | execOk ht =>
-      left
-      exact ⟨.ok _ _ _, KernelStep.ok ht⟩
-    | execErr ht =>
-      left
-      exact ⟨.err _ _ _, KernelStep.err ht⟩
-    | actuatePoll _ =>
-      right
+    | adminOk _ ht => exact Or.inl ⟨.ok _ _ _, H5iAppVeil.KernelStep.ok ht⟩
+    | adminErr _ ht => exact Or.inl ⟨.err _ _ _, H5iAppVeil.KernelStep.err ht⟩
+    | senseReport _ ht => exact Or.inl ⟨.ok _ _ _, H5iAppVeil.KernelStep.ok ht⟩
+    | actuatePoll _ => exact Or.inr rfl
+    | envTemp => exact Or.inr rfl
+    | envSensor => exact Or.inr rfl
+
+/-- Safety transfer: every infinite execution of the firmware closed loop
+preserves `thermostat_kernel.Proofs.Inv` (interlock + setpoint bounds) on the
+committed snapshot at every step. -/
+theorem extracted_firmware_always_inv
+    (e : Lentil.exec FirmwareState)
+    (hInit : extractedFirmwareRTS.init () (e 0))
+    (hNext : ∀ n, extractedFirmwareRTS.next () (e n) (e (n + 1)) ∨ e (n + 1) = e n) :
+    Lentil.always (Lentil.state_pred (fun fs => thermostat_kernel.Proofs.Inv fs.snap)) e 0 :=
+  extractedFirmware_stutterRefines_kernel.lentil_always
+    (fun _ hr =>
+      let ⟨_, hrun⟩ := H5iAppVeil.run_iff_veil_reachable.mpr hr
+      thermostat_kernel.Proofs.inv_reachable hrun)
+    e trivial hInit hNext
+
+/-- Non-`ReportTemp` commands in the extracted `thermostat_kernel.transition`
+never alter `temp_dc`. -/
+private theorem adminCmd_preserves_temp
+    (actor : Device) (s : Snapshot) (cmd : Command)
+    (ws : Option Snapshot) (r : Reply)
+    (hNotTemp : ∀ dc, cmd ≠ Command.ReportTemp dc)
+    (ht : thermostat_kernel.transition actor s cmd = ok (.Ok (ws, r))) :
+    (applyW s ws).temp_dc = s.temp_dc := by
+  have h : thermostat_kernel.transition actor s cmd
+      ⦃ res => ∀ ws r, res = .Ok (ws, r) → (applyW s ws).temp_dc = s.temp_dc ⦄ := by
+    unfold thermostat_kernel.transition
+    have := relays_val
+    cases cmd with
+    | ReportTemp dc => exact False.elim (hNotTemp dc rfl)
+    | Read =>
+      step*
+      intro ws' r' heq
+      cases heq
       rfl
+    | SetSetpoint dc =>
+      step*
+      all_goals (intro ws' r' heq; cases heq; simp [applyW, *])
+    | SetMode m =>
+      step*
+      all_goals (intro ws' r' heq; cases heq; simp [applyW, *])
+    | SetRelay idx on =>
+      step*
+      all_goals (intro ws' r' heq; cases heq; simp [applyW, *])
+  exact H5iAppLib.post_of_ok h ht ws r rfl
 
-/-- Concrete consequence of refinement: every reachable firmware state satisfies
-the kernel's interlock and setpoint range invariants. -/
-theorem firmware_reachable_inv {s : FirmwareState} (hr : firmwareRTS.reachable () s) :
-    Inv s.snapshot := by
-  have habs := firmware_stutterRefines_thermostatKernel.reachable hr
-  obtain ⟨evs, hrun⟩ := modelRun_iff_veil_reachable.mpr habs
-  exact inv_run hrun
+/-- Reporting temperature `dc` via the extracted `thermostat_kernel.transition`
+always succeeds and sets `temp_dc = dc`. -/
+private theorem reportTemp_succeeds (actor : Device) (s : Snapshot) (dc : Std.I16) :
+    ∃ n, thermostat_kernel.transition actor s (.ReportTemp dc) = ok (.Ok (some n, .State n)) ∧
+      n.temp_dc = dc := by
+  have h : thermostat_kernel.transition actor s (.ReportTemp dc)
+      ⦃ res => ∃ n, res = .Ok (some n, .State n) ∧ n.temp_dc = dc ⦄ := by
+    unfold thermostat_kernel.transition
+    step*
+  obtain ⟨res, hok⟩ := H5iAppLib.ok_of h
+  obtain ⟨n, hres, htemp⟩ := H5iAppLib.post_of_ok h hok
+  subst hres
+  exact ⟨n, hok, htemp⟩
 
-end ThermostatTemporal.KernelBridge
+/-- Whenever `senseReport` runs via the extracted `thermostat_kernel.transition`,
+the committed snapshot's `temp_dc` becomes `dc`. -/
+private theorem reportTemp_sets_temp (actor : Device) (s : Snapshot) (dc : Std.I16)
+    (ws : Option Snapshot) (r : Reply)
+    (ht : thermostat_kernel.transition actor s (.ReportTemp dc) = ok (.Ok (ws, r))) :
+    (applyW s ws).temp_dc = dc := by
+  have h : thermostat_kernel.transition actor s (.ReportTemp dc)
+      ⦃ res => ∀ ws r, res = .Ok (ws, r) → (applyW s ws).temp_dc = dc ⦄ := by
+    unfold thermostat_kernel.transition
+    step*
+    intro ws' r' heq
+    cases heq
+    simp [applyW, *]
+  exact H5iAppLib.post_of_ok h ht ws r rfl
+
+/-- Whenever no `DeviceEngine` notification is pending, the physical PD12
+heater pin equals the committed kernel snapshot's `heater` field. -/
+theorem extracted_firmware_actuator_sync
+    (e : Lentil.exec FirmwareState)
+    (hInit : extractedFirmwareRTS.init () (e 0))
+    (hNext : ∀ n, extractedFirmwareRTS.next () (e n) (e (n + 1)) ∨ e (n + 1) = e n) :
+    Lentil.always (Lentil.state_pred (fun fs => fs.notifyPending = false → fs.pinHeater = fs.snap.heater)) e 0 := by
+  intro k
+  simp only [Lentil.state_pred, Nat.zero_add]
+  induction k with
+  | zero =>
+    intro _
+    have h0 : e 0 = firmwareInit := hInit
+    rw [h0]
+    unfold firmwareInit thermostat_kernel.INITIAL
+    rfl
+  | succ n ih =>
+    rcases hNext n with ⟨lbl, hstep⟩ | heq
+    · generalize hs : e n = s at ih hstep
+      generalize hs' : e (n + 1) = s' at hstep
+      cases hstep with
+      | @adminOk actor cmd s ws r hNotTemp ht =>
+        cases ws with
+        | none => simpa [applyW] using ih
+        | some n' => intro hfalse; cases hfalse
+      | adminErr _ _ => exact ih
+      | senseReport _ _ => intro hfalse; cases hfalse
+      | actuatePoll _ => intro _; rfl
+      | envTemp => exact ih
+      | envSensor => exact ih
+    · rw [heq]; exact ih
+
+/-- **Implementation-Level Temporal Liveness Theorem**:
+Along any infinite execution of `extractedFirmwareRTS` (running the **actual
+Aeneas-extracted `thermostat_kernel.transition`**), under Lentil weak fairness
+of `senseReport` and `actuatePoll`, if physical temperature persistently
+reaches/exceeds `MAX_TEMP_DC` (`350`) or the TMP108 sensor persistently fails,
+then the physical PD12 heater pin eventually turns off and stays off forever:
+`◇ □ ⌜ pinHeater = false ⌝`. -/
+theorem extracted_thermostat_overtemp_liveness
+    (e : Lentil.exec FirmwareState)
+    (hInit : extractedFirmwareRTS.init () (e 0))
+    (hNext : ∀ n, extractedFirmwareRTS.next () (e n) (e (n + 1)) ∨ e (n + 1) = e n)
+    (hFairSense : Lentil.weak_fairness senseAction e 0)
+    (hFairActuate : Lentil.weak_fairness actuateAction e 0)
+    (hOvertemp : Lentil.eventually
+      (Lentil.always (Lentil.state_pred (fun fs => 350 ≤ fs.physTemp.val ∨ fs.sensorFailed = true))) e 0) :
+    Lentil.eventually (Lentil.always (Lentil.state_pred (fun fs => fs.pinHeater = false))) e 0 := by
+  have hInvAll := extracted_firmware_always_inv e hInit hNext
+  have hSyncAll := extracted_firmware_actuator_sync e hInit hNext
+  obtain ⟨K, hK⟩ := hOvertemp
+  have hRepGe : ∀ j, K ≤ j → 350 ≤ (reportedTemp (e j)).val := by
+    intro j hj
+    obtain ⟨d, rfl⟩ := Nat.exists_eq_add_of_le hj
+    have hcond : 350 ≤ (e (K + d)).physTemp.val ∨ (e (K + d)).sensorFailed = true := by
+      simpa [Lentil.state_pred, Nat.zero_add] using hK d
+    unfold reportedTemp
+    cases hf : (e (K + d)).sensorFailed with
+    | true => simp [max_temp_val]
+    | false =>
+      simp only [Bool.false_eq_true, ↓reduceIte]
+      rcases hcond with hge | htrue
+      · exact hge
+      · rw [hf] at htrue; cases htrue
+  -- Phase 1: Under weak fairness of `senseAction`, there exists `K₁ ≥ K` with
+  -- `350 ≤ (e K₁).snap.temp_dc.val`.
+  have hSnapOvertemp : ∃ K₁, K ≤ K₁ ∧ 350 ≤ (e K₁).snap.temp_dc.val := by
+    by_contra hNo
+    push Not at hNo
+    have hEnabledAll : ∀ d, Lentil.tl_enabled senseAction e (K + d) := by
+      intro d
+      have hge := hRepGe (K + d) (Nat.le_add_right K d)
+      have hlt := hNo (K + d) (Nat.le_add_right K d)
+      have hDiff : (e (K + d)).snap.temp_dc ≠ reportedTemp (e (K + d)) := by
+        intro heq
+        rw [heq] at hlt
+        omega
+      obtain ⟨n', hok, _⟩ := reportTemp_succeeds { admin := false } (e (K + d)).snap (reportedTemp (e (K + d)))
+      exact ⟨{ e (K + d) with snap := applyW (e (K + d)).snap (some n'), notifyPending := true },
+        FirmwareStep.senseReport hDiff hok⟩
+    have hWF := (congrFun (congrFun Lentil.wf_as_implies e) 0).mp hFairSense
+    have hInfOften : Lentil.always (Lentil.eventually (Lentil.action_pred senseAction)) e 0 :=
+      hWF ⟨K, fun d => by simpa [Nat.zero_add] using hEnabledAll d⟩
+    obtain ⟨d, hSense⟩ := hInfOften K
+    have hStep : FirmwareStep .senseReport (e (K + d)) (e (K + d + 1)) := by
+      simpa [Lentil.action_pred, senseAction, Nat.zero_add] using hSense
+    generalize hs : e (K + d) = s at hStep
+    generalize hs' : e (K + d + 1) = s' at hStep
+    cases hStep with
+    | senseReport _ ht =>
+      have hTempEq : (applyW s.snap _).temp_dc = reportedTemp s :=
+        reportTemp_sets_temp _ _ _ _ _ ht
+      have hge := hRepGe (K + d) (Nat.le_add_right K d)
+      have hlt := hNo (K + d + 1) (by omega)
+      rw [hs'] at hlt
+      rw [hs] at hge
+      rw [hTempEq] at hlt
+      omega
+  obtain ⟨K₁, hKK₁, hTempK₁⟩ := hSnapOvertemp
+  -- Phase 2: Once `350 ≤ snap.temp_dc.val` at `K₁ ≥ K`, it persists forever,
+  -- so by `Inv`, `snap.heater = false` for all `j ≥ K₁`.
+  have hTempForever : ∀ d, 350 ≤ (e (K₁ + d)).snap.temp_dc.val := by
+    intro d
+    induction d with
+    | zero => simpa using hTempK₁
+    | succ m ih =>
+      rcases hNext (K₁ + m) with ⟨lbl, hstep⟩ | heq
+      · generalize hs : e (K₁ + m) = s at ih hstep
+        generalize hs' : e (K₁ + m + 1) = s' at hstep
+        cases hstep with
+        | adminOk hNotTemp ht =>
+          have hpres := adminCmd_preserves_temp _ _ _ _ _ hNotTemp ht
+          simpa [Nat.add_assoc, ← hs', hpres] using ih
+        | adminErr _ _ =>
+          simpa [Nat.add_assoc, ← hs'] using ih
+        | senseReport _ ht =>
+          have hTempEq := reportTemp_sets_temp _ _ _ _ _ ht
+          have hge := hRepGe (K₁ + m) (by omega)
+          rw [hs] at hge
+          simpa [Nat.add_assoc, ← hs', hTempEq] using hge
+        | actuatePoll _ =>
+          simpa [Nat.add_assoc, ← hs'] using ih
+        | envTemp =>
+          simpa [Nat.add_assoc, ← hs'] using ih
+        | envSensor =>
+          simpa [Nat.add_assoc, ← hs'] using ih
+      · rw [← Nat.add_assoc, heq]; exact ih
+  have hSnapHeaterOff : ∀ d, (e (K₁ + d)).snap.heater = false := by
+    intro d
+    have hinv : thermostat_kernel.Proofs.Inv (e (K₁ + d)).snap := by
+      simpa [Lentil.state_pred, Nat.zero_add] using hInvAll (K₁ + d)
+    have hge := hTempForever d
+    cases hh : (e (K₁ + d)).snap.heater with
+    | false => rfl
+    | true =>
+      have hlt := hinv.1 hh
+      omega
+  -- Phase 3: Under weak fairness of `actuateAction`, `pinHeater` reaches `false`
+  -- at some `K₂ ≥ K₁`.
+  have hPinTurnsOff : ∃ d₀, (e (K₁ + d₀)).pinHeater = false := by
+    by_contra hAllOn
+    push Not at hAllOn
+    have hPendAll : ∀ d, Lentil.tl_enabled actuateAction e (K₁ + d) := by
+      intro d
+      have hsync : (e (K₁ + d)).notifyPending = false →
+          (e (K₁ + d)).pinHeater = (e (K₁ + d)).snap.heater := by
+        simpa [Lentil.state_pred, Nat.zero_add] using hSyncAll (K₁ + d)
+      have hPend : (e (K₁ + d)).notifyPending = true := by
+        cases hp : (e (K₁ + d)).notifyPending with
+        | true => rfl
+        | false =>
+          have hpeq := hsync hp
+          rw [hSnapHeaterOff d] at hpeq
+          exact False.elim (hAllOn d hpeq)
+      exact ⟨{ e (K₁ + d) with notifyPending := false, pinHeater := (e (K₁ + d)).snap.heater },
+        FirmwareStep.actuatePoll hPend⟩
+    have hWF := (congrFun (congrFun Lentil.wf_as_implies e) 0).mp hFairActuate
+    have hInfOften : Lentil.always (Lentil.eventually (Lentil.action_pred actuateAction)) e 0 :=
+      hWF ⟨K₁, fun d => by simpa [Nat.zero_add] using hPendAll d⟩
+    obtain ⟨d, hAct⟩ := hInfOften K₁
+    have hStep : FirmwareStep .actuatePoll (e (K₁ + d)) (e (K₁ + d + 1)) := by
+      simpa [Lentil.action_pred, actuateAction, Nat.zero_add] using hAct
+    generalize hs : e (K₁ + d) = s at hStep
+    generalize hs' : e (K₁ + d + 1) = s' at hStep
+    cases hStep with
+    | actuatePoll _ =>
+      have hoff : s.snap.heater = false := by
+        rw [← hs]; exact hSnapHeaterOff d
+      have hpin : (e (K₁ + (d + 1))).pinHeater = false := by
+        rw [← Nat.add_assoc, hs']
+        exact hoff
+      exact hAllOn (d + 1) hpin
+  obtain ⟨d₀, hPinOff0⟩ := hPinTurnsOff
+  -- Phase 4: Once `pinHeater = false` at `K₁ + d₀`, it stays `false` forever
+  -- because `snap.heater = false` for all `j ≥ K₁`.
+  refine ⟨K₁ + d₀, fun m => ?_⟩
+  change (e (0 + (K₁ + d₀) + m)).pinHeater = false
+  rw [Nat.zero_add]
+  induction m with
+  | zero => simpa using hPinOff0
+  | succ k ih =>
+    rcases hNext (K₁ + d₀ + k) with ⟨lbl, hstep⟩ | heq
+    · generalize hs : e (K₁ + d₀ + k) = s at ih hstep
+      generalize hs' : e (K₁ + d₀ + k + 1) = s' at hstep
+      cases hstep with
+      | adminOk _ _ => simpa [Nat.add_assoc, ← hs'] using ih
+      | adminErr _ _ => simpa [Nat.add_assoc, ← hs'] using ih
+      | senseReport _ _ => simpa [Nat.add_assoc, ← hs'] using ih
+      | actuatePoll _ =>
+        have hoff : s.snap.heater = false := by
+          rw [← hs]
+          simpa [Nat.add_assoc] using hSnapHeaterOff (d₀ + k)
+        simpa [Nat.add_assoc, ← hs'] using hoff
+      | envTemp => simpa [Nat.add_assoc, ← hs'] using ih
+      | envSensor => simpa [Nat.add_assoc, ← hs'] using ih
+    · rw [← Nat.add_assoc, heq]; exact ih
+
+end ThermostatTemporal.ExtractedBridge

@@ -1,7 +1,5 @@
-module
-
-public import H5iAppVeil.KernelBridge
-public import H5iAppVeil.RunBridge
-public import H5iAppVeil.Refinement
-public import H5iAppVeil.Embedded.FlashStore
-public import H5iAppVeil.Embedded.DeviceEngine
+import H5iAppVeil.KernelBridge
+import H5iAppVeil.RunBridge
+import H5iAppVeil.Refinement
+import H5iAppVeil.Embedded.FlashStore
+import H5iAppVeil.Embedded.DeviceEngine

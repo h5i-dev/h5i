@@ -346,6 +346,18 @@ pub enum TemporalCheckKind {
     FiniteTemporalCheck,
 }
 
+/// Scope of a temporal verification obligation: proved over the Aeneas-extracted
+/// implementation vs checked over an abstract finite-state Veil model.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum VerificationScope {
+    /// Proved in Lean directly over the Aeneas-extracted implementation (`H5iAppLib.Run`).
+    ImplementationLevel,
+    /// Checked or proved over an abstract model (e.g., finite-state Veil DSL model).
+    #[default]
+    ModelLevel,
+}
+
 /// Property-level outcome recorded by `h5i app temporal-check`.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -357,12 +369,15 @@ pub enum TemporalPropertyStatus {
     Failed,
 }
 
-/// One required or discovered temporal verification obligation and its outcome.
+/// One required temporal verification obligation and its outcome.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct TemporalProperty {
     pub name: String,
     pub kind: TemporalCheckKind,
+    /// Whether this obligation verifies the Aeneas-extracted implementation or an abstract model.
+    #[serde(default)]
+    pub scope: VerificationScope,
     pub status: TemporalPropertyStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,

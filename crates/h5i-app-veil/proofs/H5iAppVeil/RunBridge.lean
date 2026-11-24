@@ -1,59 +1,36 @@
-module
+import Aeneas
+import H5iAppLib.Runs
+import H5iAppLib.Time
+import H5iAppVeil.KernelBridge
+import Veil.Core.Tools.ModelChecker.Trace
+import Lentil
 
-public import H5iAppVeil.KernelBridge
-public import Veil.Core.Tools.ModelChecker.Trace
-public import Lentil
-
-@[expose] public section
 /-!
-# Model-Level Run Bridge (`H5iAppVeil.RunBridge`)
+# Formal Run Bridge (`H5iAppVeil.RunBridge`)
 
-Connects finite serial runs (`H5iAppVeil.ModelRun`) directly to Veil's
-`Veil.RelationalTransitionSystem`, `Veil.ModelChecker.Trace`, and Lentil's
-infinite-execution temporal operators (`Lentil.exec`, `Lentil.always`,
-`Lentil.state_pred`).
+Establishes the direct formal equivalence between the **actual**
+`H5iAppLib.Run` / `H5iAppLib.ReachableT` (operating on Aeneas-extracted
+`Aeneas.Std.Result` functions) and Veil's `Veil.RelationalTransitionSystem`,
+`Veil.ModelChecker.Trace`, and Lentil's infinite-execution temporal operators
+(`Lentil.exec`, `Lentil.always`, `Lentil.state_pred`).
 
-## Current Integration Scope (Important)
-
-`H5iAppVeil.ModelRun` is **not** a direct import of `H5iAppLib.Run` yet:
-- `H5iAppLib.Run` (`crates/h5i-app-core/proofs/H5iAppLib/Runs.lean`) imports
-  `Aeneas` (`Aeneas.Std.Result`) and is pinned to Lean `v4.31.0`.
-- `H5iAppVeil` imports `Veil` (`verse-lab/veil @ v4.35.0`, providing Lentil and
-  Lasso `#temporal_check`), which requires Lean `v4.35.0` (no `v4.31.0` tag
-  exists, and upstream Aeneas `main` is on `v4.36.0`).
-
-Until Aeneas and Veil share a compatible Lean release, `ModelRun` serves as an
-`Except`-based mirror of `H5iAppLib.Run` for model-level temporal verification,
-and theorems proved here do not yet formally compose with Aeneas-extracted
-`H5iAppLib.Run` proofs across the toolchain boundary.
+Any existing Aeneas-extracted safety theorem proven over `H5iAppLib.Run`
+(such as `thermostat_kernel.Proofs.inv_reachable`) lifts directly — without
+reproving or translating the kernel — into Veil reachability and Lentil `□`.
 -/
+
+open Aeneas Aeneas.Std Result
 
 namespace H5iAppVeil
 
 variable {P S C WS R E St : Type}
 
-/-- Model-level finite serial run (an `Except`-based mirror of `H5iAppLib.Run`
-for Lean `v4.35.0` / Veil; does not yet import Aeneas `v4.31.0`). -/
-inductive ModelRun (transition : P → S → C → Except E (WS × R))
-    (toSt : S → St) (applyAll : St → WS → St) (init : St) :
-    St → List (KernelEvent P C R E) → Prop
-  | nil : ModelRun transition toSt applyAll init init []
-  | ok {st evs s a c ws r} :
-      ModelRun transition toSt applyAll init st evs →
-      toSt s = st →
-      transition a s c = .ok (ws, r) →
-      ModelRun transition toSt applyAll init (applyAll st ws) (evs ++ [.ok a c r])
-  | err {st evs s a c e} :
-      ModelRun transition toSt applyAll init st evs →
-      toSt s = st →
-      transition a s c = .error e →
-      ModelRun transition toSt applyAll init st (evs ++ [.err a c e])
-
-/-- Exact equivalence between `ModelRun` and Veil's `RelationalTransitionSystem.reachable`. -/
-theorem modelRun_iff_veil_reachable
-    {transition : P → S → C → Except E (WS × R)}
+/-- Exact equivalence between the **actual** `H5iAppLib.Run` and Veil's
+`RelationalTransitionSystem.reachable` on `kernelRTS`. -/
+theorem run_iff_veil_reachable
+    {transition : P → S → C → Result (core.result.Result (WS × R) E)}
     {toSt : S → St} {applyAll : St → WS → St} {init st : St} :
-    (∃ evs, ModelRun transition toSt applyAll init st evs) ↔
+    (∃ evs, H5iAppLib.Run transition toSt applyAll init st evs) ↔
       (kernelRTS transition toSt applyAll init).reachable () st := by
   constructor
   · rintro ⟨evs, hr⟩
@@ -69,53 +46,57 @@ theorem modelRun_iff_veil_reachable
     induction hr with
     | init s _ hinit =>
       subst hinit
-      exact ⟨[], ModelRun.nil⟩
+      exact ⟨[], H5iAppLib.Run.nil⟩
     | step s s' _ hnext ih =>
       obtain ⟨evs, hrun⟩ := ih
       obtain ⟨ev, hstep⟩ := hnext
       cases hstep with
-      | @ok s a c ws r ht => exact ⟨evs ++ [.ok a c r], ModelRun.ok hrun rfl ht⟩
-      | @err s a c e ht => exact ⟨evs ++ [.err a c e], ModelRun.err hrun rfl ht⟩
+      | @ok s a c ws r ht => exact ⟨evs ++ [.ok a c r], H5iAppLib.Run.ok hrun rfl ht⟩
+      | @err s a c e ht => exact ⟨evs ++ [.err a c e], H5iAppLib.Run.err hrun rfl ht⟩
 
-private theorem modelRun_of_stepList
-    {transition : P → S → C → Except E (WS × R)}
+private theorem run_of_stepList
+    {transition : P → S → C → Result (core.result.Result (WS × R) E)}
     {toSt : S → St} {applyAll : St → WS → St} {init : St} :
-    ∀ (steps : List (Veil.ModelChecker.Step St (KernelEvent P C R E))) (st : St)
-      (evs : List (KernelEvent P C R E)),
-      ModelRun transition toSt applyAll init st evs →
+    ∀ (steps : List (Veil.ModelChecker.Step St (H5iAppLib.Event P C R E))) (st : St)
+      (evs : List (H5iAppLib.Event P C R E)),
+      H5iAppLib.Run transition toSt applyAll init st evs →
       Veil.ModelChecker.StepList.validFrom (kernelRTS transition toSt applyAll init) () st steps →
-      ModelRun transition toSt applyAll init
+      H5iAppLib.Run transition toSt applyAll init
         (Veil.ModelChecker.Steps.getLastStateD (Array.mk steps) st)
         (evs ++ steps.map (·.transitionLabel))
   | [], st, evs, hrun, _ => by
     simpa [Veil.ModelChecker.Steps.getLastStateD] using hrun
   | ⟨lbl, nxt⟩ :: rest, st, evs, hrun, ⟨hstep, hrest⟩ => by
-    have hrun' : ModelRun transition toSt applyAll init nxt (evs ++ [lbl]) := by
+    have hrun' : H5iAppLib.Run transition toSt applyAll init nxt (evs ++ [lbl]) := by
       cases hstep with
-      | @ok s a c ws r ht => exact ModelRun.ok hrun rfl ht
-      | @err s a c e ht => exact ModelRun.err hrun rfl ht
-    have hrec := modelRun_of_stepList rest nxt (evs ++ [lbl]) hrun' hrest
+      | @ok s a c ws r ht => exact H5iAppLib.Run.ok hrun rfl ht
+      | @err s a c e ht => exact H5iAppLib.Run.err hrun rfl ht
+    have hrec := run_of_stepList rest nxt (evs ++ [lbl]) hrun' hrest
     simpa [Veil.ModelChecker.Steps.getLastD_prepend_same, List.append_assoc] using hrec
 
-/-- Every valid Veil model-checker trace (`Veil.ModelChecker.Trace`) of `kernelRTS`
-corresponds to a valid `ModelRun` whose event list is the trace's action labels. -/
-theorem modelRun_of_veil_trace
-    {transition : P → S → C → Except E (WS × R)}
+/-- Every valid Veil model-checker trace (`Veil.ModelChecker.Trace`) of
+`kernelRTS` corresponds to an actual `H5iAppLib.Run` whose event list is the
+trace's action labels. -/
+theorem run_of_veil_trace
+    {transition : P → S → C → Result (core.result.Result (WS × R) E)}
     {toSt : S → St} {applyAll : St → WS → St} {init : St}
-    (tr : Veil.ModelChecker.Trace Unit St (KernelEvent P C R E))
+    (tr : Veil.ModelChecker.Trace Unit St (H5iAppLib.Event P C R E))
     (hvalid : tr.isValid (kernelRTS transition toSt applyAll init)) :
-    ModelRun transition toSt applyAll init tr.lastState (tr.steps.toList.map (·.transitionLabel)) := by
+    H5iAppLib.Run transition toSt applyAll init tr.lastState
+      (tr.steps.toList.map (·.transitionLabel)) := by
   have hinit : tr.initialState = init := hvalid.initialStateSatisfiesInit
-  have hrun0 : ModelRun transition toSt applyAll init tr.initialState [] := hinit ▸ ModelRun.nil
-  have h := modelRun_of_stepList tr.steps.toList tr.initialState [] hrun0 hvalid.stepsValid
+  have hrun0 : H5iAppLib.Run transition toSt applyAll init tr.initialState [] :=
+    hinit ▸ H5iAppLib.Run.nil
+  have h := run_of_stepList tr.steps.toList tr.initialState [] hrun0 hvalid.stepsValid
   simpa [Veil.ModelChecker.Trace.lastState] using h
 
-/-- Lift any invariant proven over finite `ModelRun`s to Lentil's `□ ⌜ I ⌝`
-over every infinite execution `e : Lentil.exec St` of `kernelRTS`. -/
-theorem lentil_always_of_modelRun_inv
-    {transition : P → S → C → Except E (WS × R)}
+/-- Lift any invariant proven over the actual `H5iAppLib.Run` (such as an
+existing Aeneas proof `inv_reachable`) directly into Lentil's `□ ⌜ I ⌝` over
+every infinite execution `e : Lentil.exec St` of `kernelRTS`. -/
+theorem lentil_always_of_run_inv
+    {transition : P → S → C → Result (core.result.Result (WS × R) E)}
     {toSt : S → St} {applyAll : St → WS → St} {init : St} {I : St → Prop}
-    (hInv : ∀ st evs, ModelRun transition toSt applyAll init st evs → I st)
+    (hInv : ∀ st evs, H5iAppLib.Run transition toSt applyAll init st evs → I st)
     (e : Lentil.exec St)
     (hInit : (kernelRTS transition toSt applyAll init).init () (e 0))
     (hNext : ∀ n, (kernelRTS transition toSt applyAll init).next () (e n) (e (n + 1)) ∨ e (n + 1) = e n) :
@@ -129,13 +110,42 @@ theorem lentil_always_of_modelRun_inv
       · exact .step _ _ ih hn
       · rw [heq]; exact ih
   intro k
-  obtain ⟨evs, hrun⟩ := modelRun_iff_veil_reachable.mpr (hreach k)
+  obtain ⟨evs, hrun⟩ := run_iff_veil_reachable.mpr (hreach k)
   simpa [Lentil.state_pred] using hInv (e k) evs hrun
+
+/-- Exact equivalence between `H5iAppLib.ReachableT` and Veil reachability on
+`timedKernelRTS` (error steps leave `(st, t)` unchanged). -/
+theorem reachableT_iff_timed_veil_reachable
+    {transition : P → S → C → Result (core.result.Result (WS × R) E)}
+    {time : P → Nat} {toSt : S → St} {applyAll : St → WS → St} {init st : St} {t : Nat} :
+    H5iAppLib.ReachableT transition time toSt applyAll init st t ↔
+      (timedKernelRTS transition time toSt applyAll init).reachable () (st, t) := by
+  constructor
+  · intro hr
+    induction hr with
+    | init => exact .init _ trivial rfl
+    | @step s t a c ws r _ hle ht ih =>
+      exact .step _ _ ih ⟨.ok a c r, TimedKernelStep.ok hle ht⟩
+  · intro hr
+    generalize hp : (st, t) = p at hr
+    induction hr generalizing st t with
+    | init s _ hinit =>
+      subst hp
+      cases hinit
+      exact H5iAppLib.ReachableT.init
+    | step s s' _ hnext ih =>
+      subst hp
+      obtain ⟨ev, hstep⟩ := hnext
+      cases hstep with
+      | @ok s0 t0 a c ws r hle ht =>
+        exact H5iAppLib.ReachableT.step (ih rfl) hle ht
+      | @err s0 t0 a c e _ _ =>
+        exact ih rfl
 
 /-- Timestamps along any infinite execution `e : Lentil.exec (St × Nat)` of
 `timedKernelRTS` are monotonic (never decrease). -/
 theorem timed_exec_monotonic
-    {transition : P → S → C → Except E (WS × R)}
+    {transition : P → S → C → Result (core.result.Result (WS × R) E)}
     {time : P → Nat} {toSt : S → St} {applyAll : St → WS → St} {init : St}
     (e : Lentil.exec (St × Nat))
     (hNext : ∀ n, (timedKernelRTS transition time toSt applyAll init).next () (e n) (e (n + 1)) ∨ e (n + 1) = e n)
@@ -153,7 +163,7 @@ theorem timed_exec_monotonic
         cases htr with
         | ok hle' _ => exact hle'
         | err _ _ => exact Nat.le_refl _
-      · rw [heq]; exact Nat.le_refl _
+      · rw [heq]
     exact Nat.le_trans ih hstep
 
 end H5iAppVeil

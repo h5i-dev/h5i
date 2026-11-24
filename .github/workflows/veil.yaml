@@ -58,8 +58,10 @@ jobs:
           "$HOME/.elan/bin/elan" toolchain install "$tc"
       - name: Build H5iAppVeil (runs Veil #model_check, #temporal_check, and Lean proofs)
         working-directory: crates/h5i-app-veil/proofs
-        run: lake build
-      - name: Build thermostat optional Veil temporal proofs
+        run: |
+          lake exe cache get
+          lake build
+      - name: Build thermostat optional Veil temporal proofs (Aeneas-extracted kernel + Veil)
         working-directory: examples/embedded/thermostat/proofs/temporal
         run: |
           mkdir -p .lake
