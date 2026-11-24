@@ -13,13 +13,37 @@ temporal checker (`#temporal_check`):
   `store.rs:169` (`seq > s`) on a 3-bit (`Fin 8`) sequence number. Veil's
   `#model_check` discovers the concrete wraparound durability counterexample
   (`seq: 7 → 0` causes `scan` to prefer the older record `7`).
-* `FlashStoreModular`: replaces plain `>` with modular half-space comparison
-  and models power cuts during erase/write + torn tails. Veil's `#model_check`
-  verifies `crash_consistency` and `durability`, and `#temporal_check` verifies
-  `recovery_progress` under weak fairness `𝒲ℱ rebootScan`.
+* `FlashStoreModular`: models the real append-per-region protocol of `store.rs`
+  with modular half-space sequence ordering (`0 < (s₁ - s₂) mod 8 < 4`):
+  - **2 append slots per region** (`a0, a1` in region 0; `b0, b1` in region 1),
+    matching `ReplayFlash` (64-byte region / 24-byte record = 2 records/region):
+    * `saveUnchanged`: saving the same value as `last` (`store.rs:228-230`) is a
+      no-op (no flash write, no `seq` increment).
+    * `beginSaveAppend`: when slot 1 of the active region is free and untorn
+      (`store.rs:246-248`), appends directly to slot 1 without erasing.
+    * `beginSaveSwitch`: when the active region is full or torn (`store.rs:249-258`),
+      erases the standby region and writes to its slot 0.
+  - **Separated flash persistence vs caller ack** (`writeLanded` → `ackSave`):
+    models power cuts *after* a valid record lands in flash and *before*
+    `Store::save` returns `Ok(())` (ambiguous commit).
+  - **Explicit NOR failure modes**:
+    * `powerCutPartialErase`: power loss mid-erase leaving slot 0 `sTorn` while
+      slot 1 still holds stale bytes.
+    * `powerCutTornWrite`: power loss mid-write leaving the target slot `sTorn`,
+      forcing the next reboot's `scan` to mark `append = None` (`store.rs:189`).
+    * `powerCutClean`: power loss while idle or after `writeLanded` and before
+      `ackSave` (ambiguous commit).
+    * Repeated power cuts and reboots in any sequence.
 
-Concrete counterexample replay against the real Rust `FlashStore` lives in
-`crates/h5i-app-embedded/src/replay.rs` and `h5i app trace-replay`.
+## Explicit Modeling Abstractions
+
+- **Region capacity**: 2 record slots per region instead of `region / record_len`.
+- **Sequence width**: 3-bit (`Fin 8`) instead of `u32` (modular half-space window
+  is `< 4`, sufficient because at most 2 records are appended per region before
+  erasing the standby region).
+- **Payload**: 1-bit `Bool` instead of arbitrary encoded bytes.
+- **CRC-32**: assumed collision-free (any torn write or partial erase yields
+  `SlotState.sTorn`, never a spurious `SlotState.sValid`).
 -/
 
 /-! ## 1. Plain `>` comparison (`store.rs:169`) — Veil discovers wraparound bug -/
@@ -121,106 +145,190 @@ set_option veil.violationIsError false in
 
 end FlashStorePlain
 
-/-! ## 2. Modular half-space comparison — crash consistency, durability & liveness -/
+/-! ## 2. Append-Per-Region Protocol + Modular Order + Full Crash Modes -/
 
 veil module FlashStoreModular
 
 open Lentil
 
-enum FlashPhase = { idle, erasing, writing, crashed }
+enum FlashPhase = { idle, erasing, writing, written, crashed }
+enum SlotState = { sEmpty, sValid, sTorn }
 
-individual aValid : Bool
-individual aSeq : Fin 8
-individual aVal : Bool
-individual bValid : Bool
-individual bSeq : Fin 8
-individual bVal : Bool
+-- Region A (2 append slots: a0, a1)
+individual a0St : SlotState
+individual a0Seq : Fin 8
+individual a0Val : Bool
+individual a1St : SlotState
+individual a1Seq : Fin 8
+individual a1Val : Bool
+
+-- Region B (2 append slots: b0, b1)
+individual b0St : SlotState
+individual b0Seq : Fin 8
+individual b0Val : Bool
+individual b1St : SlotState
+individual b1Seq : Fin 8
+individual b1Val : Bool
+
+-- In-RAM `FlashStore::pos` & `last`
 individual activeB : Bool
+individual appendSlot1 : Bool
 individual posSeq : Fin 8
+
+-- In-flight write state
 individual targetB : Bool
+individual targetSlot1 : Bool
 individual targetSeq : Fin 8
 individual pendingValid : Bool
 individual pendingVal : Bool
+
+-- Specification / ghost tracking for durability & crash consistency
 individual ackedValid : Bool
 individual ackedVal : Bool
-individual preCrashAckedValid : Bool
-individual preCrashAckedVal : Bool
-individual preCrashPendingValid : Bool
-individual preCrashPendingVal : Bool
-individual justRecovered : Bool
-individual recoveredValid : Bool
-individual recoveredVal : Bool
+individual crashConsistent : Bool
 individual phase : FlashPhase
 
 #gen_state
 
+set_option maxRecDepth 8192
+
 after_init {
-  aValid := false
-  aSeq := 0
-  aVal := false
-  bValid := false
-  bSeq := 0
-  bVal := false
+  a0St := sEmpty
+  a0Seq := 0
+  a0Val := false
+  a1St := sEmpty
+  a1Seq := 0
+  a1Val := false
+  b0St := sEmpty
+  b0Seq := 0
+  b0Val := false
+  b1St := sEmpty
+  b1Seq := 0
+  b1Val := false
   activeB := true
+  appendSlot1 := false
   posSeq := 0
   targetB := false
+  targetSlot1 := false
   targetSeq := 0
   pendingValid := false
   pendingVal := false
   ackedValid := false
   ackedVal := false
-  preCrashAckedValid := false
-  preCrashAckedVal := false
-  preCrashPendingValid := false
-  preCrashPendingVal := false
-  justRecovered := false
-  recoveredValid := false
-  recoveredVal := false
+  crashConsistent := true
   phase := idle
 }
 
--- Modular half-space order on 3-bit sequence numbers: `b` is newer than `a`
--- iff `0 < (b - a) mod 8 < 4`.
-ghost relation modNewerB :=
-  (bSeq.val + 8 - aSeq.val) % 8 > 0 ∧ (bSeq.val + 8 - aSeq.val) % 8 < 4
+-- `store.rs:159-177`: scanning stops at the first `sEmpty` or `sTorn` slot in each region.
+ghost relation a0Reachable := a0St = sValid
+ghost relation a1Reachable := a0St = sValid ∧ a1St = sValid
+ghost relation b0Reachable := b0St = sValid
+ghost relation b1Reachable := b0St = sValid ∧ b1St = sValid
 
-ghost relation scanSelectsB :=
-  bValid ∧ (¬aValid ∨ modNewerB)
+ghost relation modGt (x y : Fin 8) :=
+  (x.val + 8 - y.val) % 8 > 0 ∧ (x.val + 8 - y.val) % 8 < 4
+
+ghost relation aBestValid := a0Reachable
+ghost relation aBestIs1 := a1Reachable ∧ modGt a1Seq a0Seq
+ghost relation bBestValid := b0Reachable
+ghost relation bBestIs1 := b1Reachable ∧ modGt b1Seq b0Seq
+
+ghost relation aBestSeqVal (s : Fin 8) (v : Bool) :=
+  (aBestIs1 ∧ a1Seq = s ∧ a1Val = v) ∨ (¬aBestIs1 ∧ a0Reachable ∧ a0Seq = s ∧ a0Val = v)
+
+ghost relation bBestSeqVal (s : Fin 8) (v : Bool) :=
+  (bBestIs1 ∧ b1Seq = s ∧ b1Val = v) ∨ (¬bBestIs1 ∧ b0Reachable ∧ b0Seq = s ∧ b0Val = v)
 
 ghost relation scanValIs (v : Bool) :=
-  (scanSelectsB ∧ bVal = v) ∨ (¬scanSelectsB ∧ aValid ∧ aVal = v)
+  (∃ sb vb, bBestSeqVal sb vb ∧
+    (¬aBestValid ∨ (∃ sa va, aBestSeqVal sa va ∧ modGt sb sa)) ∧ vb = v) ∨
+  (∃ sa va, aBestSeqVal sa va ∧
+    (¬bBestValid ∨ (∃ sb vb, bBestSeqVal sb vb ∧ ¬modGt sb sa)) ∧ va = v)
 
-action beginSave (v : Bool) {
+-- `store.rs:228-230`: saving the already-stored value is an explicit no-op.
+action saveUnchanged (v : Bool) {
+  require phase = idle
+  require ackedValid ∧ ackedVal = v
+}
+
+-- `store.rs:246-248`: append directly to slot 1 of the active region (no erase).
+action beginSaveAppend (v : Bool) {
   require phase = idle
   require ¬(ackedValid ∧ ackedVal = v)
-  justRecovered := false
+  require appendSlot1
+  targetB := activeB
+  targetSlot1 := true
+  targetSeq := posSeq + 1
+  pendingValid := true
+  pendingVal := v
+  -- `store.rs:260`: clear `append` before write so a torn write forces switch.
+  appendSlot1 := false
+  phase := writing
+}
+
+-- `store.rs:249-258`: active region is full or torn; erase the standby region.
+action beginSaveSwitch (v : Bool) {
+  require phase = idle
+  require ¬(ackedValid ∧ ackedVal = v)
+  require ¬appendSlot1
   targetB := !activeB
+  targetSlot1 := false
   targetSeq := posSeq + 1
   pendingValid := true
   pendingVal := v
   phase := erasing
 }
 
+-- Erase of standby region completes cleanly (`store.rs:255`).
 action eraseOther {
   require phase = erasing
   if targetB then
-    bValid := false
+    b0St := sEmpty
+    b0Seq := 0
+    b0Val := false
+    b1St := sEmpty
+    b1Seq := 0
+    b1Val := false
   else
-    aValid := false
+    a0St := sEmpty
+    a0Seq := 0
+    a0Val := false
+    a1St := sEmpty
+    a1Seq := 0
+    a1Val := false
   phase := writing
 }
 
-action writeComplete {
+-- Flash write completes validly (`store.rs:263`), BEFORE `save()` updates RAM
+-- `pos`/`last` and returns `Ok(())` to the caller (models post-write/pre-ack crash window).
+action writeLanded {
   require phase = writing
   if targetB then
-    bValid := true
-    bSeq := targetSeq
-    bVal := pendingVal
+    if targetSlot1 then
+      b1St := sValid
+      b1Seq := targetSeq
+      b1Val := pendingVal
+    else
+      b0St := sValid
+      b0Seq := targetSeq
+      b0Val := pendingVal
   else
-    aValid := true
-    aSeq := targetSeq
-    aVal := pendingVal
+    if targetSlot1 then
+      a1St := sValid
+      a1Seq := targetSeq
+      a1Val := pendingVal
+    else
+      a0St := sValid
+      a0Seq := targetSeq
+      a0Val := pendingVal
+  phase := written
+}
+
+-- Caller receives `Ok(())` and RAM state advances (`store.rs:264-267`).
+action ackSave {
+  require phase = written
   activeB := targetB
+  appendSlot1 := !targetSlot1
   posSeq := targetSeq
   ackedValid := true
   ackedVal := pendingVal
@@ -228,41 +336,86 @@ action writeComplete {
   phase := idle
 }
 
--- Power cut during idle, erase, or torn mid-write (target record remains invalid).
-action powerCut {
-  require phase ≠ crashed
-  justRecovered := false
-  preCrashAckedValid := ackedValid
-  preCrashAckedVal := ackedVal
-  preCrashPendingValid := pendingValid
-  preCrashPendingVal := pendingVal
+-- Power cut while idle or after `writeLanded` (before `ackSave`: ambiguous commit!).
+action powerCutClean {
+  require phase = idle ∨ phase = written
   phase := crashed
 }
 
--- Reboot and scan both NOR flash regions using modular sequence ordering.
+-- Power cut mid-erase: standby region's slot 0 becomes `sTorn` while slot 1 may
+-- retain old bytes (partial erase).
+action powerCutPartialErase {
+  require phase = erasing
+  if targetB then
+    b0St := sTorn
+  else
+    a0St := sTorn
+  phase := crashed
+}
+
+-- Power cut mid-write: target slot becomes `sTorn` (torn tail).
+action powerCutTornWrite {
+  require phase = writing
+  if targetB then
+    if targetSlot1 then
+      b1St := sTorn
+    else
+      b0St := sTorn
+  else
+    if targetSlot1 then
+      a1St := sTorn
+    else
+      a0St := sTorn
+  phase := crashed
+}
+
+-- Reboot and scan both NOR flash regions (`store.rs:153-195`) using modular order.
+-- Verifies crash consistency inline: recovered value must match either the
+-- pre-crash `ackedVal` or the pre-crash in-flight `pendingVal`.
 action rebootScan {
   require phase = crashed
-  if bValid ∧ (¬aValid ∨ ((bSeq.val + 8 - aSeq.val) % 8 > 0 ∧ (bSeq.val + 8 - aSeq.val) % 8 < 4)) then
+  let aHas0 : Bool := a0St = sValid
+  let aHas1 : Bool := a0St = sValid ∧ a1St = sValid
+  let a1Newer : Bool := aHas1 ∧ ((a1Seq.val + 8 - a0Seq.val) % 8 > 0 ∧ (a1Seq.val + 8 - a0Seq.val) % 8 < 4)
+  let aSeqBest : Fin 8 := if a1Newer then a1Seq else a0Seq
+  let aValBest : Bool := if a1Newer then a1Val else a0Val
+  let aCanAppend : Bool := aHas0 ∧ !a1Newer ∧ a1St = sEmpty
+
+  let bHas0 : Bool := b0St = sValid
+  let bHas1 : Bool := b0St = sValid ∧ b1St = sValid
+  let b1Newer : Bool := bHas1 ∧ ((b1Seq.val + 8 - b0Seq.val) % 8 > 0 ∧ (b1Seq.val + 8 - b0Seq.val) % 8 < 4)
+  let bSeqBest : Fin 8 := if b1Newer then b1Seq else b0Seq
+  let bValBest : Bool := if b1Newer then b1Val else b0Val
+  let bCanAppend : Bool := bHas0 ∧ !b1Newer ∧ b1St = sEmpty
+
+  let pickB : Bool :=
+    bHas0 ∧ (!aHas0 ∨ ((bSeqBest.val + 8 - aSeqBest.val) % 8 > 0 ∧ (bSeqBest.val + 8 - aSeqBest.val) % 8 < 4))
+
+  if pickB then
+    let okAck : Bool := ackedValid ∧ bValBest = ackedVal
+    let okPend : Bool := pendingValid ∧ bValBest = pendingVal
+    crashConsistent := crashConsistent ∧ (okAck ∨ okPend)
     activeB := true
-    posSeq := bSeq
+    appendSlot1 := bCanAppend
+    posSeq := bSeqBest
     ackedValid := true
-    ackedVal := bVal
-    recoveredValid := true
-    recoveredVal := bVal
-  else if aValid then
+    ackedVal := bValBest
+  else if aHas0 then
+    let okAck : Bool := ackedValid ∧ aValBest = ackedVal
+    let okPend : Bool := pendingValid ∧ aValBest = pendingVal
+    crashConsistent := crashConsistent ∧ (okAck ∨ okPend)
     activeB := false
-    posSeq := aSeq
+    appendSlot1 := aCanAppend
+    posSeq := aSeqBest
     ackedValid := true
-    ackedVal := aVal
-    recoveredValid := true
-    recoveredVal := aVal
+    ackedVal := aValBest
   else
+    crashConsistent := crashConsistent ∧ !ackedValid
     activeB := true
+    appendSlot1 := false
     posSeq := 0
     ackedValid := false
-    recoveredValid := false
   pendingValid := false
-  justRecovered := true
   phase := idle
 }
 
@@ -270,12 +423,11 @@ action rebootScan {
 safety [durability]
   phase = idle ∧ ackedValid → scanValIs ackedVal
 
--- Crash consistency: after a power cut + reboot scan, recovered state equals
--- either pre-crash acknowledged value or pre-crash in-flight pending value.
+-- Crash consistency: every reboot after ANY power cut (clean, partial erase,
+-- torn write, post-write/pre-ack, or repeated cuts) recovers either the
+-- pre-crash acknowledged value or the pre-crash in-flight pending value.
 safety [crash_consistency]
-  justRecovered →
-    ((recoveredValid = preCrashAckedValid ∧ (recoveredValid → recoveredVal = preCrashAckedVal)) ∨
-     (preCrashPendingValid ∧ recoveredValid ∧ recoveredVal = preCrashPendingVal))
+  crashConsistent
 
 -- Recovery progress (Liveness under Weak Fairness of `rebootScan`).
 temporal [recovery_progress]
@@ -283,7 +435,7 @@ temporal [recovery_progress]
 
 #gen_spec
 
-#model_check interpreted { FlashPhase := FlashPhase_IndT } {}
-#temporal_check [recovery_progress] interpreted { FlashPhase := FlashPhase_IndT } {}
+#model_check interpreted { FlashPhase := FlashPhase_IndT, SlotState := SlotState_IndT } {}
+#temporal_check [recovery_progress] interpreted { FlashPhase := FlashPhase_IndT, SlotState := SlotState_IndT } {}
 
 end FlashStoreModular

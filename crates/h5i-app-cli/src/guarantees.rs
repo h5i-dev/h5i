@@ -752,13 +752,19 @@ fn temporal_status(p: &Project, top: Option<&Path>) -> h5i_app_report::TemporalR
             enabled: false,
             backend: v.temporal_backend.clone(),
             status: h5i_app_report::TemporalStatus::Skipped,
+            inputs_current: true,
+            properties: Vec::new(),
             detail: Some("not enabled".into()),
         };
     }
     match latest_run(p, top, "temporal") {
         Some((run, current)) => match run.temporal {
             Some(mut rep) => {
+                rep.inputs_current = current;
                 if !current {
+                    if rep.status == h5i_app_report::TemporalStatus::Passed {
+                        rep.status = h5i_app_report::TemporalStatus::PassedOnOtherInputs;
+                    }
                     rep.detail = Some(match rep.detail {
                         Some(d) => format!("{d} (sources changed since)"),
                         None => "sources changed since".into(),
@@ -770,6 +776,8 @@ fn temporal_status(p: &Project, top: Option<&Path>) -> h5i_app_report::TemporalR
                 enabled: true,
                 backend: v.temporal_backend.clone(),
                 status: h5i_app_report::TemporalStatus::NotRun,
+                inputs_current: false,
+                properties: Vec::new(),
                 detail: Some("no temporal status in latest run".into()),
             },
         },
@@ -777,6 +785,8 @@ fn temporal_status(p: &Project, top: Option<&Path>) -> h5i_app_report::TemporalR
             enabled: true,
             backend: v.temporal_backend.clone(),
             status: h5i_app_report::TemporalStatus::NotRun,
+            inputs_current: false,
+            properties: Vec::new(),
             detail: Some("run `h5i app temporal-check`".into()),
         },
     }
@@ -1013,5 +1023,52 @@ mod tests {
         let r = project(&p);
         assert!(!r.check.inputs_current);
         assert_eq!(r.theorems[1].check, TheoremCheck::PassedOnOtherInputs);
+    }
+
+    #[test]
+    fn temporal_verification_status_invalidates_to_passed_on_other_inputs_when_sources_change() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(
+            d.path().join("h5i-app.toml"),
+            "[verification]\ntemporal = true\ntemporal_backend = \"veil\"\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(d.path().join("proofs/temporal")).unwrap();
+        std::fs::write(d.path().join("proofs/temporal/Model.lean"), "-- v1\n").unwrap();
+
+        let p = Project::load(&d.path().join("h5i-app.toml")).unwrap();
+        let inputs = h5i_app_report::inputs(d.path());
+        let run = serde_json::json!({
+            "version": 1, "id": "1-temporal-a", "kind": "temporal", "started": 1, "finished": 2, "status": "passed",
+            "inputs": inputs, "inputs_changed": false, "targets": ["veil"], "toolchain": {}, "baseline": "not_run",
+            "trials": [], "stages": [], "declarations": [], "unbuilt_modules": [], "required_theorems": [], "error": null,
+            "temporal": {
+                "enabled": true,
+                "backend": "veil",
+                "status": "passed",
+                "inputs_current": true,
+                "properties": [{
+                    "name": "overtemp_eventually_stops_pin",
+                    "kind": "finite_temporal_check",
+                    "status": "passed"
+                }],
+                "detail": "1/1 verification obligations passed"
+            }
+        });
+        let run_dir = d.path().join(h5i_app_report::RUNS).join("1-temporal-a");
+        std::fs::create_dir_all(&run_dir).unwrap();
+        std::fs::write(run_dir.join("run.json"), run.to_string()).unwrap();
+
+        let r1 = project(&p);
+        let tv1 = r1.temporal.unwrap();
+        assert_eq!(tv1.status, h5i_app_report::TemporalStatus::Passed);
+        assert!(tv1.inputs_current);
+
+        // Modify source after the temporal check passed -> MUST invalidate to PassedOnOtherInputs!
+        std::fs::write(d.path().join("proofs/temporal/Model.lean"), "-- v2 modified\n").unwrap();
+        let r2 = project(&p);
+        let tv2 = r2.temporal.unwrap();
+        assert_eq!(tv2.status, h5i_app_report::TemporalStatus::PassedOnOtherInputs);
+        assert!(!tv2.inputs_current);
     }
 }

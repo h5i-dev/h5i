@@ -427,7 +427,7 @@ theorem inv_step {a : Device} {s : Snapshot} {c : Command} {ws : Option Snapshot
       simp [hfalse] at ht
 
 theorem inv_run {st : Snapshot} {evs : List (KernelEvent Device Command Snapshot Error)}
-    (hr : H5iAppVeil.Run thermostatTransition id applyW initialSnapshot st evs) :
+    (hr : H5iAppVeil.ModelRun thermostatTransition id applyW initialSnapshot st evs) :
     Inv st := by
   induction hr with
   | nil => exact inv_initial
@@ -437,13 +437,16 @@ theorem inv_run {st : Snapshot} {evs : List (KernelEvent Device Command Snapshot
   | err _ _ _ ih => exact ih
 
 /-- **Lentil lifting**: every infinite execution of `thermostatKernelRTS`
-satisfies `□ ⌜ Inv ⌝` (interlock and setpoint bounds at every step). -/
+satisfies `□ ⌜ Inv ⌝` (interlock and setpoint bounds at every step).
+Note: this operates on the Lean `v4.35.0` model-level specification
+(`H5iAppVeil.ModelRun`); formal composition with the Aeneas-extracted
+`v4.31.0` proof in `../Proofs.lean` awaits a shared Aeneas/Veil Lean toolchain. -/
 theorem thermostat_always_inv
     (e : Lentil.exec Snapshot)
     (hInit : thermostatKernelRTS.init () (e 0))
     (hNext : ∀ n, thermostatKernelRTS.next () (e n) (e (n + 1)) ∨ e (n + 1) = e n) :
     Lentil.always (Lentil.state_pred Inv) e 0 :=
-  lentil_always_of_run_inv (fun _ _ hr => inv_run hr) e hInit hNext
+  lentil_always_of_modelRun_inv (fun _ _ hr => inv_run hr) e hInit hNext
 
 /-- Concrete runtime state of `firmware/src/main.rs` (`DeviceEngine` + `actuate` task). -/
 structure FirmwareState where
@@ -503,7 +506,7 @@ the kernel's interlock and setpoint range invariants. -/
 theorem firmware_reachable_inv {s : FirmwareState} (hr : firmwareRTS.reachable () s) :
     Inv s.snapshot := by
   have habs := firmware_stutterRefines_thermostatKernel.reachable hr
-  obtain ⟨evs, hrun⟩ := run_iff_veil_reachable.mpr habs
+  obtain ⟨evs, hrun⟩ := modelRun_iff_veil_reachable.mpr habs
   exact inv_run hrun
 
 end ThermostatTemporal.KernelBridge

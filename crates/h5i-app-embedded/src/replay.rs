@@ -435,11 +435,46 @@ pub enum DeviceEngineReplayAction {
     ExecuteWithStoreFault(MotorCmd, StoreFault),
     /// Poll the real [`DeviceEngine::changed`] once with the actuator's `seen` cursor.
     ActuatorPoll,
-    /// Reboot by reconstructing [`DeviceEngine`] over the persisted store and calling [`DeviceEngine::restore`].
+    /// Reboot/restore by calling [`DeviceEngine::restore`]. Note: `restore()` updates
+    /// the in-memory snapshot and bumps `version`, WITHOUT atomically updating the
+    /// actuator GPIO output (a subsequent `ActuatorPoll` drives the actuator).
+    Restore,
+    /// Backwards-compatible alias for [`Self::Restore`].
     CrashAndRestore,
 }
 
-/// Outcome of replaying a trace against the real [`DeviceEngine`].
+/// Observable runtime state snapshot used to verify concrete lasso cycle closure.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DeviceEngineConcreteState {
+    pub snapshot: MotorSnap,
+    pub notify_pending: bool,
+    pub actuator_motor_on: bool,
+}
+
+/// Outcome of replaying a lasso (`prefix · cycle^ω`) against the real [`DeviceEngine`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DeviceEngineLassoOutcome {
+    pub prefix_steps: usize,
+    pub cycle_steps: usize,
+    pub emergency_committed: bool,
+    /// Whether `cycle` closed an identical concrete state across consecutive iterations
+    /// (demonstrating repeatability of `cycle^ω` on the real `DeviceEngine`).
+    pub cycle_closed: bool,
+    /// Whether `ActuatorPoll` actually ran during the cycle (witnessing `𝒲ℱ actuatorPoll`).
+    pub actuator_poll_in_cycle: bool,
+    /// Whether the actuator observed `motor_on == false` during prefix or cycle.
+    pub actuator_observed_stop: bool,
+    /// `true` iff a genuine liveness lasso counterexample was reproduced on the real
+    /// `DeviceEngine` (emergency committed, cycle non-empty & closed, actuator polled
+    /// fairly in the cycle, and stop never observed).
+    pub liveness_lasso_confirmed: bool,
+    pub clear_refused_count: usize,
+    pub state_after_cycle_1: DeviceEngineConcreteState,
+    pub state_after_cycle_2: DeviceEngineConcreteState,
+    pub final_version: u32,
+}
+
+/// Outcome of replaying a finite trace against the real [`DeviceEngine`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DeviceEngineReplayOutcome {
     pub steps_replayed: usize,
@@ -451,7 +486,65 @@ pub struct DeviceEngineReplayOutcome {
     pub final_version: u32,
 }
 
-/// Replay `actions` directly against the **actual** [`DeviceEngine<MotorKernel<LATCHED>, FaultStore>`].
+fn step_device_engine<const LATCHED: bool>(
+    engine: &mut DeviceEngine<MotorKernel<LATCHED>, FaultStore>,
+    seen: &mut u32,
+    actuator_motor_on: &mut bool,
+    emergency_committed: &mut bool,
+    actuator_observed_stop: &mut bool,
+    clear_refused_count: &mut usize,
+    actuator_polled: &mut bool,
+    act: DeviceEngineReplayAction,
+) {
+    match act {
+        DeviceEngineReplayAction::Execute(cmd) => {
+            match poll_now(engine.execute(&(), &cmd, None)).expect("sync execute") {
+                Ok(()) => {
+                    if matches!(cmd, MotorCmd::RequestEmergency) {
+                        *emergency_committed = true;
+                    }
+                }
+                Err(Refused::Kernel(MotorErr::StopNotObserved)) => {
+                    *clear_refused_count += 1;
+                }
+                Err(Refused::Store(())) => {}
+            }
+        }
+        DeviceEngineReplayAction::ExecuteWithStoreFault(cmd, fault) => {
+            let cur_snap = engine.snapshot();
+            let mut fs = FaultStore::new(Some(cur_snap));
+            fs.next_fault = fault;
+            *engine = DeviceEngine::with_store(cur_snap, fs);
+            *seen = engine.version();
+            let res = poll_now(engine.execute(&(), &cmd, None)).expect("sync execute");
+            if res.is_ok() && matches!(cmd, MotorCmd::RequestEmergency) {
+                *emergency_committed = true;
+            }
+        }
+        DeviceEngineReplayAction::ActuatorPoll => {
+            *actuator_polled = true;
+            if let Some(snap) = poll_now(engine.changed(seen)) {
+                *actuator_motor_on = snap.motor_on;
+                if !*actuator_motor_on {
+                    *actuator_observed_stop = true;
+                    if LATCHED {
+                        let _ = poll_now(engine.execute(&(), &MotorCmd::AckStop, None));
+                    }
+                }
+            }
+        }
+        DeviceEngineReplayAction::Restore | DeviceEngineReplayAction::CrashAndRestore => {
+            // Mirror real `DeviceEngine::restore()`: loads persisted snapshot and
+            // calls `notify()` (`version` increments), WITHOUT atomically mutating
+            // `actuator_motor_on` (the actuator task polls `changed()` separately).
+            *seen = engine.version();
+            let _ = poll_now(engine.restore()).expect("sync restore");
+        }
+    }
+}
+
+/// Replay a finite sequence of `actions` directly against the **actual**
+/// [`DeviceEngine<MotorKernel<LATCHED>, FaultStore>`].
 pub fn replay_real_device_engine<const LATCHED: bool>(
     actions: &[DeviceEngineReplayAction],
 ) -> DeviceEngineReplayOutcome {
@@ -463,60 +556,19 @@ pub fn replay_real_device_engine<const LATCHED: bool>(
     let mut emergency_committed = false;
     let mut actuator_observed_stop = !actuator_motor_on;
     let mut clear_refused_count = 0usize;
+    let mut actuator_polled = false;
 
     for &act in actions {
-        match act {
-            DeviceEngineReplayAction::Execute(cmd) => {
-                match poll_now(engine.execute(&(), &cmd, None)).expect("sync execute") {
-                    Ok(()) => {
-                        if matches!(cmd, MotorCmd::RequestEmergency) {
-                            emergency_committed = true;
-                        }
-                    }
-                    Err(Refused::Kernel(MotorErr::StopNotObserved)) => {
-                        clear_refused_count += 1;
-                    }
-                    Err(Refused::Store(())) => {}
-                }
-            }
-            DeviceEngineReplayAction::ExecuteWithStoreFault(cmd, fault) => {
-                // Inject fault into the store before calling `DeviceEngine::execute`.
-                // We rebuild the engine preserving current snapshot/version and store fault.
-                let cur_snap = engine.snapshot();
-                let mut stored = Some(cur_snap);
-                // Read current flash by restoring on a temporary copy isn't needed if we track stored;
-                // here `FaultStore::save` updates `stored` directly on clean saves.
-                let mut fs = FaultStore::new(stored);
-                fs.next_fault = fault;
-                engine = DeviceEngine::with_store(cur_snap, fs);
-                seen = engine.version();
-                let res = poll_now(engine.execute(&(), &cmd, None)).expect("sync execute");
-                if res.is_ok() && matches!(cmd, MotorCmd::RequestEmergency) {
-                    emergency_committed = true;
-                }
-                let _ = &mut stored;
-            }
-            DeviceEngineReplayAction::ActuatorPoll => {
-                if let Some(snap) = poll_now(engine.changed(&mut seen)) {
-                    actuator_motor_on = snap.motor_on;
-                    if !actuator_motor_on {
-                        actuator_observed_stop = true;
-                        if LATCHED {
-                            let _ = poll_now(engine.execute(&(), &MotorCmd::AckStop, None));
-                        }
-                    }
-                }
-            }
-            DeviceEngineReplayAction::CrashAndRestore => {
-                // Call the real `DeviceEngine::restore()`!
-                let _ = poll_now(engine.restore()).expect("sync restore");
-                seen = engine.version();
-                actuator_motor_on = engine.snapshot().motor_on;
-                if !actuator_motor_on {
-                    actuator_observed_stop = true;
-                }
-            }
-        }
+        step_device_engine(
+            &mut engine,
+            &mut seen,
+            &mut actuator_motor_on,
+            &mut emergency_committed,
+            &mut actuator_observed_stop,
+            &mut clear_refused_count,
+            &mut actuator_polled,
+            act,
+        );
     }
 
     DeviceEngineReplayOutcome {
@@ -526,6 +578,97 @@ pub fn replay_real_device_engine<const LATCHED: bool>(
         clear_refused_count,
         final_snapshot: engine.snapshot(),
         final_actuator_motor_on: actuator_motor_on,
+        final_version: engine.version(),
+    }
+}
+
+/// Replay a lasso trace `prefix · cycle^ω` directly against the **actual**
+/// [`DeviceEngine<MotorKernel<LATCHED>, FaultStore>`], verifying concrete state
+/// loop closure across two iterations of `cycle` and checking that `ActuatorPoll`
+/// executed within the cycle without observing stop.
+pub fn replay_real_device_engine_lasso<const LATCHED: bool>(
+    prefix: &[DeviceEngineReplayAction],
+    cycle: &[DeviceEngineReplayAction],
+) -> DeviceEngineLassoOutcome {
+    let init = MotorSnap::default();
+    let mut engine: DeviceEngine<MotorKernel<LATCHED>, FaultStore> =
+        DeviceEngine::with_store(init, FaultStore::new(Some(init)));
+    let mut seen = engine.version();
+    let mut actuator_motor_on = engine.snapshot().motor_on;
+    let mut emergency_committed = false;
+    let mut actuator_observed_stop = !actuator_motor_on;
+    let mut clear_refused_count = 0usize;
+    let mut unused_polled = false;
+
+    for &act in prefix {
+        step_device_engine(
+            &mut engine,
+            &mut seen,
+            &mut actuator_motor_on,
+            &mut emergency_committed,
+            &mut actuator_observed_stop,
+            &mut clear_refused_count,
+            &mut unused_polled,
+            act,
+        );
+    }
+
+    let snapshot_state = |eng: &DeviceEngine<MotorKernel<LATCHED>, FaultStore>,
+                          seen: u32,
+                          motor_on: bool| {
+        DeviceEngineConcreteState {
+            snapshot: eng.snapshot(),
+            notify_pending: eng.version() != seen,
+            actuator_motor_on: motor_on,
+        }
+    };
+
+    let mut actuator_poll_in_cycle = false;
+    for &act in cycle {
+        step_device_engine(
+            &mut engine,
+            &mut seen,
+            &mut actuator_motor_on,
+            &mut emergency_committed,
+            &mut actuator_observed_stop,
+            &mut clear_refused_count,
+            &mut actuator_poll_in_cycle,
+            act,
+        );
+    }
+    let state_after_cycle_1 = snapshot_state(&engine, seen, actuator_motor_on);
+
+    let mut actuator_poll_in_cycle_2 = false;
+    for &act in cycle {
+        step_device_engine(
+            &mut engine,
+            &mut seen,
+            &mut actuator_motor_on,
+            &mut emergency_committed,
+            &mut actuator_observed_stop,
+            &mut clear_refused_count,
+            &mut actuator_poll_in_cycle_2,
+            act,
+        );
+    }
+    let state_after_cycle_2 = snapshot_state(&engine, seen, actuator_motor_on);
+
+    let cycle_closed = !cycle.is_empty() && state_after_cycle_1 == state_after_cycle_2;
+    let poll_in_cycle = actuator_poll_in_cycle && actuator_poll_in_cycle_2;
+    let liveness_lasso_confirmed =
+        emergency_committed && cycle_closed && poll_in_cycle && !actuator_observed_stop;
+
+    DeviceEngineLassoOutcome {
+        prefix_steps: prefix.len(),
+        cycle_steps: cycle.len(),
+        emergency_committed,
+        cycle_closed,
+        actuator_poll_in_cycle: poll_in_cycle,
+        actuator_observed_stop,
+        liveness_lasso_confirmed,
+        clear_refused_count,
+        state_after_cycle_1,
+        state_after_cycle_2,
         final_version: engine.version(),
     }
 }
@@ -608,20 +751,111 @@ mod tests {
         assert!(!outcome.final_snapshot.emergency);
     }
 
-    /// Replays ambiguous `Store::save` failure + `restore()` on the real `DeviceEngine`:
-    /// even though `execute` returned `Err(Refused::Store(()))`, `restore()` loads the
-    /// persisted emergency snapshot (matching `Store::save`'s documented contract).
+    /// Replays ambiguous `Store::save` failure + `restore()` + `actuatorPoll` on
+    /// the real `DeviceEngine`: `restore()` loads the persisted emergency snapshot
+    /// and bumps `version` WITHOUT touching the actuator; a subsequent `ActuatorPoll`
+    /// observes the stop.
     #[test]
     fn real_device_engine_replays_ambiguous_store_failure_and_restore() {
-        let outcome = replay_real_device_engine::<false>(&[
+        let after_restore_only = replay_real_device_engine::<false>(&[
             DeviceEngineReplayAction::ExecuteWithStoreFault(
                 MotorCmd::RequestEmergency,
                 StoreFault::FailAmbiguous,
             ),
-            DeviceEngineReplayAction::CrashAndRestore,
+            DeviceEngineReplayAction::Restore,
         ]);
-        assert!(outcome.final_snapshot.emergency);
-        assert!(!outcome.final_snapshot.motor_on);
-        assert!(outcome.actuator_observed_stop);
+        assert!(after_restore_only.final_snapshot.emergency);
+        assert!(!after_restore_only.final_snapshot.motor_on);
+        assert!(
+            !after_restore_only.actuator_observed_stop,
+            "restore() alone must not atomically update the actuator before ActuatorPoll"
+        );
+
+        let after_poll = replay_real_device_engine::<false>(&[
+            DeviceEngineReplayAction::ExecuteWithStoreFault(
+                MotorCmd::RequestEmergency,
+                StoreFault::FailAmbiguous,
+            ),
+            DeviceEngineReplayAction::Restore,
+            DeviceEngineReplayAction::ActuatorPoll,
+        ]);
+        assert!(after_poll.final_snapshot.emergency);
+        assert!(!after_poll.final_snapshot.motor_on);
+        assert!(after_poll.actuator_observed_stop);
+    }
+
+    /// Verifies genuine lasso cycle reproduction (`prefix · cycle^ω`) on the real
+    /// unlatched `DeviceEngine`: repeating `[RequestEmergency, ClearEmergency, ActuatorPoll]`
+    /// closes an identical concrete state while `ActuatorPoll` runs fairly every cycle
+    /// and never observes stop.
+    #[test]
+    fn real_device_engine_lasso_confirms_unlatched_coalescing_cycle() {
+        let out = replay_real_device_engine_lasso::<false>(
+            &[],
+            &[
+                DeviceEngineReplayAction::Execute(MotorCmd::RequestEmergency),
+                DeviceEngineReplayAction::Execute(MotorCmd::ClearEmergency),
+                DeviceEngineReplayAction::ActuatorPoll,
+            ],
+        );
+        assert!(out.emergency_committed);
+        assert!(out.cycle_closed, "cycle must close identical concrete state: {out:?}");
+        assert!(out.actuator_poll_in_cycle, "fairness witness ActuatorPoll must execute in cycle");
+        assert!(!out.actuator_observed_stop);
+        assert!(out.liveness_lasso_confirmed);
+    }
+
+    /// A finite trace ending after `RequestEmergency` without a cycle is NOT a
+    /// confirmed liveness counterexample.
+    #[test]
+    fn real_device_engine_finite_trace_without_cycle_is_not_lasso() {
+        let out = replay_real_device_engine_lasso::<false>(
+            &[DeviceEngineReplayAction::Execute(MotorCmd::RequestEmergency)],
+            &[],
+        );
+        assert!(out.emergency_committed);
+        assert!(!out.actuator_observed_stop);
+        assert!(!out.cycle_closed);
+        assert!(!out.liveness_lasso_confirmed);
+    }
+
+    /// On the latched kernel, the same cycle does NOT reproduce a liveness lasso:
+    /// `ClearEmergency` is refused and `ActuatorPoll` observes the stop.
+    #[test]
+    fn real_device_engine_latched_blocks_coalescing_lasso() {
+        let out = replay_real_device_engine_lasso::<true>(
+            &[],
+            &[
+                DeviceEngineReplayAction::Execute(MotorCmd::RequestEmergency),
+                DeviceEngineReplayAction::Execute(MotorCmd::ClearEmergency),
+                DeviceEngineReplayAction::ActuatorPoll,
+            ],
+        );
+        assert!(out.emergency_committed);
+        assert!(out.actuator_observed_stop);
+        assert!(!out.liveness_lasso_confirmed);
+        assert!(out.clear_refused_count >= 1);
+    }
+
+    /// Verifies the real `FlashStore` append-per-region and unchanged-save no-op protocol:
+    /// 2 records fit in region 0 (1 erase on first switch from empty region 1, 0 erases on
+    /// append, 0 erases on unchanged save), and the 3rd distinct record triggers region switch.
+    #[test]
+    fn real_flash_store_append_and_unchanged_save_protocol() {
+        let outcome = replay_real_flash_store(
+            None,
+            &[
+                FlashReplayAction::Save(10), // erases region 0, writes slot 0
+                FlashReplayAction::Save(10), // unchanged -> no-op
+                FlashReplayAction::Save(20), // appends to region 0 slot 1 (no erase!)
+                FlashReplayAction::RebootLoad,
+                FlashReplayAction::Save(30), // region 0 full -> erases region 1, writes slot 0
+                FlashReplayAction::RebootLoad,
+            ],
+        );
+        assert!(!outcome.durability_violated);
+        assert!(!outcome.crash_consistency_violated);
+        assert_eq!(outcome.last_loaded, Some(30));
+        assert_eq!(outcome.erases, 2, "expected 1 erase for region 0 + 1 erase for region 1");
     }
 }

@@ -9,27 +9,68 @@ public import H5iAppVeil.Refinement
 
 Specifies `crates/h5i-app-embedded/src/kernel.rs` directly in Veil's DSL and
 checks both verification targets using Veil's `#model_check` and Lasso
-`#temporal_check`:
+`#temporal_check`, then proves `StutterRefines` directly on the **exact same**
+Veil-generated `DeviceEngineLatched.relationalTransitionSystem` (no separate
+handwritten transition system).
 
-* **Target A (Persistence & Visibility Ordering)**:
-  - `durable_ack`: once published or notified, flash holds the committed snapshot.
-  - `kernel_interlock`: committed snapshot always satisfies `emergency → ¬motorOn`.
-  - `flash_interlock`: flash snapshot (even after ambiguous `Store::save` failure)
-    always satisfies `emergency → ¬motorOn`.
-  - `deadlock_freedom`: under weak fairness of writer steps, every started write
-    eventually returns to `idle`.
-* **Target B (`changed()` Notification Coalescing & Emergency Stop)**:
-  - `DeviceEngineUnlatched`: Veil's `#temporal_check` finds the coalescing lasso
-    counterexample where `Normal → Emergency → Normal` happens before
-    `actuatorPoll`, violating `□(emergencyRequested → ◇ ¬actuatorMotorOn)`.
-  - `DeviceEngineLatched`: clearing emergency is refused until the actuator
-    observes the stop; Veil's `#temporal_check` proves
-    `□(emergencyRequested → ◇ ¬actuatorMotorOn)` under weak fairness.
-* **Kernel Refinement**:
-  - `deviceEngine_stutterRefines_motorKernel`: formal `StutterRefines` proof
-    connecting the concrete `DeviceEngine` `Veil.RelationalTransitionSystem`
-    (projected to `snapshot`) to the abstract `MotorKernel` `kernelRTS`.
+## Modeling Fidelity & Explicit Abstractions
+
+1. **Real wrapping version counter (`kernel.rs:167`)**: `notify` executes plain
+   wrapping addition `version := version + 1` on `Fin 4` — it does **not**
+   artificially skip `observerSeen`. (Abstracts `u32::wrapping_add(1)` to 2 bits.)
+2. **Multiple observers (`MultiWakerRegistration<4>`)**: two independent
+   observers (`actuatorSeen` and `monitorSeen`) poll `changed()` asynchronously.
+3. **Separated crash, restore, and actuator output**:
+   - `powerLoss`: resets RAM (`snap` returns to initial, `version := 0`,
+     observers reset `seen := 0`, `phase := booting`), while **leaving**
+     `actuatorMotorOn` untouched (modeling an external relay/contactor that
+     keeps its physical state across a brief MCU reset until explicitly driven).
+   - `restore`: mirrors `DeviceEngine::restore()` (`kernel.rs:111-121`), loading
+     `flash` into `snap`, calling `notify()` (`version := version + 1`), and
+     returning to `idle` — **without** atomically updating `actuatorMotorOn`.
+   - `actuatorPoll`: separately observes `version ≠ actuatorSeen` via `changed()`
+     and drives `actuatorMotorOn := snapMotorOn`.
+4. **Remaining abstractions**:
+   - Single-writer serialization (`store: Mutex<...>`) is modeled by `phase`.
+   - `version : Fin 4` compresses `u32` (wraparound happens after 4 commits
+     instead of `2^32`). In `DeviceEngineLatched`, latching bounds uncommitted
+     emergency-clear cycles to 1 commit while `actuatorMotorOn = true`, so
+     even 2-bit wrapping never misses an emergency stop.
+   - Liveness assumes the MCU is not stuck in an infinite power-loss reboot loop
+     (`◇ □ ⌜ phase ≠ booting ⌝`) alongside weak fairness of runtime steps.
 -/
+
+@[expose] public section
+
+namespace H5iAppVeil.Embedded.DeviceEngine
+
+/-- Abstract motor snapshot matching `crates/h5i-app-embedded/src/replay.rs::MotorSnap`. -/
+structure MotorSnap where
+  emergency : Bool
+  motorOn : Bool
+deriving DecidableEq, Repr
+
+inductive MotorCmd where
+  | requestEmergency
+  | clearEmergency
+deriving DecidableEq, Repr
+
+def motorTransition (_ : Unit) (_ : MotorSnap) : MotorCmd → Except Unit (MotorSnap × Unit)
+  | .requestEmergency => .ok ({ emergency := true, motorOn := false }, ())
+  | .clearEmergency => .ok ({ emergency := false, motorOn := true }, ())
+
+def motorApply (_ : MotorSnap) (ws : MotorSnap) : MotorSnap := ws
+
+def motorInit : MotorSnap := { emergency := false, motorOn := true }
+
+/-- Abstract kernel RTS built via `H5iAppVeil.kernelRTS`. -/
+def motorKernelRTS :
+    Veil.RelationalTransitionSystem Unit MotorSnap (KernelEvent Unit MotorCmd Unit Unit) :=
+  kernelRTS motorTransition id motorApply motorInit
+
+end H5iAppVeil.Embedded.DeviceEngine
+
+end
 
 /-! ## 1. Unlatched Emergency Protocol — Veil finds `changed()` coalescing bug -/
 
@@ -47,9 +88,9 @@ individual pendingEmergency : Bool
 individual pendingMotorOn : Bool
 individual reqEmergency : Bool
 individual version : Fin 4
-individual observerSeen : Fin 4
+individual actuatorSeen : Fin 4
+individual monitorSeen : Fin 4
 individual actuatorMotorOn : Bool
-individual emergencyRequested : Bool
 individual phase : EnginePhase
 
 #gen_state
@@ -63,9 +104,9 @@ after_init {
   pendingMotorOn := true
   reqEmergency := false
   version := 0
-  observerSeen := 0
+  actuatorSeen := 0
+  monitorSeen := 0
   actuatorMotorOn := true
-  emergencyRequested := false
   phase := idle
 }
 
@@ -106,18 +147,13 @@ action publish {
   require phase = persisted
   snapEmergency := pendingEmergency
   snapMotorOn := pendingMotorOn
-  if pendingEmergency then
-    emergencyRequested := true
   phase := published
 }
 
+-- Real wrapping `w.version.wrapping_add(1)` (`kernel.rs:167`), no artificial skip.
 action notify {
   require phase = published
-  let nextV : Fin 4 := version + 1
-  if nextV = observerSeen then
-    version := nextV + 1
-  else
-    version := nextV
+  version := version + 1
   phase := notified
 }
 
@@ -127,11 +163,14 @@ action finish {
 }
 
 action actuatorPoll {
-  require version ≠ observerSeen
-  observerSeen := version
+  require version ≠ actuatorSeen
+  actuatorSeen := version
   actuatorMotorOn := snapMotorOn
-  if !snapMotorOn then
-    emergencyRequested := false
+}
+
+action monitorPoll {
+  require version ≠ monitorSeen
+  monitorSeen := version
 }
 
 safety [durable_ack]
@@ -156,13 +195,13 @@ set_option veil.violationIsError false in
 
 end DeviceEngineUnlatched
 
-/-! ## 2. Latched Emergency Protocol — Target A + Target B pass in Veil -/
+/-! ## 2. Latched Emergency Protocol — Target A + Target B + Direct Refinement Proof -/
 
 veil module DeviceEngineLatched
 
 open Lentil
 
-enum EnginePhase = { idle, locked, computed, saving, persisted, published, notified }
+enum EnginePhase = { idle, locked, computed, saving, persisted, published, notified, booting }
 
 individual snapEmergency : Bool
 individual snapMotorOn : Bool
@@ -172,9 +211,9 @@ individual pendingEmergency : Bool
 individual pendingMotorOn : Bool
 individual reqEmergency : Bool
 individual version : Fin 4
-individual observerSeen : Fin 4
+individual actuatorSeen : Fin 4
+individual monitorSeen : Fin 4
 individual actuatorMotorOn : Bool
-individual emergencyRequested : Bool
 individual phase : EnginePhase
 
 #gen_state
@@ -188,9 +227,9 @@ after_init {
   pendingMotorOn := true
   reqEmergency := false
   version := 0
-  observerSeen := 0
+  actuatorSeen := 0
+  monitorSeen := 0
   actuatorMotorOn := true
-  emergencyRequested := false
   phase := idle
 }
 
@@ -248,18 +287,13 @@ action publish {
   require phase = persisted
   snapEmergency := pendingEmergency
   snapMotorOn := pendingMotorOn
-  if pendingEmergency then
-    emergencyRequested := true
   phase := published
 }
 
+-- Real wrapping `w.version.wrapping_add(1)` (`kernel.rs:167`), no artificial skip.
 action notify {
   require phase = published
-  let nextV : Fin 4 := version + 1
-  if nextV = observerSeen then
-    version := nextV + 1
-  else
-    version := nextV
+  version := version + 1
   phase := notified
 }
 
@@ -268,22 +302,42 @@ action finish {
   phase := idle
 }
 
+-- Observer 1: actuator task (`changed()`).
 action actuatorPoll {
-  require version ≠ observerSeen
-  observerSeen := version
+  require phase ≠ booting
+  require version ≠ actuatorSeen
+  actuatorSeen := version
   actuatorMotorOn := snapMotorOn
-  if !snapMotorOn then
-    emergencyRequested := false
 }
 
-action crashAndRestore {
+-- Observer 2: independent telemetry/monitor task (`MultiWakerRegistration<4>`).
+action monitorPoll {
+  require phase ≠ booting
+  require version ≠ monitorSeen
+  monitorSeen := version
+}
+
+-- MCU reset / brownout: RAM resets to initial snapshot and version 0, while
+-- `actuatorMotorOn` is NOT atomically changed (external contactor may stay energized
+-- until `restore` + `actuatorPoll` explicitly drive the GPIO pin).
+action powerLoss {
+  require phase ≠ booting
+  snapEmergency := false
+  snapMotorOn := true
+  version := 0
+  actuatorSeen := 0
+  monitorSeen := 0
+  phase := booting
+}
+
+-- `DeviceEngine::restore()` (`kernel.rs:111-121`): loads flash into `snap`,
+-- calls `notify()` (`version := version + 1`), and enters `idle` WITHOUT
+-- directly mutating `actuatorMotorOn`.
+action restore {
+  require phase = booting
   snapEmergency := flashEmergency
   snapMotorOn := flashMotorOn
-  version := 0
-  observerSeen := 0
-  actuatorMotorOn := flashMotorOn
-  if !flashMotorOn then
-    emergencyRequested := false
+  version := version + 1
   phase := idle
 }
 
@@ -297,12 +351,18 @@ safety [kernel_interlock]
 safety [flash_interlock]
   flashEmergency → ¬flashMotorOn
 
+safety [snap_consistent]
+  snapMotorOn = !snapEmergency
+
+safety [flash_consistent]
+  flashMotorOn = !flashEmergency
+
 temporal [deadlock_freedom]
-  (𝒲ℱ compute ∧ 𝒲ℱ beginSave ∧ 𝒲ℱ savePersist ∧ 𝒲ℱ publish ∧ 𝒲ℱ notify ∧ 𝒲ℱ finish) →
+  (𝒲ℱ compute ∧ 𝒲ℱ beginSave ∧ 𝒲ℱ savePersist ∧ 𝒲ℱ publish ∧ 𝒲ℱ notify ∧ 𝒲ℱ finish ∧ 𝒲ℱ restore ∧ ◇ □ ⌜ phase ≠ booting ⌝) →
     □ (⌜ phase ≠ idle ⌝ → ◇ ⌜ phase = idle ⌝)
 
 temporal [emergency_stop_liveness]
-  (𝒲ℱ actuatorPoll ∧ 𝒲ℱ notify ∧ 𝒲ℱ finish) →
+  (𝒲ℱ actuatorPoll ∧ 𝒲ℱ notify ∧ 𝒲ℱ finish ∧ 𝒲ℱ restore ∧ ◇ □ ⌜ phase ≠ booting ⌝) →
     □ (⌜ snapEmergency ⌝ → ◇ ⌜ ¬actuatorMotorOn ⌝)
 
 #gen_spec
@@ -311,135 +371,100 @@ temporal [emergency_stop_liveness]
 #temporal_check [deadlock_freedom] interpreted { EnginePhase := EnginePhase_IndT } {}
 #temporal_check [emergency_stop_liveness] interpreted { EnginePhase := EnginePhase_IndT } {}
 
-end DeviceEngineLatched
+-- Directly prove stuttering refinement on the EXACT Veil-generated
+-- `relationalTransitionSystem` checked above (zero duplicate handwritten RTS).
+open H5iAppVeil H5iAppVeil.Embedded.DeviceEngine in
+def projectSnap {EnginePhase : Type} (s : State (FieldAbstractType EnginePhase)) : MotorSnap :=
+  { emergency := s.snapEmergency, motorOn := s.snapMotorOn }
 
-/-! ## 3. Refinement Proof: Concrete `DeviceEngine` → Abstract `Kernel` RTS -/
+private def Consistent {EnginePhase : Type} (s : State (FieldAbstractType EnginePhase)) : Prop :=
+  s.snapMotorOn = !s.snapEmergency ∧
+  s.flashMotorOn = !s.flashEmergency ∧
+  s.pendingMotorOn = !s.pendingEmergency
 
-@[expose] public section
-
-namespace H5iAppVeil.Embedded.DeviceEngine
-
-/-- Abstract motor snapshot matching `crates/h5i-app-embedded/src/replay.rs::MotorSnap`. -/
-structure MotorSnap where
-  emergency : Bool
-  motorOn : Bool
-deriving DecidableEq, Repr
-
-inductive MotorCmd where
-  | requestEmergency
-  | clearEmergency
-deriving DecidableEq, Repr
-
-def motorTransition (_ : Unit) (_ : MotorSnap) : MotorCmd → Except Unit (MotorSnap × Unit)
-  | .requestEmergency => .ok ({ emergency := true, motorOn := false }, ())
-  | .clearEmergency => .ok ({ emergency := false, motorOn := true }, ())
-
-def motorApply (_ : MotorSnap) (ws : MotorSnap) : MotorSnap := ws
-
-def motorInit : MotorSnap := { emergency := false, motorOn := true }
-
-/-- Abstract kernel RTS built via `H5iAppVeil.kernelRTS`. -/
-def motorKernelRTS :
-    Veil.RelationalTransitionSystem Unit MotorSnap (KernelEvent Unit MotorCmd Unit Unit) :=
-  kernelRTS motorTransition id motorApply motorInit
-
-/-- Concrete runtime state of `DeviceEngine` executing `motorTransition`. -/
-structure EngineRTSState where
-  snapshot : MotorSnap
-  flash : MotorSnap
-  pending : Option (MotorCmd × MotorSnap)
-  version : Nat
-  observerSeen : Nat
-  actuatorMotorOn : Bool
-deriving DecidableEq, Repr
-
-inductive EngineLabel where
-  | compute (cmd : MotorCmd)
-  | savePersist
-  | saveFailClean
-  | publish
-  | notify
-  | actuatorPoll
-deriving DecidableEq, Repr
-
-inductive EngineStep : EngineRTSState → EngineLabel → EngineRTSState → Prop
-  | compute {s cmd ws} :
-      motorTransition () s.snapshot cmd = .ok (ws, ()) →
-      EngineStep s (.compute cmd) { s with pending := some (cmd, motorApply s.snapshot ws) }
-  | savePersist {s cmd nxt} :
-      s.pending = some (cmd, nxt) →
-      EngineStep s .savePersist { s with flash := nxt }
-  | saveFailClean {s} :
-      EngineStep s .saveFailClean { s with pending := none }
-  | publish {s cmd nxt} :
-      s.pending = some (cmd, nxt) →
-      s.flash = nxt →
-      EngineStep s .publish { s with snapshot := nxt, pending := none }
-  | notify {s} :
-      EngineStep s .notify { s with version := s.version + 1 }
-  | actuatorPoll {s} :
-      s.version ≠ s.observerSeen →
-      EngineStep s .actuatorPoll
-        { s with observerSeen := s.version, actuatorMotorOn := s.snapshot.motorOn }
-
-def engineRTS : Veil.RelationalTransitionSystem Unit EngineRTSState EngineLabel where
-  assumptions := fun _ => True
-  init := fun _ s =>
-    s = { snapshot := motorInit, flash := motorInit, pending := none,
-          version := 0, observerSeen := 0, actuatorMotorOn := true }
-  tr := fun _ s lbl s' => EngineStep s lbl s'
-
-/-- Every pending state in `engineRTS` was produced by a valid `motorTransition`
-step from the current committed `snapshot`. -/
-def PendingValid (s : EngineRTSState) : Prop :=
-  ∀ cmd nxt, s.pending = some (cmd, nxt) →
-    ∃ ws, motorTransition () s.snapshot cmd = .ok (ws, ()) ∧ nxt = motorApply s.snapshot ws
-
-theorem engineRTS_pendingValid {s : EngineRTSState} (hr : engineRTS.reachable () s) :
-    PendingValid s := by
+private theorem consistent_reachable
+    {EnginePhase : Type} [Inhabited EnginePhase] [DecidableEq EnginePhase] [EnginePhase_EnumClass EnginePhase]
+    {th : Theory EnginePhase} {s : State (FieldAbstractType EnginePhase)}
+    (hr : (relationalTransitionSystem EnginePhase).reachable th s) :
+    Consistent s := by
   induction hr with
   | init s _ hinit =>
-    subst hinit
-    intro cmd nxt hp
-    cases hp
+    revert hinit
+    simp only [nextSimp, actSimp]
+    veil_wp
+    intro hinit
+    rcases hinit with ⟨_, rfl⟩
+    simp [Consistent]
   | step s s' _ hnext ih =>
-    obtain ⟨lbl, hstep⟩ := hnext
-    cases hstep with
-    | compute ht =>
-      intro cmd' nxt' hp
-      cases hp
-      exact ⟨_, ht, rfl⟩
-    | savePersist _ => exact ih
-    | saveFailClean =>
-      intro cmd' nxt' hp
-      cases hp
-    | publish _ _ =>
-      intro cmd' nxt' hp
-      cases hp
-    | notify => exact ih
-    | actuatorPoll _ => exact ih
+    obtain ⟨hsnap, hflash, hpend⟩ := ih
+    obtain ⟨lbl, htr⟩ := hnext
+    cases lbl <;> simp only [nextSimp] at htr
+    all_goals (rcases htr with ⟨_, _, _, _, rfl⟩; simp [Consistent, hsnap, hflash, hpend])
 
-/-- **Refinement theorem**: the concrete `DeviceEngine` transition system
-stuttering-refines the abstract `motorKernelRTS` via the committed snapshot
-projection `EngineRTSState.snapshot`. -/
-theorem deviceEngine_stutterRefines_motorKernel :
-    StutterRefines id EngineRTSState.snapshot engineRTS motorKernelRTS where
-  assumptions_map := fun _ h => h
+open H5iAppVeil H5iAppVeil.Embedded.DeviceEngine in
+/-- **Refinement theorem**: the **exact** Veil-generated
+`DeviceEngineLatched.relationalTransitionSystem` that `#model_check` and
+`#temporal_check` verify above stuttering-refines `motorKernelRTS` via
+`projectSnap`. -/
+theorem stutterRefines_motorKernel
+    (EnginePhase : Type) [Inhabited EnginePhase] [DecidableEq EnginePhase] [EnginePhase_EnumClass EnginePhase] :
+    StutterRefines (fun _ => ()) (projectSnap (EnginePhase := EnginePhase))
+      (relationalTransitionSystem EnginePhase)
+      motorKernelRTS where
+  assumptions_map := fun _ _ => trivial
   init_map := fun _ s _ hinit => by
-    subst hinit
-    rfl
-  step_map := fun _ s s' hr hnext => by
-    obtain ⟨lbl, hstep⟩ := hnext
-    cases hstep with
-    | compute _ => exact Or.inr rfl
-    | savePersist _ => exact Or.inr rfl
-    | saveFailClean => exact Or.inr rfl
-    | @publish cmd nxt hp _ =>
-      obtain ⟨ws, ht, hnxt⟩ := engineRTS_pendingValid hr cmd nxt hp
-      subst hnxt
+    revert hinit
+    simp only [nextSimp, actSimp]
+    veil_wp
+    intro hinit
+    rcases hinit with ⟨_, rfl⟩
+    simp [motorKernelRTS, kernelRTS, projectSnap, motorInit]
+  step_map := fun th s s' hr hnext => by
+    obtain ⟨_, hflash, hpend⟩ := consistent_reachable hr
+    obtain ⟨lbl, htr⟩ := hnext
+    cases lbl with
+    | publish =>
+      simp only [nextSimp] at htr
+      rcases htr with ⟨_, _, rfl⟩
       left
-      exact ⟨.ok () cmd (), KernelStep.ok ht⟩
-    | notify => exact Or.inr rfl
-    | actuatorPoll _ => exact Or.inr rfl
+      cases hpe : s.pendingEmergency
+      · refine ⟨.ok () .clearEmergency (), ?_⟩
+        have hpm : s.pendingMotorOn = true := by simp [hpend, hpe]
+        simpa [motorKernelRTS, kernelRTS, projectSnap, motorApply, hpe, hpm] using
+          (KernelStep.ok (s := projectSnap s) (toSt := id) (applyAll := motorApply)
+            (rfl : motorTransition () (projectSnap s) .clearEmergency = .ok ({ emergency := false, motorOn := true }, ())))
+      · refine ⟨.ok () .requestEmergency (), ?_⟩
+        have hpm : s.pendingMotorOn = false := by simp [hpend, hpe]
+        simpa [motorKernelRTS, kernelRTS, projectSnap, motorApply, hpe, hpm] using
+          (KernelStep.ok (s := projectSnap s) (toSt := id) (applyAll := motorApply)
+            (rfl : motorTransition () (projectSnap s) .requestEmergency = .ok ({ emergency := true, motorOn := false }, ())))
+    | powerLoss =>
+      simp only [nextSimp] at htr
+      rcases htr with ⟨_, _, rfl⟩
+      left
+      refine ⟨.ok () .clearEmergency (), ?_⟩
+      simpa [motorKernelRTS, kernelRTS, projectSnap, motorApply] using
+        (KernelStep.ok (s := projectSnap s) (toSt := id) (applyAll := motorApply)
+          (rfl : motorTransition () (projectSnap s) .clearEmergency = .ok ({ emergency := false, motorOn := true }, ())))
+    | restore =>
+      simp only [nextSimp] at htr
+      rcases htr with ⟨_, _, rfl⟩
+      left
+      cases hfe : s.flashEmergency
+      · refine ⟨.ok () .clearEmergency (), ?_⟩
+        have hfm : s.flashMotorOn = true := by simp [hflash, hfe]
+        simpa [motorKernelRTS, kernelRTS, projectSnap, motorApply, hfe, hfm] using
+          (KernelStep.ok (s := projectSnap s) (toSt := id) (applyAll := motorApply)
+            (rfl : motorTransition () (projectSnap s) .clearEmergency = .ok ({ emergency := false, motorOn := true }, ())))
+      · refine ⟨.ok () .requestEmergency (), ?_⟩
+        have hfm : s.flashMotorOn = false := by simp [hflash, hfe]
+        simpa [motorKernelRTS, kernelRTS, projectSnap, motorApply, hfe, hfm] using
+          (KernelStep.ok (s := projectSnap s) (toSt := id) (applyAll := motorApply)
+            (rfl : motorTransition () (projectSnap s) .requestEmergency = .ok ({ emergency := true, motorOn := false }, ())))
+    | _ =>
+      simp only [nextSimp] at htr
+      right
+      rcases htr with ⟨_, _, _, _, rfl⟩
+      rfl
 
-end H5iAppVeil.Embedded.DeviceEngine
+end DeviceEngineLatched

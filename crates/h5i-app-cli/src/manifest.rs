@@ -172,6 +172,17 @@ pub struct Verification {
     /// manifest. Defaults to `"proofs/temporal"`.
     #[serde(default = "default_temporal_dir", alias = "temporal-dir")]
     pub temporal_dir: String,
+    /// Lake targets to build in `temporal_dir`. Empty builds default targets.
+    #[serde(default, alias = "temporal-targets")]
+    pub temporal_targets: Vec<String>,
+    /// Required Veil `#temporal_check` / `#model_check` property names that must
+    /// report clean pass (never violated, unknown, or suppressed via `violationIsError false`).
+    #[serde(default, alias = "temporal-properties")]
+    pub temporal_properties: Vec<String>,
+    /// Required Lean theorems in `temporal_dir` that must exist and depend only
+    /// on Lean's three standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
+    #[serde(default, alias = "temporal-theorems")]
+    pub temporal_theorems: Vec<String>,
 }
 
 impl Default for Verification {
@@ -180,6 +191,9 @@ impl Default for Verification {
             temporal: false,
             temporal_backend: default_temporal_backend(),
             temporal_dir: default_temporal_dir(),
+            temporal_targets: Vec::new(),
+            temporal_properties: Vec::new(),
+            temporal_theorems: Vec::new(),
         }
     }
 }

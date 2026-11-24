@@ -319,17 +319,53 @@ pub struct Run {
     pub error: Option<String>,
 }
 
-/// Outcome of optional temporal verification (Veil or built-in model checker).
+/// Outcome of optional temporal verification (Veil backend).
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TemporalStatus {
     Skipped,
     NotRun,
     Passed,
+    /// Passed on an earlier source tree; inputs have changed since.
+    PassedOnOtherInputs,
     Failed,
     Counterexample,
     Unknown,
     Error,
+}
+
+/// Distinguishes Lean kernel-verified theorems from Veil finite-state checks.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TemporalCheckKind {
+    /// Lean kernel theorem gated on standard axioms only (`propext`, `Classical.choice`, `Quot.sound`).
+    ProvenTheorem,
+    /// Veil exhaustive finite-state safety model check (`#model_check`).
+    FiniteModelCheck,
+    /// Veil Lasso exhaustive finite-state temporal/liveness check (`#temporal_check`).
+    FiniteTemporalCheck,
+}
+
+/// Property-level outcome recorded by `h5i app temporal-check`.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TemporalPropertyStatus {
+    Passed,
+    Counterexample,
+    Unknown,
+    Unchecked,
+    Failed,
+}
+
+/// One required or discovered temporal verification obligation and its outcome.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TemporalProperty {
+    pub name: String,
+    pub kind: TemporalCheckKind,
+    pub status: TemporalPropertyStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 /// Summary of temporal verification for a project or recorded run.
@@ -339,6 +375,12 @@ pub struct TemporalReport {
     pub enabled: bool,
     pub backend: String,
     pub status: TemporalStatus,
+    /// Whether the recorded run's input digest matches the current sources.
+    #[serde(default)]
+    pub inputs_current: bool,
+    /// Explicit per-obligation results (proven theorems, `#model_check`, `#temporal_check`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub properties: Vec<TemporalProperty>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
 }

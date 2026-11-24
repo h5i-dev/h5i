@@ -2636,7 +2636,7 @@ Replay a Veil JSON counterexample trace against the real Rust `FlashStore` or `D
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBtrace\-replay\fR [\fB\-\-target\fR] [\fB\-\-seed\-wraparound\fR] [\fB\-\-latched\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITRACE\fR> 
+\fBtrace\-replay\fR [\fB\-\-target\fR] [\fB\-\-seed\-wraparound\fR] [\fB\-\-append\-reboot\fR] [\fB\-\-power\-cut\-budget\fR] [\fB\-\-latched\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITRACE\fR> 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -2655,7 +2655,13 @@ device\-engine
 .RE
 .TP
 \fB\-\-seed\-wraparound\fR
-For `flash\-store`: seed region 0 at `seq = u32::MAX` (4,294,967,295) to reproduce 32\-bit wraparound on the real `FlashStore` directly
+For `flash\-store`: seed region 0 at `seq = u32::MAX` (4,294,967,295) to probe the 32\-bit wraparound boundary on the real `FlashStore` (switches mode to `regression_probe`)
+.TP
+\fB\-\-append\-reboot\fR
+For `flash\-store`: append a final `RebootLoad` after the trace even if the trace does not end with `rebootScan` (switches mode to `regression_probe`)
+.TP
+\fB\-\-power\-cut\-budget\fR \fI<POWER_CUT_BUDGET>\fR
+For `flash\-store`: explicit byte\-operation budget for `powerCut*` transitions (overrides `"power_cut_budget"` in JSON; required when replaying mid\-write/erase cuts)
 .TP
 \fB\-\-latched\fR
 For `device\-engine`: replay against the latched motor kernel

@@ -117,7 +117,7 @@ pub fn doctor(project: Option<&Project>, this_rev: &str, fix: bool) -> Result<()
             }) {
                 r.fail("veil", &reason);
             } else {
-                r.ok("veil (optional)", "not installed (optional; enable via `[verification] temporal = true`)");
+                r.ok("veil (optional)", "not required (optional; enable via `[verification] temporal = true`)");
             }
         }
     }

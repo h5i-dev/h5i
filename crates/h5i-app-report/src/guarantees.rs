@@ -303,6 +303,16 @@ impl Guarantees {
                     tv.backend,
                     word(&tv.status)
                 );
+                for prop in &tv.properties {
+                    let pdetail = prop.detail.as_deref().map(|d| format!(" ({d})")).unwrap_or_default();
+                    let _ = writeln!(
+                        s,
+                        "    {} [{} / {}]{pdetail}",
+                        prop.name,
+                        word(&prop.kind),
+                        word(&prop.status)
+                    );
+                }
             }
             for r in &p.routes {
                 let actor = match r.actor {
@@ -398,6 +408,8 @@ mod tests {
                 enabled: false,
                 backend: "veil".into(),
                 status: crate::TemporalStatus::Skipped,
+                inputs_current: true,
+                properties: vec![],
                 detail: Some("not enabled".into()),
             }),
         }])

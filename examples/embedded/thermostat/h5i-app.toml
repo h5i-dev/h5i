@@ -35,3 +35,15 @@ new = "*dc > MAX_TEMP_DC"
 temporal = false
 temporal_backend = "veil"
 temporal_dir = "proofs/temporal"
+temporal_targets = ["ThermostatTemporal"]
+temporal_properties = [
+    "ThermostatClosedLoop#model_check",
+    "overtemp_eventually_stops_pin",
+    "sensor_failure_fails_safe",
+    "off_mode_stops_pin",
+    "auto_heats_when_cold",
+]
+temporal_theorems = [
+    "ThermostatTemporal.KernelBridge.thermostat_always_inv",
+    "ThermostatTemporal.KernelBridge.firmware_reachable_inv",
+]
