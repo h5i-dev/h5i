@@ -100,35 +100,88 @@ private theorem composedStep_nonidle_decr_rank {g : FlashGeometry} {cs cs' : Com
     (hne : cs.phase ≠ .idle) (hstep : ComposedStep g cs cs') :
     phaseRank cs'.phase < phaseRank cs.phase := by
   cases hstep with
-  | beginSaveAppend hidle _ _ _ _ => exact False.elim (hne hidle)
-  | beginSaveSwitch hidle _ _ _ _ => exact False.elim (hne hidle)
-  | eraseOk hph _ _ => simp [hph, phaseRank]
+  | beginSaveAppend hidle _ _ _ _ _ => exact False.elim (hne hidle)
+  | beginSaveSwitch hidle _ _ _ _ _ => exact False.elim (hne hidle)
+  | eraseOk hph => simp [hph, phaseRank]
   | eraseFailPowerCut hph _ _ => simp [hph, phaseRank]
-  | writeOk hph _ _ _ _ _ _ => simp [hph, phaseRank]
-  | writeFailPartial hph _ _ _ => simp [hph, phaseRank]
+  | writeOk hph => simp [hph, phaseRank]
+  | writeFailTorn hph _ _ _ => simp [hph, phaseRank]
+  | writeFailAmbiguousLanded hph => simp [hph, phaseRank]
   | ackSave hph _ => simp [hph, phaseRank]
-  | rebootKeepAcked =>
+  | recover _ _ =>
     cases hp : cs.phase with
     | idle => exact False.elim (hne hp)
     | erasing _ _ _ _ _ _ _ => simp [phaseRank]
     | writing _ _ _ _ _ _ => simp [phaseRank]
     | writeLanded _ _ _ _ _ => simp [phaseRank]
-  | rebootRecoverLanded hph => simp [hph, phaseRank]
+
+/-- **Compositional Crash-Consistent Recovery Safety (`□ Recover_Rust(flash) ∈ {acked, landed}`)**:
+Lifts `FlashStoreProofs.extracted_recovery_functional_correctness` directly into
+Lentil's `□`: at every point of every infinite execution of the extracted
+`store_core` + `NorFlash` system, executing the actual extracted `scan_init` /
+`scan_step` on physical flash succeeds and deterministically recovers
+`latestOnFlash` (`cs.landed` if a write landed, else `cs.acked`). -/
+theorem extracted_flashstore_always_recoverable
+    (g : FlashGeometry) (hlay : layout_ok g = ok true) (hdiv : AlignDivides g)
+    (buf0 : Slice U8) (hbuf0 : buf0.length = g.buf_cap.val)
+    (e : Lentil.exec ComposedState)
+    (hInit : (extractedFlashStoreRTS g).init () (e 0))
+    (hNext : ∀ n, (extractedFlashStoreRTS g).next () (e n) (e (n + 1)) ∨ e (n + 1) = e n) :
+    Lentil.always
+      (Lentil.state_pred (fun cs =>
+        (∃ pos' ver' len' finalBuf, RecoverFromFlash g cs.flash buf0 pos' ver' len' finalBuf) ∧
+        (∀ pos' ver' len' finalBuf,
+          RecoverFromFlash g cs.flash buf0 pos' ver' len' finalBuf →
+          ver' = (latestOnFlash cs).map CommittedRecord.version ∧
+          len' = (match latestOnFlash cs with | none => 0#u32 | some r => r.payloadLen) ∧
+          (∀ r, latestOnFlash cs = some r →
+            pos'.region = r.region ∧
+            pos'.seq = r.seq ∧
+            ∀ i, i < r.recordLen.val →
+              finalBuf.val[i]? = some (u8OfUInt8 (r.bytes.getD i 0))))))
+      e 0 := by
+  have hreach : ∀ k, ComposedReachable g (e k) := by
+    intro k
+    induction k with
+    | zero => rw [hInit]; exact .init
+    | succ n ih =>
+      rcases hNext n with ⟨_, hst⟩ | heq
+      · exact .step ih hst
+      · rw [heq]; exact ih
+  intro k
+  simp only [Lentil.state_pred, Nat.zero_add]
+  obtain ⟨hex, hall⟩ :=
+    extracted_recovery_functional_correctness g hlay hdiv (hreach k) buf0 hbuf0
+  refine ⟨hex, fun pos' ver' len' finalBuf h => ?_⟩
+  obtain ⟨h1, h2, h3⟩ := hall pos' ver' len' finalBuf h
+  refine ⟨h1, h2, fun r hr => ?_⟩
+  obtain ⟨ha, hb, hc⟩ := h3 r hr
+  exact ⟨ha, hb, fun i hi => by simpa using hc i hi⟩
 
 /-- **Compositional Save Termination Liveness (`□ (¬idle → ◇ idle)`)**:
 Under Lentil weak fairness of `saveProgressAction g`, every in-flight save
 operation in the composed extracted `store_core` + `NorFlash` system eventually
-completes (either committing or cleanly aborting/rebooting to `.idle`) in at
-most 3 non-stuttering transitions. -/
+completes (either committing or cleanly aborting/recovering to `.idle` via
+actual extracted `scan_init`/`scan_step`) in at most 3 non-stuttering transitions. -/
 theorem extracted_flashstore_save_liveness
-    (g : FlashGeometry)
+    (g : FlashGeometry) (hlay : layout_ok g = ok true) (hdiv : AlignDivides g)
+    (buf0 : Slice U8) (hbuf0 : buf0.length = g.buf_cap.val)
     (e : Lentil.exec ComposedState)
+    (hInit : (extractedFlashStoreRTS g).init () (e 0))
     (hNext : ∀ n, (extractedFlashStoreRTS g).next () (e n) (e (n + 1)) ∨ e (n + 1) = e n)
     (hFair : Lentil.weak_fairness (saveProgressAction g) e 0) :
     Lentil.always
       (fun e i => (e i).phase ≠ .idle →
         Lentil.eventually (Lentil.state_pred (fun cs => cs.phase = .idle)) e i)
       e 0 := by
+  have hreach : ∀ k, ComposedReachable g (e k) := by
+    intro k
+    induction k with
+    | zero => rw [hInit]; exact .init
+    | succ n ih =>
+      rcases hNext n with ⟨_, hst⟩ | heq
+      · exact .step ih hst
+      · rw [heq]; exact ih
   have haux : ∀ r k, phaseRank (e k).phase ≤ r →
       Lentil.eventually (Lentil.state_pred (fun cs => cs.phase = .idle)) e k := by
     intro r
@@ -147,7 +200,8 @@ theorem extracted_flashstore_save_liveness
       by_cases hidle : (e k).phase = .idle
       · exact ⟨0, by simpa [Lentil.state_pred] using hidle⟩
       · -- While remaining non-idle, `saveProgressAction g` is always enabled
-        -- (e.g. via `ComposedStep.rebootKeepAcked`), so by weak fairness a
+        -- via `ComposedStep.recover` (whose existence is proved by
+        -- `extracted_recovery_functional_correctness`), so by weak fairness a
         -- `saveProgressAction` step must eventually fire, strictly decreasing
         -- `phaseRank` to `≤ r`.
         by_contra hNeverIdle
@@ -156,8 +210,14 @@ theorem extracted_flashstore_save_liveness
           exact hNeverIdle ⟨d, by simpa [Lentil.state_pred] using heq⟩
         have hEnAll : ∀ d, Lentil.tl_enabled (saveProgressAction g) e (k + d) := by
           intro d
-          exact ⟨{ e (k + d) with pos := { (e (k + d)).pos with append := none }, phase := .idle },
-            hNeAll d, ComposedStep.rebootKeepAcked⟩
+          obtain ⟨⟨pos', ver', len', fb, hrec⟩, _⟩ :=
+            extracted_recovery_functional_correctness g hlay hdiv (hreach (k + d)) buf0 hbuf0
+          exact ⟨{ e (k + d) with
+              pos := some pos'
+              phase := .idle
+              acked := match (e (k + d)).landed with | some r => some r | none => (e (k + d)).acked
+              landed := none },
+            hNeAll d, ComposedStep.recover hbuf0 hrec⟩
         have hWF := (congrFun (congrFun Lentil.wf_as_implies e) 0).mp hFair
         have hInfOften : Lentil.always (Lentil.eventually (Lentil.action_pred (saveProgressAction g))) e 0 :=
           hWF ⟨k, fun d => by simpa [Nat.zero_add] using hEnAll d⟩

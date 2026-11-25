@@ -353,6 +353,12 @@ pub fn validate_record_crc(buf: &[u8], payload_len: u32) -> bool {
 /* -------------------------------------------------------------------------- */
 
 /// Concrete I/O plan prescribed for saving a record of `payload_len` bytes.
+///
+/// Before issuing any flash mutation (`erase` or `write`) prescribed by a
+/// `SavePlan`, the driver must invalidate its cached `pos` (`pos = None`) so
+/// that an ambiguous write failure or async cancellation forces a full
+/// `scan_init` / `scan_step` recovery before the next save, preventing
+/// duplicate sequence numbers across regions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SavePlan {
     /// Snapshot does not fit in the buffer or region, or layout is invalid.
@@ -364,7 +370,6 @@ pub enum SavePlan {
         write_addr: u32,
         write_len: u32,
         next_seq: u32,
-        pos_in_flight: Pos,
     },
     /// Erase the standby region (`1 - pos.region`), then write at offset 0 there.
     EraseThenWrite {
@@ -374,7 +379,6 @@ pub enum SavePlan {
         write_addr: u32,
         write_len: u32,
         next_seq: u32,
-        pos_in_flight: Pos,
     },
 }
 
@@ -391,7 +395,6 @@ pub fn plan_save(g: FlashGeometry, pos: Pos, payload_len: u32) -> SavePlan {
         return SavePlan::TooLarge;
     }
     let seq = next_seq(pos.seq);
-    let pos_in_flight = Pos { region: pos.region, append: None, seq: pos.seq };
     match pos.append {
         Some(off) if off <= g.region && rl <= g.region - off && off % a == 0 => {
             let write_addr = region_start(g, pos.region) + off;
@@ -401,7 +404,6 @@ pub fn plan_save(g: FlashGeometry, pos: Pos, payload_len: u32) -> SavePlan {
                 write_addr,
                 write_len: rl,
                 next_seq: seq,
-                pos_in_flight,
             }
         }
         _ => {
@@ -414,7 +416,6 @@ pub fn plan_save(g: FlashGeometry, pos: Pos, payload_len: u32) -> SavePlan {
                 write_addr: start,
                 write_len: rl,
                 next_seq: seq,
-                pos_in_flight,
             }
         }
     }

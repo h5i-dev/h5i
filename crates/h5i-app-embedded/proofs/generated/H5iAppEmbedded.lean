@@ -652,7 +652,7 @@ def store_core.validate_record_crc
     | some computed => ok (stored = computed)
 
 /-- [h5i_app_embedded::store_core::SavePlan]
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 357:0-379:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 363:0-383:1
     Visibility: public -/
 @[discriminant isize]
 inductive store_core.SavePlan where
@@ -663,7 +663,6 @@ inductive store_core.SavePlan where
   Std.U32 →
   Std.U32 →
   Std.U32 →
-  store_core.Pos →
   store_core.SavePlan
 | EraseThenWrite :
   Std.U32 →
@@ -672,11 +671,10 @@ inductive store_core.SavePlan where
   Std.U32 →
   Std.U32 →
   Std.U32 →
-  store_core.Pos →
   store_core.SavePlan
 
 /-- [h5i_app_embedded::store_core::plan_save]:
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 382:0-421:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 386:0-422:1
     Visibility: public -/
 def store_core.plan_save
   (g : store_core.FlashGeometry) (pos : store_core.Pos) (payload_len : Std.U32)
@@ -706,8 +704,8 @@ def store_core.plan_save
               let other ← store_core.other_region pos.region
               let start ← store_core.region_start g other
               let i ← start + g.region
-              ok (store_core.SavePlan.EraseThenWrite start i other start rl seq
-                pos)
+              ok (store_core.SavePlan.EraseThenWrite start i other start rl
+                seq)
             | some off =>
               if off <= g.region
               then
@@ -720,29 +718,29 @@ def store_core.plan_save
                     let i2 ← store_core.region_start g pos.region
                     let write_addr ← i2 + off
                     ok (store_core.SavePlan.WriteOnly pos.region off write_addr
-                      rl seq { pos with append := none })
+                      rl seq)
                   else
                     let other ← store_core.other_region pos.region
                     let start ← store_core.region_start g other
                     let i2 ← start + g.region
                     ok (store_core.SavePlan.EraseThenWrite start i2 other start
-                      rl seq { pos with append := none })
+                      rl seq)
                 else
                   let other ← store_core.other_region pos.region
                   let start ← store_core.region_start g other
                   let i1 ← start + g.region
                   ok (store_core.SavePlan.EraseThenWrite start i1 other start
-                    rl seq { pos with append := none })
+                    rl seq)
               else
                 let other ← store_core.other_region pos.region
                 let start ← store_core.region_start g other
                 let i ← start + g.region
                 ok (store_core.SavePlan.EraseThenWrite start i other start rl
-                  seq { pos with append := none })
+                  seq)
   else ok store_core.SavePlan.TooLarge
 
 /-- [h5i_app_embedded::store_core::pos_after_write]:
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 424:0-426:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 425:0-427:1
     Visibility: public -/
 def store_core.pos_after_write
   (target_region : Std.U32) (target_off : Std.U32) (write_len : Std.U32)
@@ -753,7 +751,7 @@ def store_core.pos_after_write
   ok { region := target_region, append := (some i), seq }
 
 /-- [h5i_app_embedded::store_core::ScanPhase]
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 433:0-438:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 434:0-439:1
     Visibility: public -/
 @[discriminant isize]
 inductive store_core.ScanPhase where
@@ -763,7 +761,7 @@ inductive store_core.ScanPhase where
 | Done : store_core.ScanPhase
 
 /-- [h5i_app_embedded::store_core::BestRecord]
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 441:0-448:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 442:0-449:1
     Visibility: public -/
 structure store_core.BestRecord where
   seq : Std.U32
@@ -774,7 +772,7 @@ structure store_core.BestRecord where
   record_len : Std.U32
 
 /-- [h5i_app_embedded::store_core::ScanState]
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 451:0-460:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 452:0-461:1
     Visibility: public -/
 structure store_core.ScanState where
   region : Std.U32
@@ -787,7 +785,7 @@ structure store_core.ScanState where
   phase : store_core.ScanPhase
 
 /-- [h5i_app_embedded::store_core::ScanAction]
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 464:0-472:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 465:0-473:1
     Visibility: public -/
 @[discriminant isize]
 inductive store_core.ScanAction where
@@ -800,7 +798,7 @@ inductive store_core.ScanAction where
   store_core.ScanAction
 
 /-- [h5i_app_embedded::store_core::scan_init]:
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 475:0-492:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 476:0-493:1
     Visibility: public -/
 def store_core.scan_init
   (g : store_core.FlashGeometry) :
@@ -835,7 +833,7 @@ def store_core.scan_init
        }, store_core.ScanAction.InvalidLayout)
 
 /-- [h5i_app_embedded::store_core::finish_region]:
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 496:0-521:1 -/
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 497:0-522:1 -/
 def store_core.finish_region
   (g : store_core.FlashGeometry) (st : store_core.ScanState) (torn : Bool) :
   Result (store_core.ScanState × store_core.ScanAction)
@@ -876,7 +874,7 @@ def store_core.finish_region
          }, store_core.ScanAction.Read addr 0#u32 b.record_len)
 
 /-- [h5i_app_embedded::store_core::accept_valid_record]:
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 524:0-551:1 -/
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 525:0-552:1 -/
 def store_core.accept_valid_record
   (g : store_core.FlashGeometry) (st : store_core.ScanState)
   (hdr : store_core.HeaderInfo) :
@@ -920,7 +918,7 @@ def store_core.accept_valid_record
   else store_core.finish_region g { st with off := i, best := o1 } false
 
 /-- [h5i_app_embedded::store_core::scan_result_pos]:
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 554:0-559:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 555:0-560:1
     Visibility: public -/
 def store_core.scan_result_pos
   (st : store_core.ScanState) (b : store_core.BestRecord) :
@@ -939,7 +937,7 @@ def store_core.scan_result_pos
     else ok { region := b.region, append := none, seq := b.seq }
 
 /-- [h5i_app_embedded::store_core::scan_step]:
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 563:0-624:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 564:0-625:1
     Visibility: public -/
 def store_core.scan_step
   (g : store_core.FlashGeometry) (st : store_core.ScanState)

@@ -192,12 +192,14 @@ where
                 write_addr,
                 write_len,
                 next_seq,
-                pos_in_flight,
             } => {
                 store_core::encode_record(&mut self.buf, next_seq, C::VERSION, len as u32, a)
                     .ok_or(StoreError::TooLarge)?;
-                // A failed or cut write leaves a torn tail: the next save switches.
-                self.pos = Some(pos_in_flight);
+                // Invalidate cached `pos` and `last_len` before mutating flash so that
+                // any ambiguous write failure or async cancellation forces a full rescan
+                // on the next save, avoiding duplicate sequence numbers across regions.
+                self.pos = None;
+                self.last_len = None;
                 (target_region, target_off, write_addr, write_len, next_seq)
             }
             SavePlan::EraseThenWrite {
@@ -207,17 +209,18 @@ where
                 write_addr,
                 write_len,
                 next_seq,
-                pos_in_flight,
             } => {
                 store_core::encode_record(&mut self.buf, next_seq, C::VERSION, len as u32, a)
                     .ok_or(StoreError::TooLarge)?;
-                // Erase the standby region; the active region keeps the newest record.
-                self.pos = Some(pos_in_flight);
+                // Invalidate cached `pos` and `last_len` before erasing the standby region.
+                // The active region keeps the newest record; if erase or write fails or is
+                // cancelled, the next save rescans both regions to recover the true state.
+                self.pos = None;
+                self.last_len = None;
                 self.flash.erase(erase_from, erase_to).await.map_err(StoreError::Flash)?;
                 (target_region, 0, write_addr, write_len, next_seq)
             }
         };
-        self.last_len = None;
         self.flash
             .write(write_addr, &self.buf[..write_len as usize])
             .await
@@ -542,6 +545,208 @@ mod tests {
                     );
                 }
             }
+        });
+    }
+
+    #[test]
+    fn ambiguous_write_completion_append_does_not_duplicate_seq_or_lose_data() {
+        struct AmbiguousFlash {
+            inner: Mock,
+            fail_after_next_write: bool,
+        }
+        impl ErrorType for AmbiguousFlash {
+            type Error = Cut;
+        }
+        impl ReadNorFlash for AmbiguousFlash {
+            const READ_SIZE: usize = Mock::READ_SIZE;
+            async fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Cut> {
+                self.inner.read(offset, bytes).await
+            }
+            fn capacity(&self) -> usize {
+                self.inner.capacity()
+            }
+        }
+        impl NorFlash for AmbiguousFlash {
+            const WRITE_SIZE: usize = Mock::WRITE_SIZE;
+            const ERASE_SIZE: usize = Mock::ERASE_SIZE;
+            async fn erase(&mut self, from: u32, to: u32) -> Result<(), Cut> {
+                self.inner.erase(from, to).await
+            }
+            async fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Cut> {
+                // Physically program ALL bytes to flash first.
+                self.inner.write(offset, bytes).await?;
+                if self.fail_after_next_write {
+                    self.fail_after_next_write = false;
+                    return Err(Cut);
+                }
+                Ok(())
+            }
+        }
+
+        block_on(async {
+            let flash = AmbiguousFlash {
+                inner: Mock::new(1024, usize::MAX),
+                fail_after_next_write: false,
+            };
+            let mut s: FlashStore<AmbiguousFlash, K, Wide<8>, 256> = FlashStore::new(flash, 0, 512);
+            // Step 1: Save X=10 cleanly into Region 0 (seq=1).
+            s.save(&10).await.unwrap();
+            // Step 2: Save Y=20 physically lands in Region 0 (seq=2), then returns Err.
+            s.flash.fail_after_next_write = true;
+            assert_eq!(s.save(&20).await, Err(StoreError::Flash(Cut)));
+            // Step 3: Without reboot, save Z=30 succeeds.
+            s.save(&30).await.unwrap();
+            // Step 4: Reboot and recover: MUST recover acknowledged Z=30, NEVER Y=20.
+            let mem = s.into_inner().inner.mem;
+            let mut reboot: S<8> =
+                FlashStore::new(Mock { mem, budget: usize::MAX, erases: 0 }, 0, 512);
+            assert_eq!(
+                reboot.load().await,
+                Ok(Some(30)),
+                "ambiguous write completion must not cause duplicate seq or lose subsequent acknowledged save"
+            );
+        });
+    }
+
+    #[test]
+    fn ambiguous_write_completion_across_wraparound_and_switch_preserves_durability() {
+        struct AmbiguousFlash {
+            inner: Mock,
+            fail_after_next_write: bool,
+        }
+        impl ErrorType for AmbiguousFlash {
+            type Error = Cut;
+        }
+        impl ReadNorFlash for AmbiguousFlash {
+            const READ_SIZE: usize = Mock::READ_SIZE;
+            async fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Cut> {
+                self.inner.read(offset, bytes).await
+            }
+            fn capacity(&self) -> usize {
+                self.inner.capacity()
+            }
+        }
+        impl NorFlash for AmbiguousFlash {
+            const WRITE_SIZE: usize = Mock::WRITE_SIZE;
+            const ERASE_SIZE: usize = Mock::ERASE_SIZE;
+            async fn erase(&mut self, from: u32, to: u32) -> Result<(), Cut> {
+                self.inner.erase(from, to).await
+            }
+            async fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Cut> {
+                self.inner.write(offset, bytes).await?;
+                if self.fail_after_next_write {
+                    self.fail_after_next_write = false;
+                    return Err(Cut);
+                }
+                Ok(())
+            }
+        }
+
+        block_on(async {
+            let mut mock = Mock::new(1024, usize::MAX);
+            // Seed Region 0 with `seq = u32::MAX - 1`, payload `100`.
+            let mut rec = [0xFFu8; 24];
+            Wide::<8>::encode(&100u64, &mut rec[HDR..]).unwrap();
+            let rl = store_core::encode_record(&mut rec, u32::MAX - 1, 1, 8, 4).unwrap() as usize;
+            mock.mem[..rl].copy_from_slice(&rec[..rl]);
+
+            let flash = AmbiguousFlash { inner: mock, fail_after_next_write: false };
+            let mut s: FlashStore<AmbiguousFlash, K, Wide<8>, 256> = FlashStore::new(flash, 0, 512);
+            assert_eq!(s.load().await, Ok(Some(100)));
+            // Ambiguous write of `seq = u32::MAX` (200) lands in Region 0 then fails.
+            s.flash.fail_after_next_write = true;
+            assert_eq!(s.save(&200).await, Err(StoreError::Flash(Cut)));
+            // Next save without reboot must advance to `seq = 0` (wraparound) and persist 300.
+            s.save(&300).await.unwrap();
+            let mut reboot: S<8> = FlashStore::new(
+                Mock { mem: s.into_inner().inner.mem, budget: usize::MAX, erases: 0 },
+                0,
+                512,
+            );
+            assert_eq!(reboot.load().await, Ok(Some(300)));
+        });
+    }
+
+    #[test]
+    fn async_cancellation_after_write_lands_does_not_duplicate_seq_or_lose_data() {
+        use core::future::Future;
+        use core::pin::Pin;
+        use core::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+
+        struct SuspendAfterWriteFlash {
+            inner: Mock,
+            suspend_next_write: bool,
+        }
+        impl ErrorType for SuspendAfterWriteFlash {
+            type Error = Cut;
+        }
+        impl ReadNorFlash for SuspendAfterWriteFlash {
+            const READ_SIZE: usize = Mock::READ_SIZE;
+            async fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Cut> {
+                self.inner.read(offset, bytes).await
+            }
+            fn capacity(&self) -> usize {
+                self.inner.capacity()
+            }
+        }
+        impl NorFlash for SuspendAfterWriteFlash {
+            const WRITE_SIZE: usize = Mock::WRITE_SIZE;
+            const ERASE_SIZE: usize = Mock::ERASE_SIZE;
+            async fn erase(&mut self, from: u32, to: u32) -> Result<(), Cut> {
+                self.inner.erase(from, to).await
+            }
+            async fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Cut> {
+                // Physically write all bytes to flash immediately.
+                self.inner.write(offset, bytes).await?;
+                if self.suspend_next_write {
+                    self.suspend_next_write = false;
+                    // Suspend forever so the caller can drop/cancel the future after
+                    // the record has already physically landed on flash.
+                    core::future::pending::<()>().await;
+                }
+                Ok(())
+            }
+        }
+
+        fn noop_waker() -> Waker {
+            fn clone(_: *const ()) -> RawWaker {
+                RawWaker::new(core::ptr::null(), &VTABLE)
+            }
+            fn noop(_: *const ()) {}
+            static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, noop, noop, noop);
+            // SAFETY: no-op vtable with null data pointer.
+            unsafe { Waker::from_raw(RawWaker::new(core::ptr::null(), &VTABLE)) }
+        }
+
+        block_on(async {
+            let flash = SuspendAfterWriteFlash {
+                inner: Mock::new(1024, usize::MAX),
+                suspend_next_write: false,
+            };
+            let mut s: FlashStore<SuspendAfterWriteFlash, K, Wide<8>, 256> =
+                FlashStore::new(flash, 0, 512);
+            // Step 1: Save X=10 cleanly into Region 0 (seq=1).
+            s.save(&10).await.unwrap();
+            // Step 2: Start save Y=20; poll once so (seq=2, Y=20) physically lands in Region 0,
+            // then drop/cancel the future before `save` returns!
+            s.flash.suspend_next_write = true;
+            {
+                let mut fut = core::pin::pin!(s.save(&20));
+                let waker = noop_waker();
+                let mut cx = Context::from_waker(&waker);
+                assert!(matches!(Pin::as_mut(&mut fut).poll(&mut cx), Poll::Pending));
+            }
+            // Step 3: Without reboot, save Z=30 succeeds.
+            s.save(&30).await.unwrap();
+            // Step 4: Reboot and verify Z=30 is recovered (not Y=20).
+            let mem = s.into_inner().inner.mem;
+            let mut reboot: S<8> =
+                FlashStore::new(Mock { mem, budget: usize::MAX, erases: 0 }, 0, 512);
+            assert_eq!(
+                reboot.load().await,
+                Ok(Some(30)),
+                "async cancellation after physical write completion must not lose subsequent acknowledged save"
+            );
         });
     }
 

@@ -86,9 +86,12 @@ model checking inside h5i.
     directly over the **actual Aeneas-extracted production `FlashStore` core**
     (`crates/h5i-app-embedded/src/store_core.rs` → `H5iAppEmbedded.lean`,
     `NorFlash.lean`, `FlashStoreProofs.lean`), lifting compositional crash
-    consistency (`□ CrashConsistentInv`), save termination liveness
-    (`□ (¬idle → ◇ idle)`), and kernel-implementation-level recovery scan
-    liveness (`◇ (phase = Done)`)
+    consistency (`□ CrashConsistentInv`, with erase/write safety preconditions
+    discharged from reachability), end-to-end physical recovery correctness over
+    extracted `scan_init`/`scan_step` (`□ Recover_Rust(flash) ∈ {acked, landed}`,
+    including ambiguous write completion and wraparound), save termination
+    liveness (`□ (¬idle → ◇ idle)`), and kernel-implementation-level recovery
+    scan liveness (`◇ (phase = Done)`)
   - `Embedded/DeviceEngine.lean`: Veil DSL models of `kernel.rs` (real wrapping
     `version := version + 1`, two independent observers, separate `powerLoss` /
     `restore` / `actuatorPoll` steps) plus a `StutterRefines` proof directly on
