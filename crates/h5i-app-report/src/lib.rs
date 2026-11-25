@@ -313,7 +313,103 @@ pub struct Run {
     /// and the server is linked to its principal function (`crates/h5i-app-cli/src/tenant.rs`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tenant: Option<TenantLink>,
+    /// Optional temporal verification outcome (`h5i app temporal-check`, `prove --temporal`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temporal: Option<TemporalReport>,
     pub error: Option<String>,
+}
+
+/// Outcome of optional temporal verification (Veil backend).
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TemporalStatus {
+    Skipped,
+    NotRun,
+    Passed,
+    /// Passed on an earlier source tree; inputs have changed since.
+    PassedOnOtherInputs,
+    Failed,
+    Counterexample,
+    Unknown,
+    Error,
+}
+
+/// Distinguishes Lean kernel-verified theorems from Veil finite-state checks.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TemporalCheckKind {
+    /// Lean kernel theorem gated on standard axioms only (`propext`, `Classical.choice`, `Quot.sound`).
+    ProvenTheorem,
+    /// Veil exhaustive finite-state safety model check (`#model_check`).
+    FiniteModelCheck,
+    /// Veil Lasso exhaustive finite-state temporal/liveness check (`#temporal_check`).
+    FiniteTemporalCheck,
+}
+
+/// Declared verification scope of a temporal obligation.
+///
+/// For Lean theorems, this scope is **user-declared** in `h5i-app.toml` rather
+/// than mechanically inferred by the gate. The gate mechanically verifies
+/// `ci.isTheorem`, standard axioms only, optional `Kernel.isDefEq` against a
+/// declared `statement`, and Veil's structured finite-state search results.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum VerificationScope {
+    /// Proved directly over the Aeneas-extracted Rust kernel (`H5iAppLib.Run`).
+    KernelImplementationLevel,
+    /// Compositional: combines an Aeneas-extracted Rust kernel with a
+    /// handwritten runtime / environment transition model (does not prove
+    /// refinement of the full Rust firmware runtime).
+    Compositional,
+    /// Checked or proved purely over a handwritten abstract model (e.g., Veil DSL).
+    ModelLevel,
+    /// Scope not declared in the manifest (default for Lean theorems).
+    #[default]
+    Unspecified,
+}
+
+/// Property-level outcome recorded by `h5i app temporal-check`.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TemporalPropertyStatus {
+    Passed,
+    Counterexample,
+    Unknown,
+    Unchecked,
+    Failed,
+}
+
+/// One required temporal verification obligation and its outcome.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TemporalProperty {
+    pub name: String,
+    pub kind: TemporalCheckKind,
+    /// Declared scope (`kernel_implementation_level`, `compositional`,
+    /// `model_level`, or `unspecified`). For Lean theorems this reflects the
+    /// manifest declaration rather than a mechanically inferred scope.
+    #[serde(default, alias = "scope")]
+    pub declared_scope: VerificationScope,
+    pub status: TemporalPropertyStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+/// Summary of temporal verification for a project or recorded run.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TemporalReport {
+    pub enabled: bool,
+    pub backend: String,
+    pub status: TemporalStatus,
+    /// Whether the recorded run's input digest matches the current sources.
+    #[serde(default)]
+    pub inputs_current: bool,
+    /// Explicit per-obligation results (proven theorems, `#model_check`, `#temporal_check`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub properties: Vec<TemporalProperty>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 /// The tenant of a request: `tenant-of-token`'s status, and whether the
@@ -424,6 +520,7 @@ impl Recorder {
             required_theorems: Vec::new(),
             obligations: Vec::new(),
             tenant: None,
+            temporal: None,
             error: None,
         };
         let r = Self {

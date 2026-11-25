@@ -47,6 +47,9 @@ pub mod link;
 mod path;
 #[cfg(feature = "flash")]
 pub mod store;
+pub mod store_core;
+#[cfg(feature = "flash")]
+pub mod replay;
 #[cfg(feature = "embassy-net")]
 pub mod tcp;
 #[cfg(test)]

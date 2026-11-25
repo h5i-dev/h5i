@@ -16,12 +16,21 @@ theorem usize_max_ge : 2 ^ 32 - 1 ≤ Usize.max := by
 
 theorem usize_lt_max {n : Nat} (h : n < 2 ^ 32 - 1) : n < Usize.max := Nat.lt_of_lt_of_le h usize_max_ge
 
+/-- Extract the return value and postcondition from a total Aeneas WP spec.
+Proven directly by `Result.cases` so `H5iAppLib` compiles on both Lean `v4.31.0`
+and Lean `v4.35.0` (where Aeneas renamed `WP.spec_equiv_exists`). -/
+theorem spec_exists_ok {α} {m : Result α} {P : α → Prop} (h : m ⦃ P ⦄) :
+    ∃ x, m = ok x ∧ P x := by
+  cases m using Result.cases with
+  | ret a => exact ⟨a, rfl, by simpa using h⟩
+  | vis e k => simp at h
+  | div => simp at h
+
 /-- Cloning a vector whose element clone is the identity returns the vector. -/
 theorem vec_clone_eq {T : Type} (inst : core.clone.Clone T) (v : alloc.vec.Vec T)
     (h : ∀ x, inst.clone x = ok x) : alloc.vec.CloneVec.clone inst v = ok v := by
   have := Slice.clone_spec (clone := inst.clone) (s := v.slice) (fun x _ => h x)
-  rw [WP.spec_equiv_exists] at this
-  obtain ⟨s', hs, heq⟩ := this
+  obtain ⟨s', hs, heq⟩ := spec_exists_ok this
   simp [alloc.vec.CloneVec.clone, hs, ← heq]
 
 /-- Lift a property of a successful `Ok (writes, reply)` to a postcondition. -/
@@ -31,25 +40,25 @@ def OnOk {α β ε} (P : α → β → Prop) : core.result.Result (α × β) ε 
 
 theorem of_spec {α β ε} {m : Result (core.result.Result (α × β) ε)} {P : α → β → Prop}
     (hs : m ⦃ OnOk P ⦄) {ws : α} {r : β} (h : m = .ok (.Ok (ws, r))) : P ws r := by
-  obtain ⟨o, ho, hp⟩ := (WP.spec_equiv_exists _ _).1 hs
+  obtain ⟨o, ho, hp⟩ := spec_exists_ok hs
   rw [h, Result.ok.injEq] at ho
   subst ho
   exact hp
 
 theorem eq_ok_of_spec {α} {m : Result α} {v : α} (h : m ⦃ x => x = v ⦄) : m = ok v := by
-  obtain ⟨y, hy, rfl⟩ := (WP.spec_equiv_exists _ _).1 h
+  obtain ⟨y, hy, rfl⟩ := spec_exists_ok h
   exact hy
 
 /-- The postcondition holds of the value a successful computation returns. -/
 theorem post_of_ok {α} {m : Result α} {P : α → Prop} {x : α} (h : m ⦃ P ⦄) (he : m = ok x) : P x := by
-  obtain ⟨y, hy, hp⟩ := (WP.spec_equiv_exists _ _).1 h
+  obtain ⟨y, hy, hp⟩ := spec_exists_ok h
   rw [he, Result.ok.injEq] at hy
   subst hy
   exact hp
 
 /-- A computation with a spec succeeds. -/
 theorem ok_of {α} {m : Result α} {P : α → Prop} (h : m ⦃ P ⦄) : ∃ r, m = ok r := by
-  obtain ⟨r, hr, -⟩ := (WP.spec_equiv_exists _ _).1 h
+  obtain ⟨r, hr, -⟩ := spec_exists_ok h
   exact ⟨r, hr⟩
 
 /-- Invert a successful bind: reason about a run that returned `ok` from the

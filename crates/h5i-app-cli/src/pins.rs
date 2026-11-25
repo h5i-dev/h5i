@@ -37,7 +37,7 @@ mod tests {
                 if p.is_dir()
                     && !matches!(
                         n.to_string_lossy().as_ref(),
-                        "target" | ".lake" | ".git" | "node_modules"
+                        "target" | ".lake" | ".git" | "node_modules" | "h5i-app-veil" | "temporal"
                     )
                 {
                     walk(&p, out);
@@ -57,13 +57,20 @@ mod tests {
 
     /// The root package (what Reservoir lists) builds every crate's proof
     /// project, so a new one is not left out of it.
+    /// Optional temporal verification backends (like `h5i-app-veil`) are
+    /// intentionally kept out of the root `lakefile.lean` so normal builds do
+    /// not require Veil.
     #[test]
     fn root_package_has_every_crate_proof_project() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let lakefile = std::fs::read_to_string(root.join("lakefile.lean")).unwrap();
         for e in std::fs::read_dir(root.join("crates")).unwrap().flatten() {
+            let name = e.file_name();
+            if name == "h5i-app-veil" {
+                continue;
+            }
             if e.path().join("proofs/lakefile.lean").is_file() {
-                let dir = format!("crates/{}/proofs", e.file_name().to_string_lossy());
+                let dir = format!("crates/{}/proofs", name.to_string_lossy());
                 assert!(
                     lakefile.contains(&format!("srcDir := \"{dir}\"")),
                     "the root lakefile.lean has no library for {dir}"

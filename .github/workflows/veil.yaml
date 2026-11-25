@@ -1,0 +1,142 @@
+# Optional Veil temporal verification workflow.
+# Kept strictly separate from `.github/workflows/app.yaml` so standard Rust and
+# Lean (`v4.31.0` / Aeneas) CI never depends on Veil.
+name: h5i-app-veil
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "crates/h5i-app-veil/**"
+      - "crates/h5i-app-core/proofs/**"
+      - "crates/h5i-app-core/src/replay.rs"
+      - "crates/h5i-app-embedded/**"
+      - "crates/h5i-app-cli/src/manifest.rs"
+      - "crates/h5i-app-cli/src/temporal.rs"
+      - "crates/h5i-app-report/**"
+      - "examples/embedded/thermostat/**"
+      - "scripts/app/install-aeneas.sh"
+      - ".github/workflows/veil.yaml"
+  pull_request:
+    paths:
+      - "crates/h5i-app-veil/**"
+      - "crates/h5i-app-core/proofs/**"
+      - "crates/h5i-app-core/src/replay.rs"
+      - "crates/h5i-app-embedded/**"
+      - "crates/h5i-app-cli/src/manifest.rs"
+      - "crates/h5i-app-cli/src/temporal.rs"
+      - "crates/h5i-app-report/**"
+      - "examples/embedded/thermostat/**"
+      - "scripts/app/install-aeneas.sh"
+      - ".github/workflows/veil.yaml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  # Keep in sync with `.github/workflows/app.yaml` and `crates/h5i-app-cli/src/pins.rs`.
+  AENEAS_REV: b86120db3183b0107eb5f2637b11c424cd06ef1c
+
+jobs:
+  # Replay tests directly against real Rust implementations (MemoryEngine, FlashStore, DeviceEngine).
+  rust-replay:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run real Rust counterexample replay, FlashStore, and report tests
+        run: |
+          cargo test --locked -p h5i-app-core replay
+          cargo test --locked -p h5i-app-embedded --features flash
+          cargo test --locked -p h5i-app-report
+          cargo test --locked -p h5i-app-cli temporal
+
+  # Optional Veil Lake package (`crates/h5i-app-veil/proofs`, Lean v4.35.0) +
+  # fresh Rust kernel extraction + end-to-end `h5i app temporal-check --enable`.
+  veil:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build h5i CLI
+        run: cargo build --locked --bin h5i
+      - name: Install Charon and Aeneas at the pinned commit
+        timeout-minutes: 5
+        run: scripts/app/install-aeneas.sh "$RUNNER_TEMP/aeneas" >> "$GITHUB_PATH"
+      - name: Verify FlashStore extraction and re-extract thermostat kernel fresh
+        run: |
+          ./target/debug/h5i app extract --check crates/h5i-app-embedded
+          ./target/debug/h5i app extract examples/embedded/thermostat
+      - name: Install elan and Veil's pinned Lean toolchain (v4.35.0)
+        timeout-minutes: 5
+        run: |
+          curl -fsSL --retry 3 --retry-delay 10 --retry-all-errors \
+            https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+            | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+          tc=$(cat crates/h5i-app-veil/proofs/lean-toolchain)
+          "$HOME/.elan/bin/elan" toolchain install "$tc"
+      - name: Build H5iAppVeil (type-checks Gate.lean, bridges H5iAppLib.Run, runs Veil checks)
+        working-directory: crates/h5i-app-veil/proofs
+        run: |
+          lake exe cache get
+          lake build
+      - name: Link shared Lake packages for thermostat temporal proofs
+        working-directory: examples/embedded/thermostat/proofs/temporal
+        run: |
+          mkdir -p .lake
+          ln -sfn ../../../../../../crates/h5i-app-veil/proofs/.lake/packages .lake/packages
+      - name: Run end-to-end h5i app temporal-check and verify structured report
+        run: |
+          # Default (disabled) must skip cleanly without requiring Veil.
+          ./target/debug/h5i app temporal-check examples/embedded/thermostat
+
+          # Enabled must build against the freshly extracted kernel and run H5iAppVeil.Gate.
+          ./target/debug/h5i app temporal-check --enable examples/embedded/thermostat
+
+          # Inspect the recorded run and assert every required obligation passed with its expected scope.
+          python3 - <<'PY'
+          import glob, json, sys
+
+          runs = sorted(glob.glob("examples/embedded/thermostat/.h5i/app/runs/*-temporal-*/run.json"))
+          assert runs, "no temporal run.json recorded"
+          with open(runs[-1]) as f:
+              run = json.load(f)
+
+          tv = run.get("temporal")
+          assert tv is not None, "missing temporal report in run.json"
+          assert tv["enabled"] is True
+          assert tv["backend"] == "veil"
+          assert tv["status"] == "passed", f"expected passed, got {tv}"
+          assert tv["inputs_current"] is True
+
+          expected = {
+              "ThermostatTemporal.ExtractedBridge.extracted_thermostat_always_inv": (
+                  "proven_theorem", "kernel_implementation_level"
+              ),
+              "ThermostatTemporal.ExtractedBridge.extracted_firmware_always_inv": (
+                  "proven_theorem", "compositional"
+              ),
+              "ThermostatTemporal.ExtractedBridge.extracted_thermostat_overtemp_liveness": (
+                  "proven_theorem", "compositional"
+              ),
+              "ThermostatClosedLoop#model_check": ("finite_model_check", "model_level"),
+              "overtemp_eventually_stops_pin": ("finite_temporal_check", "model_level"),
+              "sensor_failure_fails_safe": ("finite_temporal_check", "model_level"),
+              "off_mode_stops_pin": ("finite_temporal_check", "model_level"),
+              "auto_heats_when_cold": ("finite_temporal_check", "model_level"),
+          }
+          got = {p["name"]: p for p in tv["properties"]}
+          assert set(got.keys()) == set(expected.keys()), f"mismatch: {set(got)} vs {set(expected)}"
+          for name, (kind, scope) in expected.items():
+              p = got[name]
+              assert p["status"] == "passed", f"{name} did not pass: {p}"
+              assert p["kind"] == kind, f"{name} kind mismatch: {p}"
+              assert p["declared_scope"] == scope, f"{name} scope mismatch: {p}"
+          print(f"Verified all {len(expected)} temporal obligations end-to-end.")
+          PY

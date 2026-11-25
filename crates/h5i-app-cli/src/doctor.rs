@@ -109,6 +109,18 @@ pub fn doctor(project: Option<&Project>, this_rev: &str, fix: bool) -> Result<()
             "not on PATH: install elan from https://github.com/leanprover/elan",
         ),
     }
+    match crate::temporal::detect_veil(project) {
+        crate::temporal::VeilAvailability::Available { detail } => r.ok("veil (optional)", &detail),
+        crate::temporal::VeilAvailability::Missing { reason } => {
+            if project.is_some_and(|p| {
+                p.manifest.verification.temporal && p.manifest.verification.temporal_backend == "veil"
+            }) {
+                r.fail("veil", &reason);
+            } else {
+                r.ok("veil (optional)", "not required (optional; enable via `[verification] temporal = true`)");
+            }
+        }
+    }
 
     if let Some(p) = project {
         eprintln!("project {}", p.display());

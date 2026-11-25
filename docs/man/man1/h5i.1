@@ -2546,7 +2546,7 @@ Build the proofs and gate them: no sorry, native_decide or axiom, and every theo
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBcheck\fR [\fB\-\-all\fR] [\fB\-\-refetch\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATHS\fR] 
+\fBcheck\fR [\fB\-\-all\fR] [\fB\-\-refetch\fR] [\fB\-\-temporal\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATHS\fR] 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -2556,6 +2556,9 @@ Every project under the given directories (default: the current one)
 .TP
 \fB\-\-refetch\fR
 Discard the project\*(Aqs Lake packages and fetch them again, for a fetch that left them broken. Shared packages are discarded for every project that uses them
+.TP
+\fB\-\-temporal\fR
+Also run optional temporal verification (errors if backend is `veil` and Veil is not installed)
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
@@ -2567,7 +2570,7 @@ Project directories or h5i\-app.toml files (default: the project the current dir
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBprove\fR [\fB\-\-all\fR] [\fB\-\-refetch\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATHS\fR] 
+\fBprove\fR [\fB\-\-all\fR] [\fB\-\-refetch\fR] [\fB\-\-temporal\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATHS\fR] 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -2578,11 +2581,99 @@ Every project under the given directories (default: the current one)
 \fB\-\-refetch\fR
 Discard the project\*(Aqs Lake packages and fetch them again, for a fetch that left them broken. Shared packages are discarded for every project that uses them
 .TP
+\fB\-\-temporal\fR
+Also run optional temporal verification (errors if backend is `veil` and Veil is not installed)
+.TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
 .TP
 [\fIPATHS\fR]
 Project directories or h5i\-app.toml files (default: the project the current directory is in)
+.SH "H5I APP MODEL-CHECK"
+Run Veil model checking (`#model_check` / `#temporal_check`) on a Veil Lake package (optional backend; errors if Veil is not installed)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBmodel\-check\fR [\fB\-\-target\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIDIR\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-target\fR \fI<MODULE>\fR
+Optional Lake build target(s), e.g. `H5iAppVeil.Embedded.FlashStore`
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fIDIR\fR]
+Directory of the Veil Lake package (defaults to the project\*(Aqs `temporal_dir`, or workspace `crates/h5i\-app\-veil/proofs`)
+.SH "H5I APP TEMPORAL-CHECK"
+Run optional temporal verification (`[verification]` in h5i-app.toml). Cleanly skips when disabled; errors if enabled when Veil is not installed
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBtemporal\-check\fR [\fB\-\-all\fR] [\fB\-\-enable\fR] [\fB\-\-backend\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATHS\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-all\fR
+Every project under the given directories (default: the current one)
+.TP
+\fB\-\-enable\fR
+Force\-enable temporal verification even if `[verification] temporal = false`
+.TP
+\fB\-\-backend\fR \fI<BACKEND>\fR
+Override `[verification] temporal_backend` (default: `veil`)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fIPATHS\fR]
+Project directories or h5i\-app.toml files (default: the project the current directory is in)
+.SH "H5I APP TRACE-REPLAY"
+Replay a Veil JSON counterexample trace against the real Rust `FlashStore` or `DeviceEngine` implementation
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBtrace\-replay\fR [\fB\-\-target\fR] [\fB\-\-seed\-wraparound\fR] [\fB\-\-append\-reboot\fR] [\fB\-\-power\-cut\-budget\fR] [\fB\-\-latched\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITRACE\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-target\fR \fI<TARGET>\fR
+Target Rust runtime (`flash\-store` or `device\-engine`). Inferred from the trace\*(Aqs transition names or `"target"` field if omitted
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+flash\-store
+.IP \(bu 2
+device\-engine
+.RE
+.TP
+\fB\-\-seed\-wraparound\fR
+For `flash\-store`: seed region 0 at `seq = u32::MAX` (4,294,967,295) to probe the 32\-bit wraparound boundary on the real `FlashStore` (switches mode to `regression_probe`)
+.TP
+\fB\-\-append\-reboot\fR
+For `flash\-store`: append a final `RebootLoad` after the trace even if the trace does not end with `rebootScan` (switches mode to `regression_probe`)
+.TP
+\fB\-\-power\-cut\-budget\fR \fI<POWER_CUT_BUDGET>\fR
+For `flash\-store`: explicit byte\-operation budget for `powerCut*` transitions (overrides `"power_cut_budget"` in JSON; required when replaying mid\-write/erase cuts)
+.TP
+\fB\-\-latched\fR
+For `device\-engine`: replay against the latched motor kernel
+.TP
+\fB\-\-json\fR
+Print replay report as JSON
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fITRACE\fR>
+Path to a Veil JSON counterexample trace (`Trace.toJsonWithPicks`) or action trace JSON file
 .SH "H5I APP LINT"
 Check the source for what the proofs assume but cannot see: every mutating route takes an authenticated `Actor`, and no `Command` field lets the client set its own identity or privilege. Reports whether the proofs state a universal authorization theorem
 .ie \n(.g .ds Aq \(aq

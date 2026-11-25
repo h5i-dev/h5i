@@ -64,3 +64,11 @@ lean_lib H5iAppPgsqlGenerated where
 @[default_target] lean_lib H5iAppPgsqlProofs where
   srcDir := "crates/h5i-app-pgsql/proofs"
   roots := #[`Abs, `Compile, `Render, `Sound]
+
+lean_lib H5iAppEmbeddedGenerated where
+  srcDir := "crates/h5i-app-embedded/proofs/generated"
+  roots := #[`H5iAppEmbedded]
+
+@[default_target] lean_lib H5iAppEmbeddedProofs where
+  srcDir := "crates/h5i-app-embedded/proofs"
+  roots := #[`NorFlash, `FlashStoreProofs]

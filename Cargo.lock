@@ -1360,6 +1360,8 @@ version = "0.5.6"
 dependencies = [
  "anyhow",
  "clap",
+ "critical-section",
+ "h5i-app-embedded",
  "h5i-app-report",
  "proc-macro2",
  "quote",

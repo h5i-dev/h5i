@@ -37,6 +37,7 @@ pub mod packages;
 pub mod pins;
 pub mod report;
 pub mod rust;
+pub mod temporal;
 pub mod tenant;
 pub mod util;
 
@@ -83,6 +84,10 @@ pub enum AppCommands {
         targets: Targets,
         #[command(flatten)]
         fetch: FetchArgs,
+        /// Also run optional temporal verification (errors if backend is `veil`
+        /// and Veil is not installed).
+        #[arg(long)]
+        temporal: bool,
     },
 
     /// `extract`, then `check`.
@@ -91,7 +96,32 @@ pub enum AppCommands {
         targets: Targets,
         #[command(flatten)]
         fetch: FetchArgs,
+        /// Also run optional temporal verification (errors if backend is `veil`
+        /// and Veil is not installed).
+        #[arg(long)]
+        temporal: bool,
     },
+
+    /// Run Veil model checking (`#model_check` / `#temporal_check`) on a Veil
+    /// Lake package (optional backend; errors if Veil is not installed).
+    ModelCheck(temporal::ModelCheckArgs),
+
+    /// Run optional temporal verification (`[verification]` in h5i-app.toml).
+    /// Cleanly skips when disabled; errors if enabled when Veil is not installed.
+    TemporalCheck {
+        #[command(flatten)]
+        targets: Targets,
+        /// Force-enable temporal verification even if `[verification] temporal = false`.
+        #[arg(long)]
+        enable: bool,
+        /// Override `[verification] temporal_backend` (default: `veil`).
+        #[arg(long)]
+        backend: Option<String>,
+    },
+
+    /// Replay a Veil JSON counterexample trace against the real Rust
+    /// `FlashStore` or `DeviceEngine` implementation.
+    TraceReplay(temporal::TraceReplayArgs),
 
     /// Check the source for what the proofs assume but cannot see: every
     /// mutating route takes an authenticated `Actor`, and no `Command` field
@@ -266,20 +296,33 @@ pub fn run(cmd: AppCommands, cx: &Context) -> Result<()> {
             Ok(())
         }),
         AppCommands::Report { targets: t, json } => guarantees::print(&t.projects()?, json),
-        AppCommands::Check { targets: t, fetch } => each(&t, |p| {
+        AppCommands::Check { targets: t, fetch, temporal } => each(&t, |p| {
             check::check(p, refetch(p, &fetch)?, false, &out)?;
+            if temporal || p.manifest.verification.temporal {
+                temporal::temporal_check(p, temporal, None, &out)?;
+            }
             eprintln!("{}: proofs ok", p.display());
             Ok(())
         }),
-        AppCommands::Prove { targets: t, fetch } => each(&t, |p| {
+        AppCommands::Prove { targets: t, fetch, temporal } => each(&t, |p| {
             let extracted = p.manifest.extract.is_some();
             if extracted {
                 extract::extract(p, &out)?;
             }
             check::check(p, refetch(p, &fetch)?, extracted, &out)?;
+            if temporal || p.manifest.verification.temporal {
+                temporal::temporal_check(p, temporal, None, &out)?;
+            }
             eprintln!("{}: proofs ok", p.display());
             Ok(())
         }),
+        AppCommands::ModelCheck(args) => temporal::model_check(&args, &out),
+        AppCommands::TemporalCheck { targets: t, enable, backend } => each(&t, |p| {
+            let rep = temporal::temporal_check(p, enable, backend.as_deref(), &out)?;
+            eprintln!("{}: temporal verification {:?}", p.display(), rep.status);
+            Ok(())
+        }),
+        AppCommands::TraceReplay(args) => temporal::trace_replay(&args),
         AppCommands::Mutate { targets: t, args } => each(&t, |p| {
             if t.all && p.manifest.mutants.is_empty() && !(args.auto && p.manifest.extract.is_some()) {
                 return Ok(());
