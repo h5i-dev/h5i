@@ -101,8 +101,9 @@ theorem next_seq_spec (s : U32) :
       s'.val = (s.val + 1) % 4294967296 ⦄ := by
   unfold next_seq
   step*
-  have hbv : (core.num.U32.wrapping_add s 1#u32).bv = s.bv + (1#u32).bv := rfl
-  change (core.num.U32.wrapping_add s 1#u32).bv.toNat = (s.bv.toNat + 1) % 4294967296
+  let one : U32 := 1#u32
+  have hbv : (core.num.U32.wrapping_add s one).bv = s.bv + one.bv := rfl
+  change (core.num.U32.wrapping_add s one).bv.toNat = (s.bv.toNat + 1) % 4294967296
   rw [hbv, BitVec.toNat_add]
   rfl
 

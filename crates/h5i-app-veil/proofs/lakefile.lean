@@ -20,5 +20,13 @@ lean_lib H5iAppLib where
   srcDir := "../../h5i-app-core/proofs"
   roots := #[`H5iAppLib.Basic, `H5iAppLib.Runs, `H5iAppLib.Time]
 
+lean_lib H5iAppEmbedded where
+  srcDir := "../../h5i-app-embedded/proofs/generated"
+  roots := #[`H5iAppEmbedded]
+
+lean_lib H5iAppEmbeddedProofs where
+  srcDir := "../../h5i-app-embedded/proofs"
+  roots := #[`NorFlash, `FlashStoreProofs]
+
 @[default_target] lean_lib H5iAppVeil where
   roots := #[`H5iAppVeil]

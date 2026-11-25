@@ -77,12 +77,18 @@ model checking inside h5i.
     top of `Veil.RelationalTransitionSystem`
   - `Gate.lean`: type-checked Lean/Veil verification gate (`checkTheorem`,
     `runVeilCheck`) invoked by `h5i app temporal-check`
-  - `Embedded/FlashStore.lean`: Veil DSL models comparing the current Rust
-    `FlashStore` wraparound design (`FlashStorePlain`, discovering 3-bit
-    wraparound via `#model_check`) and a proposed modular multi-slot design
-    (`FlashStoreModular`, modeling 2-slot append per region, unchanged-save
-    no-op, partial erase, torn writes, post-write/pre-ack crashes, and repeated
-    reboots)
+  - `Embedded/FlashStore.lean`: finite-state Veil DSL models contrasting the
+    historical plain-`>` wraparound bug (`FlashStorePlain`) with the modular
+    multi-slot design (`FlashStoreModular`, modeling 2-slot append per region,
+    unchanged-save no-op, partial erase, torn writes, post-write/pre-ack crashes,
+    and repeated reboots)
+  - `Embedded/FlashStoreExtracted.lean`: optional Veil/Lentil temporal proofs
+    directly over the **actual Aeneas-extracted production `FlashStore` core**
+    (`crates/h5i-app-embedded/src/store_core.rs` → `H5iAppEmbedded.lean`,
+    `NorFlash.lean`, `FlashStoreProofs.lean`), lifting compositional crash
+    consistency (`□ CrashConsistentInv`), save termination liveness
+    (`□ (¬idle → ◇ idle)`), and kernel-implementation-level recovery scan
+    liveness (`◇ (phase = Done)`)
   - `Embedded/DeviceEngine.lean`: Veil DSL models of `kernel.rs` (real wrapping
     `version := version + 1`, two independent observers, separate `powerLoss` /
     `restore` / `actuatorPoll` steps) plus a `StutterRefines` proof directly on

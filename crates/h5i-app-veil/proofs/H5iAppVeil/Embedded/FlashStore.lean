@@ -7,28 +7,32 @@ Specifies `crates/h5i-app-embedded/src/store.rs` in Veil's DSL and runs Veil's
 native explicit-state model checker (`#model_check`) and Lasso temporal checker
 (`#temporal_check`).
 
-## Scope Distinction (Current Rust Implementation vs Proposed Fix)
+## Scope Distinction (Abstract Veil Models vs Implementation-Level Proofs)
 
-- **Current Rust `FlashStore` (`crates/h5i-app-embedded/src/store.rs`)** uses
-  plain `seq > s` comparison (`store.rs:169`) with `wrapping_add(1)` (`store.rs:235`):
-  * `FlashStorePlain` models this plain `>` behavior on a 3-bit (`Fin 8`) sequence
-    number and Veil's `#model_check` discovers the wraparound durability counterexample.
-  * Real Rust counterexample replay (`h5i app trace-replay`,
-    `crates/h5i-app-embedded/src/replay.rs`) reproduces this wraparound boundary
-    directly against the unmodified Rust `FlashStore` (`u32::MAX → 0`).
-- **Proposed modular-order algorithm (`FlashStoreModular` — NOT the current Rust
-  `FlashStore` implementation)**:
-  * Replaces plain `>` with modular half-space ordering (`0 < (s₁ - s₂) mod 8 < 4`,
-    which is sound provided at most half the sequence space separates the newest
-    record in the standby region from the newest record in the active region —
-    guaranteed here because each region holds at most 2 records before switching
-    and erasing the standby region).
+- **Historical plain `>` design (`FlashStorePlain`)**:
+  * Models the original plain `seq > s` comparison with `wrapping_add(1)` on a
+    3-bit (`Fin 8`) sequence number; Veil's `#model_check` discovers the
+    wraparound durability counterexample.
+- **Modular half-space design (`FlashStoreModular`) — now implemented in production
+  `crates/h5i-app-embedded/src/store_core.rs` (`seq_newer`) and used directly by
+  `store.rs::FlashStore`**:
+  * Replaces plain `>` with modular half-space ordering (`0 < (s₁ - s₂) mod 2^W < 2^(W-1)`).
   * Models the 2-slot append-per-region protocol, unchanged-save no-op,
     separated `writeLanded` / `ackSave`, partial erase, torn writes, and
-    repeated power cuts/reboots.
-  * Verifying `FlashStoreModular` verifies the **proposed** algorithm at the
-    finite-state model level; changing the Rust implementation to modular
-    comparison would require updating and re-verifying `store.rs` separately.
+    repeated power cuts/reboots at the finite-state (`Fin 8`, 2-slot) model level.
+  * Real Rust counterexample replay (`h5i app trace-replay`,
+    `crates/h5i-app-embedded/src/replay.rs`) now confirms that production
+    `FlashStore` preserves durability across `u32::MAX → 0` (`NoViolation`).
+- **Implementation-level formal proofs over the actual Aeneas-extracted
+  production `store_core.rs`** live in:
+  * `crates/h5i-app-embedded/proofs/NorFlash.lean` (reusable NOR flash hardware
+    and power-loss specification, Lean `v4.31.0`, zero Veil dependency),
+  * `crates/h5i-app-embedded/proofs/FlashStoreProofs.lean` (functional
+    correctness, wraparound safety, memory/storage safety, bounded recovery
+    termination, and compositional crash consistency directly over extracted
+    `H5iAppEmbedded.lean`), and
+  * `H5iAppVeil.Embedded.FlashStoreExtracted` (optional Veil/Lentil `□` / `◇`
+    temporal lift of those implementation-level proofs on Lean `v4.35.0`).
 
 ## Explicit Modeling Abstractions
 

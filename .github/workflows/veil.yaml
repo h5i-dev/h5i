@@ -11,7 +11,7 @@ on:
       - "crates/h5i-app-veil/**"
       - "crates/h5i-app-core/proofs/**"
       - "crates/h5i-app-core/src/replay.rs"
-      - "crates/h5i-app-embedded/src/replay.rs"
+      - "crates/h5i-app-embedded/**"
       - "crates/h5i-app-cli/src/manifest.rs"
       - "crates/h5i-app-cli/src/temporal.rs"
       - "crates/h5i-app-report/**"
@@ -23,7 +23,7 @@ on:
       - "crates/h5i-app-veil/**"
       - "crates/h5i-app-core/proofs/**"
       - "crates/h5i-app-core/src/replay.rs"
-      - "crates/h5i-app-embedded/src/replay.rs"
+      - "crates/h5i-app-embedded/**"
       - "crates/h5i-app-cli/src/manifest.rs"
       - "crates/h5i-app-cli/src/temporal.rs"
       - "crates/h5i-app-report/**"
@@ -47,10 +47,10 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Run real Rust counterexample replay and report tests
+      - name: Run real Rust counterexample replay, FlashStore, and report tests
         run: |
           cargo test --locked -p h5i-app-core replay
-          cargo test --locked -p h5i-app-embedded --features flash replay
+          cargo test --locked -p h5i-app-embedded --features flash
           cargo test --locked -p h5i-app-report
           cargo test --locked -p h5i-app-cli temporal
 
@@ -68,8 +68,10 @@ jobs:
       - name: Install Charon and Aeneas at the pinned commit
         timeout-minutes: 5
         run: scripts/app/install-aeneas.sh "$RUNNER_TEMP/aeneas" >> "$GITHUB_PATH"
-      - name: Re-extract thermostat kernel fresh from Rust sources
-        run: ./target/debug/h5i app extract examples/embedded/thermostat
+      - name: Verify FlashStore extraction and re-extract thermostat kernel fresh
+        run: |
+          ./target/debug/h5i app extract --check crates/h5i-app-embedded
+          ./target/debug/h5i app extract examples/embedded/thermostat
       - name: Install elan and Veil's pinned Lean toolchain (v4.35.0)
         timeout-minutes: 5
         run: |
