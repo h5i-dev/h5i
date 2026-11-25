@@ -31,6 +31,7 @@ npx skills add h5i-dev/h5i
 
 - **Kernel-based architecture**: Separate application logic from infrastructure to verify and optimize core behavior.
 - **Formal verification**: Translate Rust application logic into Lean 4 using [Aeneas](https://github.com/AeneasVerif/aeneas) and prove their properties.
+- **Temporal verification and model checking**: Verify safety, liveness, and fairness-dependent properties of Rust application kernels and system-level models using [Veil](https://github.com/verse-lab/veil).
 - **Spec Kit integration**: Connect [spec-kit](https://github.com/github/spec-kit) workflows with Lean 4 formal verification.
 - **Automatic specification generation**: Generate Lean 4 specifications and proofs for common patterns, including database schemas, authorization, and storage operations.
 - **Axum-compatible deployment**: Deploy applications to platforms supporting Axum, including Cloudflare Workers, Vercel, and Fly.io, without rewriting application logic.
