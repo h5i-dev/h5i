@@ -5,6 +5,11 @@
 //! The production [`crate::store::FlashStore`] calls these exact functions and
 //! executes the I/O actions they prescribe against `embedded_storage_async::nor_flash::NorFlash`.
 
+// Keep `% == 0` and explicit `let Some(...) = ... else { return None; }` rather
+// than `.is_multiple_of()` or `?` so Charon/Aeneas extracts transparent Lean 4
+// arithmetic and `Option` pattern matches without introducing `Try` / helper axioms.
+#![allow(clippy::manual_is_multiple_of, clippy::question_mark)]
+
 /// Record header magic (`"HI5S"` little-endian).
 pub const MAGIC: u32 = 0x5335_4948;
 

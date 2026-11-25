@@ -495,6 +495,7 @@ pub struct DeviceEngineReplayOutcome {
     pub final_version: u32,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn step_device_engine<const LATCHED: bool>(
     engine: &mut DeviceEngine<MotorKernel<LATCHED>, FaultStore>,
     seen: &mut u32,

@@ -20,34 +20,34 @@ set_option maxRecDepth 2048
 namespace h5i_app_embedded
 
 /-- [h5i_app_embedded::store_core::MAGIC]
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 9:0-9:35
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 14:0-14:35
     Visibility: public -/
 @[global_simps, irreducible] def store_core.MAGIC : Std.U32 := 1396001096#u32
 
 /-- [h5i_app_embedded::store_core::HDR]
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 13:0-13:26
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 18:0-18:26
     Visibility: public -/
 @[global_simps, irreducible] def store_core.HDR : Std.Usize := 16#usize
 
 /-- [h5i_app_embedded::store_core::HDR_U32]
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 14:0-14:28
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 19:0-19:28
     Visibility: public -/
 @[global_simps, irreducible] def store_core.HDR_U32 : Std.U32 := 16#u32
 
 /-- [h5i_app_embedded::store_core::MAX_PAYLOAD_LEN]
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 17:0-17:40
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 22:0-22:40
     Visibility: public -/
 @[global_simps, irreducible]
 def store_core.MAX_PAYLOAD_LEN : Std.U32 := 65535#u32
 
 /-- [h5i_app_embedded::store_core::MAX_REGION_BYTES]
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 23:0-23:46
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 28:0-28:46
     Visibility: public -/
 @[global_simps, irreducible]
 def store_core.MAX_REGION_BYTES : Std.U32 := 1073741823#u32
 
 /-- [h5i_app_embedded::store_core::FlashGeometry]
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 27:0-35:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 32:0-40:1
     Visibility: public -/
 structure store_core.FlashGeometry where
   base : Std.U32
@@ -59,7 +59,7 @@ structure store_core.FlashGeometry where
   buf_cap : Std.U32
 
 /-- [h5i_app_embedded::store_core::Pos]
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 39:0-47:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 44:0-52:1
     Visibility: public -/
 structure store_core.Pos where
   region : Std.U32
@@ -67,7 +67,7 @@ structure store_core.Pos where
   seq : Std.U32
 
 /-- [h5i_app_embedded::store_core::align]:
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 50:0-53:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 55:0-58:1
     Visibility: public -/
 def store_core.align
   (write_size : Std.U32) (read_size : Std.U32) : Result Std.U32 := do
@@ -79,7 +79,7 @@ def store_core.align
   else ok 4#u32
 
 /-- [h5i_app_embedded::store_core::record_len]:
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 57:0-68:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 62:0-73:1
     Visibility: public -/
 def store_core.record_len
   (len : Std.U32) (a : Std.U32) : Result (Option Std.U32) := do
@@ -101,7 +101,7 @@ def store_core.record_len
              ok (some i1)
 
 /-- [h5i_app_embedded::store_core::layout_ok]:
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 72:0-89:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 77:0-94:1
     Visibility: public -/
 def store_core.layout_ok (g : store_core.FlashGeometry) : Result Bool := do
   let a ← store_core.align g.write_size g.read_size
@@ -157,7 +157,7 @@ def store_core.layout_ok (g : store_core.FlashGeometry) : Result Bool := do
   else ok false
 
 /-- [h5i_app_embedded::store_core::region_start]:
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 92:0-94:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 97:0-99:1
     Visibility: public -/
 def store_core.region_start
   (g : store_core.FlashGeometry) (r : Std.U32) : Result Std.U32 := do
@@ -166,7 +166,7 @@ def store_core.region_start
   else g.base + g.region
 
 /-- [h5i_app_embedded::store_core::other_region]:
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 97:0-99:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 102:0-104:1
     Visibility: public -/
 def store_core.other_region (r : Std.U32) : Result Std.U32 := do
   if r = 0#u32
@@ -174,13 +174,13 @@ def store_core.other_region (r : Std.U32) : Result Std.U32 := do
   else ok 0#u32
 
 /-- [h5i_app_embedded::store_core::next_seq]:
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 102:0-104:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 107:0-109:1
     Visibility: public -/
 def store_core.next_seq (seq : Std.U32) : Result Std.U32 := do
   ok (core.num.U32.wrapping_add seq 1#u32)
 
 /-- [h5i_app_embedded::store_core::seq_newer]:
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 111:0-114:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 116:0-119:1
     Visibility: public -/
 def store_core.seq_newer
   (candidate : Std.U32) (current : Std.U32) : Result Bool := do
@@ -190,7 +190,7 @@ def store_core.seq_newer
   else ok false
 
 /-- [h5i_app_embedded::store_core::get_u16_le]:
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 120:0-127:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 125:0-132:1
     Visibility: public -/
 def store_core.get_u16_le
   (buf : Slice Std.U8) (off : Std.Usize) : Result (Option Std.U16) := do
@@ -209,7 +209,7 @@ def store_core.get_u16_le
     ok (some i6)
 
 /-- [h5i_app_embedded::store_core::get_u32_le]:
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 129:0-138:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 134:0-143:1
     Visibility: public -/
 def store_core.get_u32_le
   (buf : Slice Std.U8) (off : Std.Usize) : Result (Option Std.U32) := do
@@ -238,7 +238,7 @@ def store_core.get_u32_le
     ok (some i14)
 
 /-- [h5i_app_embedded::store_core::put_u16_le]:
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 140:0-147:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 145:0-152:1
     Visibility: public -/
 def store_core.put_u16_le
   (buf : Slice Std.U8) (off : Std.Usize) (v : Std.U16) :
@@ -260,7 +260,7 @@ def store_core.put_u16_le
     ok (true, buf2)
 
 /-- [h5i_app_embedded::store_core::put_u32_le]:
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 149:0-158:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 154:0-163:1
     Visibility: public -/
 def store_core.put_u32_le
   (buf : Slice Std.U8) (off : Std.Usize) (v : Std.U32) :
@@ -292,7 +292,7 @@ def store_core.put_u32_le
     ok (true, buf4)
 
 /-- [h5i_app_embedded::store_core::crc32_byte]: loop body 0:
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 164:4-171:5
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 169:4-176:5
     Visibility: public -/
 @[rust_loop_body]
 def store_core.crc32_byte_loop.body
@@ -313,7 +313,7 @@ def store_core.crc32_byte_loop.body
   else ok (done c)
 
 /-- [h5i_app_embedded::store_core::crc32_byte]: loop 0:
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 164:4-171:5
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 169:4-176:5
     Visibility: public -/
 @[rust_loop]
 def store_core.crc32_byte_loop
@@ -323,7 +323,7 @@ def store_core.crc32_byte_loop
     (c, bit)
 
 /-- [h5i_app_embedded::store_core::crc32_byte]:
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 161:0-173:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 166:0-178:1
     Visibility: public -/
 def store_core.crc32_byte (crc : Std.U32) (b : Std.U8) : Result Std.U32 := do
   let i ← lift (UScalar.cast .U32 b)
@@ -331,7 +331,7 @@ def store_core.crc32_byte (crc : Std.U32) (b : Std.U8) : Result Std.U32 := do
   store_core.crc32_byte_loop c 0#u32
 
 /-- [h5i_app_embedded::store_core::crc32_range]: loop body 0:
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 179:4-182:5
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 184:4-187:5
     Visibility: public -/
 @[rust_loop_body]
 def store_core.crc32_range_loop.body
@@ -347,7 +347,7 @@ def store_core.crc32_range_loop.body
   else ok (done crc)
 
 /-- [h5i_app_embedded::store_core::crc32_range]: loop 0:
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 179:4-182:5
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 184:4-187:5
     Visibility: public -/
 @[rust_loop]
 def store_core.crc32_range_loop
@@ -359,7 +359,7 @@ def store_core.crc32_range_loop
     (crc, i)
 
 /-- [h5i_app_embedded::store_core::crc32_range]:
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 176:0-184:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 181:0-189:1
     Visibility: public -/
 def store_core.crc32_range
   (crc : Std.U32) (buf : Slice Std.U8) (start : Std.Usize)
@@ -373,7 +373,7 @@ def store_core.crc32_range
   store_core.crc32_range_loop crc buf limit start
 
 /-- [h5i_app_embedded::store_core::record_crc]:
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 188:0-195:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 193:0-200:1
     Visibility: public -/
 def store_core.record_crc
   (buf : Slice Std.U8) (payload_len : Std.Usize) :
@@ -394,7 +394,7 @@ def store_core.record_crc
       ok (some i3)
 
 /-- [h5i_app_embedded::store_core::all_erased]: loop body 0:
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 203:4-210:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 208:4-215:1
     Visibility: public -/
 @[rust_loop_body]
 def store_core.all_erased_loop.body
@@ -411,7 +411,7 @@ def store_core.all_erased_loop.body
   else ok (done true)
 
 /-- [h5i_app_embedded::store_core::all_erased]: loop 0:
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 203:4-210:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 208:4-215:1
     Visibility: public -/
 @[rust_loop]
 def store_core.all_erased_loop
@@ -423,7 +423,7 @@ def store_core.all_erased_loop
     i
 
 /-- [h5i_app_embedded::store_core::all_erased]:
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 198:0-210:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 203:0-215:1
     Visibility: public -/
 def store_core.all_erased
   (buf : Slice Std.U8) (start : Std.Usize) («end» : Std.Usize) :
@@ -435,7 +435,7 @@ def store_core.all_erased
   else store_core.all_erased_loop buf «end» start
 
 /-- [h5i_app_embedded::store_core::payload_matches]: loop body 0:
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 227:4-234:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 232:4-239:1
     Visibility: public -/
 @[rust_loop_body]
 def store_core.payload_matches_loop.body
@@ -455,7 +455,7 @@ def store_core.payload_matches_loop.body
   else ok (done true)
 
 /-- [h5i_app_embedded::store_core::payload_matches]: loop 0:
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 227:4-234:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 232:4-239:1
     Visibility: public -/
 @[rust_loop]
 def store_core.payload_matches_loop
@@ -468,7 +468,7 @@ def store_core.payload_matches_loop
     i
 
 /-- [h5i_app_embedded::store_core::payload_matches]:
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 214:0-234:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 219:0-239:1
     Visibility: public -/
 def store_core.payload_matches
   (last : Slice Std.U8) (last_len : Option Std.Usize) (buf : Slice Std.U8)
@@ -492,7 +492,7 @@ def store_core.payload_matches
         else store_core.payload_matches_loop last buf payload_len 0#usize
 
 /-- [h5i_app_embedded::store_core::encode_record]: loop body 0:
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 259:4-262:5
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 264:4-267:5
     Visibility: public -/
 @[rust_loop_body]
 def store_core.encode_record_loop.body
@@ -507,7 +507,7 @@ def store_core.encode_record_loop.body
   else ok (done buf)
 
 /-- [h5i_app_embedded::store_core::encode_record]: loop 0:
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 259:4-262:5
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 264:4-267:5
     Visibility: public -/
 @[rust_loop]
 def store_core.encode_record_loop
@@ -519,7 +519,7 @@ def store_core.encode_record_loop
     (buf, pad)
 
 /-- [h5i_app_embedded::store_core::encode_record]:
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 243:0-282:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 248:0-287:1
     Visibility: public -/
 def store_core.encode_record
   (buf : Slice Std.U8) (seq : Std.U32) (version : Std.U16)
@@ -565,7 +565,7 @@ def store_core.encode_record
       else ok (none, buf2)
 
 /-- [h5i_app_embedded::store_core::HeaderInfo]
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 286:0-291:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 291:0-296:1
     Visibility: public -/
 structure store_core.HeaderInfo where
   seq : Std.U32
@@ -574,7 +574,7 @@ structure store_core.HeaderInfo where
   record_len : Std.U32
 
 /-- [h5i_app_embedded::store_core::HeaderParse]
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 295:0-302:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 300:0-307:1
     Visibility: public -/
 @[discriminant isize]
 inductive store_core.HeaderParse where
@@ -583,7 +583,7 @@ inductive store_core.HeaderParse where
 | Ok : store_core.HeaderInfo → store_core.HeaderParse
 
 /-- [h5i_app_embedded::store_core::parse_header]:
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 305:0-333:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 310:0-338:1
     Visibility: public -/
 def store_core.parse_header
   (buf : Slice Std.U8) (off : Std.U32) (g : store_core.FlashGeometry) :
@@ -637,7 +637,7 @@ def store_core.parse_header
                           })
 
 /-- [h5i_app_embedded::store_core::validate_record_crc]:
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 336:0-344:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 341:0-349:1
     Visibility: public -/
 def store_core.validate_record_crc
   (buf : Slice Std.U8) (payload_len : Std.U32) : Result Bool := do
@@ -652,7 +652,7 @@ def store_core.validate_record_crc
     | some computed => ok (stored = computed)
 
 /-- [h5i_app_embedded::store_core::SavePlan]
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 352:0-374:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 357:0-379:1
     Visibility: public -/
 @[discriminant isize]
 inductive store_core.SavePlan where
@@ -676,7 +676,7 @@ inductive store_core.SavePlan where
   store_core.SavePlan
 
 /-- [h5i_app_embedded::store_core::plan_save]:
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 377:0-416:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 382:0-421:1
     Visibility: public -/
 def store_core.plan_save
   (g : store_core.FlashGeometry) (pos : store_core.Pos) (payload_len : Std.U32)
@@ -742,7 +742,7 @@ def store_core.plan_save
   else ok store_core.SavePlan.TooLarge
 
 /-- [h5i_app_embedded::store_core::pos_after_write]:
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 419:0-421:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 424:0-426:1
     Visibility: public -/
 def store_core.pos_after_write
   (target_region : Std.U32) (target_off : Std.U32) (write_len : Std.U32)
@@ -753,7 +753,7 @@ def store_core.pos_after_write
   ok { region := target_region, append := (some i), seq }
 
 /-- [h5i_app_embedded::store_core::ScanPhase]
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 428:0-433:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 433:0-438:1
     Visibility: public -/
 @[discriminant isize]
 inductive store_core.ScanPhase where
@@ -763,7 +763,7 @@ inductive store_core.ScanPhase where
 | Done : store_core.ScanPhase
 
 /-- [h5i_app_embedded::store_core::BestRecord]
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 436:0-443:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 441:0-448:1
     Visibility: public -/
 structure store_core.BestRecord where
   seq : Std.U32
@@ -774,7 +774,7 @@ structure store_core.BestRecord where
   record_len : Std.U32
 
 /-- [h5i_app_embedded::store_core::ScanState]
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 446:0-455:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 451:0-460:1
     Visibility: public -/
 structure store_core.ScanState where
   region : Std.U32
@@ -787,7 +787,7 @@ structure store_core.ScanState where
   phase : store_core.ScanPhase
 
 /-- [h5i_app_embedded::store_core::ScanAction]
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 459:0-467:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 464:0-472:1
     Visibility: public -/
 @[discriminant isize]
 inductive store_core.ScanAction where
@@ -800,7 +800,7 @@ inductive store_core.ScanAction where
   store_core.ScanAction
 
 /-- [h5i_app_embedded::store_core::scan_init]:
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 470:0-487:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 475:0-492:1
     Visibility: public -/
 def store_core.scan_init
   (g : store_core.FlashGeometry) :
@@ -835,7 +835,7 @@ def store_core.scan_init
        }, store_core.ScanAction.InvalidLayout)
 
 /-- [h5i_app_embedded::store_core::finish_region]:
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 491:0-516:1 -/
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 496:0-521:1 -/
 def store_core.finish_region
   (g : store_core.FlashGeometry) (st : store_core.ScanState) (torn : Bool) :
   Result (store_core.ScanState × store_core.ScanAction)
@@ -876,7 +876,7 @@ def store_core.finish_region
          }, store_core.ScanAction.Read addr 0#u32 b.record_len)
 
 /-- [h5i_app_embedded::store_core::accept_valid_record]:
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 519:0-546:1 -/
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 524:0-551:1 -/
 def store_core.accept_valid_record
   (g : store_core.FlashGeometry) (st : store_core.ScanState)
   (hdr : store_core.HeaderInfo) :
@@ -920,7 +920,7 @@ def store_core.accept_valid_record
   else store_core.finish_region g { st with off := i, best := o1 } false
 
 /-- [h5i_app_embedded::store_core::scan_result_pos]:
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 549:0-554:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 554:0-559:1
     Visibility: public -/
 def store_core.scan_result_pos
   (st : store_core.ScanState) (b : store_core.BestRecord) :
@@ -939,7 +939,7 @@ def store_core.scan_result_pos
     else ok { region := b.region, append := none, seq := b.seq }
 
 /-- [h5i_app_embedded::store_core::scan_step]:
-    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 558:0-619:1
+    Source: 'crates/h5i-app-embedded/src/store_core.rs', lines 563:0-624:1
     Visibility: public -/
 def store_core.scan_step
   (g : store_core.FlashGeometry) (st : store_core.ScanState)
