@@ -1,12 +1,12 @@
 ---
 name: h5i
-description: h5i is an Axum-based Rust web framework for building and formally verifying web applications with Lean 4, featuring optional GPU acceleration and integrated development infrastructure for red-teaming, CI/CD, and browser automation.
+description: h5i (pronounced high-five) is an Axum-based Rust web framework built around application kernels that can be formally verified with Lean 4 and executed on servers, bare-metal embedded devices, and GPUs. It also provides integrated development infrastructure for red-teaming, security regression testing, and sandboxed AI agents.
 ---
 
 # h5i
 
-h5i is a Rust web framework built around a verifiable application kernel, with
-development tools that also work on applications built with other frameworks.
+h5i (pronounced high-five) is an Axum-based Rust web framework built around application kernels that can be formally verified with Lean 4 and executed on servers, bare-metal embedded devices, and GPUs. It also provides integrated development infrastructure for red-teaming, security regression testing, and sandboxed AI agents.
+
 Use `h5i-app` to build an application and `h5i app` to translate and check its
 Lean 4 proofs. Use the other CLI tools for the task at hand.
 
@@ -15,6 +15,8 @@ Lean 4 proofs. Use the other CLI tools for the task at hand.
 | Task | Tool | Read |
 | --- | --- | --- |
 | Build a Rust web app or prove its kernel properties | `h5i-app`, `h5i app` | [references/app.md](references/app.md) |
+| Serve an application kernel on a bare-metal device | `h5i-app-embedded`, Renode | [references/embedded.md](references/embedded.md) |
+| Verify safety, liveness, or fairness over runs | `h5i app temporal-check`, Veil | [references/temporal.md](references/temporal.md) |
 | Drive a page or inspect a browser session | `h5i browser` | [references/browser.md](references/browser.md) |
 | Discover an authorized target's endpoints | `h5i recon` plugin | [references/recon.md](references/recon.md) |
 | Inspect and replay captured HTTP traffic | `h5i websec` plugin | [references/websec.md](references/websec.md) |
