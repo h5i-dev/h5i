@@ -6,6 +6,9 @@ For the architecture and concrete code, inspect `crates/h5i-app/README.md`,
 `examples/app/calculator/TUTORIAL.md`, and the nearest similar example. Check
 current CLI flags with `h5i app <verb> --help`.
 
+For bare-metal deployment, read [embedded.md](embedded.md). For properties
+over runs and optional Veil checks, read [temporal.md](temporal.md).
+
 ## Put decisions in the kernel
 
 Start with `h5i app new ./ledger` for a kernel crate, a Lake proof project, and
